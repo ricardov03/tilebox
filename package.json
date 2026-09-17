@@ -18,8 +18,10 @@
     "presets": "tsx scripts/build-presets.ts",
     "check:contrast": "tsx scripts/check-contrast.ts",
     "check:profile": "tsx scripts/validate-profile.ts",
+    "check:icons": "tsx scripts/check-icons.ts",
+    "fetch:favicons": "tsx scripts/fetch-favicons.ts",
     "predev": "npm run presets && npm run check:profile",
-    "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast"
+    "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast && npm run check:icons && npm run fetch:favicons"
   },
   "dependencies": {
     "@nuxt/fonts": "^0.14.0",
