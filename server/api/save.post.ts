@@ -1,10 +1,12 @@
 /**
  * Dev only. Validates the body with the zod contract, checks every icon
  * against the installed Iconify packs, then writes content/profile.json.
+ * The write is atomic: a temp file in the same folder, then a rename.
  * `restartNeeded` is true when nuxt.config.ts must re-read the file
  * (theme preset or icon set changed).
  */
-import { writeFile } from 'node:fs/promises'
+import { rename, unlink, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { ProfileSchema, type Profile } from '~~/types/profile'
 import { assertDev, checkIcons, iconsOf, PROFILE_PATH, readProfileFile } from '../utils/editor'
 
@@ -15,6 +17,19 @@ function invalid(errors: string[]): never {
     message: errors.join('\n'),
     data: { errors },
   })
+}
+
+/** Write to `<path>.<random>.tmp` then rename over the target, so a crash never leaves a half file. */
+async function writeAtomic(path: string, content: string): Promise<void> {
+  const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`
+  try {
+    await writeFile(temp, content, 'utf8')
+    await rename(temp, path)
+  }
+  catch (error) {
+    await unlink(temp).catch(() => undefined)
+    throw error
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -44,6 +59,6 @@ export default defineEventHandler(async (event) => {
     restartNeeded = true
   }
 
-  await writeFile(PROFILE_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  await writeAtomic(PROFILE_PATH, `${JSON.stringify(next, null, 2)}\n`)
   return { ok: true as const, restartNeeded }
 })
