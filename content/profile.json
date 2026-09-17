@@ -1,0 +1,24 @@
+{
+  "profile": {
+    "name": "Ricardo Vargas",
+    "handle": "ricardov03",
+    "bio": "Front-end developer. I build web products with Nuxt and Vue.",
+    "status": "Now building CONDOMERA",
+    "theme": { "colors": "condomera", "fonts": "geist", "mode": "system" }
+  },
+  "blocks": [
+    { "id": "b1", "type": "link", "size": "2x1", "title": "CONDOMERA", "url": "https://example.com/condomera", "description": "Software for condominium boards.", "accent": true },
+    { "id": "b2", "type": "social", "size": "1x1", "network": "github", "url": "https://github.com/ricardov03", "label": "@ricardov03" },
+    { "id": "b3", "type": "social", "size": "1x1", "network": "linkedin", "url": "https://linkedin.com/in/example" },
+    { "id": "b4", "type": "image", "size": "2x2", "src": "/blocks/photo.jpg", "alt": "Placeholder photo", "caption": "A photo tile.", "source": null },
+    { "id": "b5", "type": "text", "size": "1x2", "title": "Now", "body": "Building CONDOMERA. Learning by shipping.", "footnote": "Updated Sep 2026" },
+    { "id": "b6", "type": "map", "size": "1x1", "label": "Bogota", "sublabel": "GMT-5", "url": "https://maps.google.com/?q=Bogota" },
+    { "id": "b7", "type": "link", "size": "1x1", "title": "Say hello", "url": "mailto:hello@example.com", "icon": "line-md:email", "pop": true },
+    { "id": "b8", "type": "section", "title": "Projects" },
+    { "id": "b9", "type": "video", "size": "2x1", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "title": "A talk" }
+  ],
+  "layout": {
+    "desktop": ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"],
+    "mobile": ["b1", "b4", "b2", "b3", "b5", "b6", "b7", "b8", "b9"]
+  }
+}
