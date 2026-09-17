@@ -89,7 +89,7 @@ const sizeLabel = computed(() => (props.block.type === 'section' ? 'row' : props
             v-if="icon"
             :name="icon"
             class="size-5 shrink-0"
-            aria-hidden="true"
+            :aria-hidden="true"
           />
           <span>{{ block.type }} · {{ sizeLabel }}</span>
         </span>
