@@ -5,7 +5,6 @@
  * (theme preset or icon set changed).
  */
 import { writeFile } from 'node:fs/promises'
-import { z } from 'zod'
 import { ProfileSchema, type Profile } from '~~/types/profile'
 import { assertDev, checkIcons, iconsOf, PROFILE_PATH, readProfileFile } from '../utils/editor'
 
@@ -23,7 +22,7 @@ export default defineEventHandler(async (event) => {
   const body = await readBody<unknown>(event)
   const result = ProfileSchema.safeParse(body)
   if (!result.success) {
-    invalid(z.prettifyError(result.error).split('\n').filter(Boolean))
+    invalid(result.error.issues.map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`))
   }
   const next: Profile = result.data
 

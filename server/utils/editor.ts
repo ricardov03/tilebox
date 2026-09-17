@@ -40,7 +40,7 @@ const packCache = new Map<string, IconifyJson | null>()
 async function loadPack(prefix: string): Promise<IconifyJson | null> {
   const cached = packCache.get(prefix)
   if (cached !== undefined) return cached
-  let pack: IconifyJson | null = null
+  let pack: IconifyJson | null
   try {
     const require = createRequire(resolve(process.cwd(), 'package.json'))
     const file = require.resolve(`@iconify-json/${prefix}/icons.json`)
