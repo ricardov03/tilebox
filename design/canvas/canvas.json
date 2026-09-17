@@ -1,0 +1,68 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "A-Phone.dc.html": {
+      "h": 1420,
+      "title": "A Lunchbox - phone",
+      "w": 390,
+      "x": 1360,
+      "y": 0
+    },
+    "B-Desktop.dc.html": {
+      "h": 1160,
+      "title": "B Night shift - desktop",
+      "w": 1280,
+      "x": 0,
+      "y": 1780
+    },
+    "B-Phone.dc.html": {
+      "h": 1380,
+      "title": "B Night shift - phone",
+      "w": 390,
+      "x": 1360,
+      "y": 1780
+    },
+    "Main.dc.html": {
+      "h": 1160,
+      "title": "A Lunchbox - desktop",
+      "w": 1280,
+      "x": 0,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-17T20:46:37Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "titleA": {
+      "kind": "title1",
+      "maxW": 1750,
+      "text": "Direction A: Lunchbox. Light, CONDOMERA blue (#0C4A6E). Geist + Geist Mono. Profile is the big tile.",
+      "w": 240,
+      "x": 0,
+      "y": -260
+    },
+    "titleB": {
+      "kind": "title1",
+      "maxW": 1750,
+      "text": "Direction B: Night shift. Navy, sky accent (#38BDF8). Geist + Geist Mono. Profile is a side rail.",
+      "w": 240,
+      "x": 0,
+      "y": 1520
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "A-Phone.dc.html",
+    "B-Desktop.dc.html",
+    "B-Phone.dc.html"
+  ],
+  "pages": [],
+  "title": "Bento portfolio design"
+}
