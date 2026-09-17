@@ -96,13 +96,14 @@ Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`.
 2. Cloudflare dashboard: **Workers & Pages > Create > Pages > Connect to Git**. Pick the repo.
 3. Build settings: framework preset **None**. Build command `npm run generate`. Output directory `dist`.
 4. Environment variable `NODE_VERSION` = `24`. Cloudflare also reads `.node-version` in the repo root, which says `24`. Cloudflare's default Node is too old for Nuxt 4.
-5. Save and deploy. Add a custom domain under **Custom domains** after the first build.
+5. Environment variable `NUXT_PUBLIC_SITE_URL` = your site URL, for example `https://ricardov.dev` (no trailing slash). It makes `og:image` and `og:url` absolute, which link previews need. Leave it unset and the page uses `/og.png`.
+6. Save and deploy. Add a custom domain under **Custom domains** after the first build.
 
 No Nitro preset is set. The build is plain static files. `/edit` and `/api` are not in `dist/`.
 
 ### Netlify
 
-Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers.
+Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers. Add `NUXT_PUBLIC_SITE_URL` in the site's environment variables, same as above.
 
 ## Roadmap
 

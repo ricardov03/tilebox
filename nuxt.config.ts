@@ -51,6 +51,13 @@ export default defineNuxtConfig({
   },
   css: ['~/assets/css/main.css'],
 
+  runtimeConfig: {
+    public: {
+      /** Absolute site URL for og:image and og:url. Set `NUXT_PUBLIC_SITE_URL` in the host's build env. */
+      siteUrl: '',
+    },
+  },
+
   routeRules: {
     '/edit': { prerender: false },
     '/api/**': { prerender: false },
