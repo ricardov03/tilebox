@@ -1,17 +1,19 @@
 <script setup lang="ts">
 const { profile } = useProfile()
 
-// Theme attributes on <html>. WP1's useTheme will take over the live mode toggle.
+// Preset attributes on <html>. `data-theme` (light/dark) is owned by useTheme.
 const theme = profile.profile.theme
 useHead({
   htmlAttrs: {
     'data-colors': theme.colors,
     'data-fonts': theme.fonts,
-    'data-theme': theme.mode === 'dark' ? 'dark' : 'light',
   },
 })
+useTheme()
 </script>
 
 <template>
-  <NuxtPage />
+  <NuxtLayout>
+    <NuxtPage />
+  </NuxtLayout>
 </template>
