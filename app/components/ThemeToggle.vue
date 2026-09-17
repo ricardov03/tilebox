@@ -30,7 +30,7 @@ const buttonClass = 'fixed top-4 right-4 z-10 flex size-11 items-center justify-
       <Icon
         :name="ICONS[mode]"
         class="size-[22px]"
-        aria-hidden="true"
+        :aria-hidden="true"
       />
     </button>
     <template #fallback>
@@ -42,7 +42,7 @@ const buttonClass = 'fixed top-4 right-4 z-10 flex size-11 items-center justify-
       >
         <span
           class="size-[22px]"
-          aria-hidden="true"
+          :aria-hidden="true"
         />
       </button>
     </template>
