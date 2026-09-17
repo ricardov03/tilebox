@@ -10,11 +10,11 @@
     <main
       id="main"
       tabindex="-1"
-      class="mx-auto w-full max-w-[1280px] p-4 focus:outline-none md:p-16"
+      class="mx-auto w-full max-w-[1280px] p-4 md:p-16"
     >
       <slot />
     </main>
-    <footer class="mx-auto w-full max-w-[1280px] px-4 pb-8 font-mono text-[13px] text-muted md:px-16">
+    <footer class="mx-auto w-full max-w-[1280px] px-4 pb-8 font-mono text-sm text-muted md:px-16">
       <p>Made with tilebox</p>
     </footer>
   </div>
