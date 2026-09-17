@@ -80,6 +80,42 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
 
+/**
+ * UI state that must survive a page remount. Saving writes profile.json,
+ * which app.vue imports through useProfile, so Vite HMR remounts the page
+ * after every save. sessionStorage keeps the editor where it was.
+ */
+const STORAGE_KEY = 'tilebox-editor'
+
+interface PersistedUi {
+  tab: EditorTab
+  layoutKey: LayoutKey
+  selectedId: string | null
+  lastSavedAt: string | null
+  restartNeeded: boolean
+}
+
+function readUi(): Partial<PersistedUi> {
+  if (!import.meta.client) return {}
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as Partial<PersistedUi>) : {}
+  }
+  catch {
+    return {}
+  }
+}
+
+function writeUi(ui: PersistedUi) {
+  if (!import.meta.client) return
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(ui))
+  }
+  catch {
+    // storage blocked: the editor still works, it just forgets its place on remount
+  }
+}
+
 export function useEditor() {
   const draft = ref<Profile | null>(null)
   const saved = ref<string>('')
@@ -87,12 +123,23 @@ export function useEditor() {
   const loadError = ref<string | null>(null)
   const saving = ref(false)
   const errors = ref<string[]>([])
-  const lastSavedAt = ref<Date | null>(null)
-  const restartNeeded = ref(false)
+  const ui = readUi()
+  const lastSavedAt = ref<Date | null>(ui.lastSavedAt ? new Date(ui.lastSavedAt) : null)
+  const restartNeeded = ref(ui.restartNeeded ?? false)
 
-  const tab = ref<EditorTab>('blocks')
-  const layoutKey = ref<LayoutKey>('desktop')
-  const selectedId = ref<string | null>(null)
+  const tab = ref<EditorTab>(ui.tab ?? 'blocks')
+  const layoutKey = ref<LayoutKey>(ui.layoutKey ?? 'desktop')
+  const selectedId = ref<string | null>(ui.selectedId ?? null)
+
+  watch([tab, layoutKey, selectedId, lastSavedAt, restartNeeded], () => {
+    writeUi({
+      tab: tab.value,
+      layoutKey: layoutKey.value,
+      selectedId: selectedId.value,
+      lastSavedAt: lastSavedAt.value?.toISOString() ?? null,
+      restartNeeded: restartNeeded.value,
+    })
+  })
 
   const dirty = computed(() => draft.value !== null && JSON.stringify(draft.value) !== saved.value)
 
