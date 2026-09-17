@@ -1,5 +1,6 @@
 <!--
   Picks the component for a block by `block.type`. Fills the <li> BentoGrid renders.
+  Every branch is explicit so vue-tsc narrows the union and an unknown type renders nothing.
 -->
 <script setup lang="ts">
 import type { Block } from '~~/types/profile'
@@ -40,7 +41,8 @@ defineProps<{ block: Block }>()
     :block="block"
   />
   <VideoBlock
-    v-else
+    v-else-if="block.type === 'video'"
     :block="block"
   />
+  <!-- An unknown type renders nothing. -->
 </template>
