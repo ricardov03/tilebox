@@ -9,11 +9,12 @@
  * No flash on load: the prerendered HTML carries `data-theme` only when the
  * mode is fixed. A tiny inline script in `<head>` sets the attribute from
  * localStorage or `matchMedia` before the first paint. On the client this
- * composable writes the attribute directly and never through unhead, so
- * hydration cannot overwrite what the inline script set.
+ * composable reads the stored mode during setup, writes the attribute
+ * directly (never through unhead) and keeps it in sync, so hydration cannot
+ * overwrite what the inline script set.
  *
- * Call it in `app.vue` first (it registers `onMounted` there). Other
- * components may call it again to read state or cycle the mode.
+ * Call it in `app.vue` first (it installs there). Other components may call
+ * it again to read state or cycle the mode.
  */
 import type { Theme } from '~~/types/profile'
 import { COLOR_PRESETS } from '~/utils/presets'
@@ -22,7 +23,8 @@ export type ThemeMode = Theme['mode']
 export type ResolvedTheme = Exclude<ThemeMode, 'system'>
 
 export const THEME_STORAGE_KEY = 'tilebox:theme'
-const MODES: readonly ThemeMode[] = ['system', 'light', 'dark']
+/** Cycle order of the toggle: system -> light -> dark -> system. */
+export const THEME_MODES: readonly ThemeMode[] = ['system', 'light', 'dark']
 const MEDIA_DARK = '(prefers-color-scheme: dark)'
 
 /** Runs before paint. Keep under 300 bytes. Same rules as `readStoredMode` + `resolve`. */
@@ -30,7 +32,7 @@ const INLINE_SCRIPT = `!function(){var m,d=document.documentElement;try{m=localS
   + `d.dataset.theme=m==="light"||m==="dark"?m:m==="system"||!d.dataset.theme?matchMedia("${MEDIA_DARK}").matches?"dark":"light":d.dataset.theme}()`
 
 function isMode(value: unknown): value is ThemeMode {
-  return typeof value === 'string' && (MODES as readonly string[]).includes(value)
+  return value === 'system' || value === 'light' || value === 'dark'
 }
 
 function readStoredMode(): ThemeMode | null {
@@ -73,11 +75,15 @@ export function useTheme() {
     writeStoredMode(next)
   }
 
+  /** The mode after `mode` in the cycle order. */
+  const nextMode = computed<ThemeMode>(() => {
+    const index = THEME_MODES.indexOf(mode.value)
+    return THEME_MODES[(index + 1) % THEME_MODES.length] ?? 'system'
+  })
+
   /** system -> light -> dark -> system */
   function cycle(): void {
-    const index = MODES.indexOf(mode.value)
-    const next = MODES[(index + 1) % MODES.length]
-    setMode(next ?? 'system')
+    setMode(nextMode.value)
   }
 
   if (!installed.has(nuxtApp)) {
@@ -86,13 +92,13 @@ export function useTheme() {
     // Head: inline script, color-scheme and theme-color. Reactive to the mode.
     useHead(computed(() => ({
       meta: [
-        { name: 'color-scheme', content: mode.value === 'system' ? 'light dark' : mode.value },
+        { key: 'color-scheme', name: 'color-scheme', content: mode.value === 'system' ? 'light dark' : mode.value },
         ...(mode.value === 'system'
           ? [
-              { name: 'theme-color', media: '(prefers-color-scheme: light)', content: preset.light.ground },
-              { name: 'theme-color', media: '(prefers-color-scheme: dark)', content: preset.dark.ground },
+              { key: 'theme-color-light', name: 'theme-color', media: '(prefers-color-scheme: light)', content: preset.light.ground },
+              { key: 'theme-color-dark', name: 'theme-color', media: '(prefers-color-scheme: dark)', content: preset.dark.ground },
             ]
-          : [{ name: 'theme-color', content: preset[mode.value].ground }]),
+          : [{ key: 'theme-color', name: 'theme-color', content: preset[mode.value].ground }]),
       ],
       script: [{ key: 'tilebox-theme', innerHTML: INLINE_SCRIPT, tagPosition: 'head' as const }],
     })))
@@ -103,24 +109,26 @@ export function useTheme() {
     }
 
     if (import.meta.client) {
-      const apply = () => {
-        document.documentElement.dataset.theme = resolved.value
-      }
-      watch(resolved, apply)
+      // Read everything during setup, before any child renders, so the toggle
+      // shows the stored mode at its first client paint.
+      const media = window.matchMedia(MEDIA_DARK)
+      systemDark.value = media.matches
+      const stored = readStoredMode()
+      if (stored) mode.value = stored
 
-      // After hydration so the server-rendered toggle matches the first client render.
-      onMounted(() => {
-        const media = window.matchMedia(MEDIA_DARK)
-        systemDark.value = media.matches
-        media.addEventListener('change', (event) => {
-          systemDark.value = event.matches
-        })
-        const stored = readStoredMode()
-        if (stored) mode.value = stored
-        apply()
-      })
+      const onMediaChange = (event: MediaQueryListEvent) => {
+        systemDark.value = event.matches
+      }
+      media.addEventListener('change', onMediaChange)
+      onScopeDispose(() => media.removeEventListener('change', onMediaChange))
+
+      // Straight to the DOM, immediately. Hydration does not touch attributes
+      // that no vnode owns, so the inline script's value is never reverted.
+      watch(resolved, (value) => {
+        document.documentElement.dataset.theme = value
+      }, { immediate: true })
     }
   }
 
-  return { mode: readonly(mode), resolved, setMode, cycle }
+  return { mode: readonly(mode), resolved, nextMode, setMode, cycle }
 }
