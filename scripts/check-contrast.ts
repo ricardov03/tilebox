@@ -43,8 +43,10 @@ const PAIRS: Pair[] = [
   { fg: 'muted', bg: 'tile', min: 4.5 },
   { fg: 'muted', bg: 'ground', min: 4.5 },
   { fg: 'accent-ink', bg: 'accent', min: 4.5 },
-  { fg: 'accent-soft', bg: 'accent', min: 3 },
+  { fg: 'accent-soft', bg: 'accent', min: 4.5 },
   { fg: 'pop-ink', bg: 'pop', min: 4.5 },
+  { fg: 'hover', bg: 'ground', min: 4.5 },
+  { fg: 'hover', bg: 'tile', min: 4.5 },
 ]
 
 interface Row { preset: string, mode: 'light' | 'dark', pair: string, ratio: number, min: number, pass: boolean }

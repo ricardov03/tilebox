@@ -183,7 +183,7 @@ Canvas sync 2026-09-17: Claude Desktop reworked both boards. Board A is now the 
 | accent | `#0C4A6E` (sky-900) | `#3E6B3B` moss | `#F3B33D` amber |
 | accent-ink | `#FFFFFF` | `#FFFFFF` | `#131826` |
 | accent-soft | `#BAE6FD` (sky-200) | `#DCE5D6` | `#0C4A6E` |
-| pop | `#0284C7` (sky-600) | `#F0C24B` yuzu | `#F3B33D` |
+| pop | `#0369A1` (sky-700, was sky-600; white text needs 4.5:1) | `#F0C24B` yuzu | `#F3B33D` |
 | pop-ink | `#FFFFFF` | `#1B211C` | `#131826` |
 | dot | `#0EA5E9` (sky-500) | `#F0C24B` | `#F3B33D` |
 | photo | `#C7DEEC` | `#C9D3C2` | `#232B40` |
@@ -200,7 +200,7 @@ Dark mode of each preset (`[data-theme=dark]`):
 | muted | `#9FB6CA` | `#A5ADA6` | `#9AA3B8` |
 | accent | `#38BDF8` (sky-400) | `#5C8F58` | `#F3B33D` |
 | accent-ink | `#081726` | `#0F140F` | `#131826` |
-| accent-soft | `#0C4A6E` | `#2E4A2C` | `#0C4A6E` |
+| accent-soft | `#0A3D5C` (was `#0C4A6E`, contrast) | `#0F1A0D` (was `#2E4A2C`, contrast) | `#0C4A6E` |
 | pop | `#38BDF8` | `#F0C24B` | `#F3B33D` |
 | pop-ink | `#081726` | `#1B211C` | `#131826` |
 | dot | `#38BDF8` | `#F0C24B` | `#F3B33D` |
@@ -210,7 +210,7 @@ Dark mode of each preset (`[data-theme=dark]`):
 `accent-soft` is the small text on top of the accent tile (the domain label). `pop-ink` is text on the pop tile.
 
 `condomera` matches `landing-condomera/DESIGN.md`: sky primary, slate neutral. Keep it in sync if the brand changes.
-`night` light mode: `#F2F3F6` ground, `#FFFFFF` tile, `#DDE1EA` line, `#131826` ink, `#5B6478` muted, amber accent, `#131826` accent-ink.
+`night` light mode: `#F2F3F6` ground, `#FFFFFF` tile, `#DDE1EA` line, `#131826` ink, `#5B6478` muted, amber accent, `#131826` accent-ink, hover `#855400` (dark amber; the bright amber fails contrast on light).
 
 Layout note: board B shows a left-rail layout. That is NOT the dark mode layout. Dark mode keeps the hero-tile layout of board A. The rail layout can become a `layout` preset later (section 13).
 
@@ -285,8 +285,8 @@ UI icons: link `line-md:link`, external `line-md:external-link`, map `line-md:ma
 
 ### 5.6 Design rules for agents
 - Real `<a>` for every link tile. Focus ring visible: 2px `--color-accent` outline, 2px offset.
-- Text contrast 4.5:1 minimum on every preset, light and dark. WP0 checks all 3 presets with a script and writes the numbers in `NOTES.md`.
-- Tiles: radius 28px desktop / 24px phone. 1px `--color-line` border. No shadow. Hover: lift 2px.
+- Text contrast 4.5:1 minimum on every preset, light and dark, for every text pair including accent-soft and hover. `npm run check:contrast` runs in `pregenerate` and fails the build on a regression. Values above are the checked ones (2026-09-17).
+- Tiles: `rounded-tile` = 24px on phones, 28px from 768px (one token, `--radius-tile`, responsive). 1px `--color-line` border. No shadow. Hover: lift 2px.
 - Motion: one page-load stagger of tiles (40ms each, 300ms, opacity + 8px translate). `line-md` icons draw themselves once on load. Nothing else. Respect `prefers-reduced-motion` (stagger off; icons get `animation: none` via CSS).
 - Avatar: 96px circle desktop, 64px phone. Fallback = initials on the accent color with accent-soft text.
 - Photo tile: image covers the tile. Caption sits bottom-left on a soft scrim only if `caption` is set.

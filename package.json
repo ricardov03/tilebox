@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22.19"
+    "node": "^22.19 || ^24.11"
   },
   "scripts": {
     "dev": "nuxt dev",
@@ -19,10 +19,9 @@
     "check:contrast": "tsx scripts/check-contrast.ts",
     "check:profile": "tsx scripts/validate-profile.ts",
     "predev": "npm run presets && npm run check:profile",
-    "pregenerate": "npm run presets && npm run check:profile"
+    "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast"
   },
   "dependencies": {
-    "@nuxt/eslint": "^1.17.0",
     "@nuxt/fonts": "^0.14.0",
     "@nuxt/icon": "^2.5.1",
     "@tailwindcss/vite": "^4.3.3",
@@ -33,6 +32,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@nuxt/eslint": "^1.17.0",
     "@iconify-json/line-md": "^1.2.16",
     "@iconify-json/simple-icons": "^1.2.96",
     "eslint": "^10.10.0",

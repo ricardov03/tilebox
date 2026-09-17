@@ -19,7 +19,7 @@ export const ImageSourceSchema = z.object({
   url: url.optional(),
   author: z.string().optional(),
   authorUrl: url.optional(),
-})
+}).strict()
 
 export const LinkBlockSchema = z.object({
   id,
@@ -31,7 +31,7 @@ export const LinkBlockSchema = z.object({
   icon: iconName.optional(),
   accent: z.boolean().optional(),
   pop: z.boolean().optional(),
-})
+}).strict()
 
 export const SocialBlockSchema = z.object({
   id,
@@ -40,17 +40,17 @@ export const SocialBlockSchema = z.object({
   network: z.enum(NETWORK_IDS),
   url,
   label: z.string().optional(),
-})
+}).strict()
 
 export const ImageBlockSchema = z.object({
   id,
   type: z.literal('image'),
   size,
   src: z.string().min(1),
-  alt: z.string(),
+  alt: z.string().min(1),
   caption: z.string().optional(),
   source: ImageSourceSchema.nullable(),
-})
+}).strict()
 
 export const TextBlockSchema = z.object({
   id,
@@ -59,13 +59,13 @@ export const TextBlockSchema = z.object({
   title: z.string().optional(),
   body: z.string(),
   footnote: z.string().optional(),
-})
+}).strict()
 
 export const SectionBlockSchema = z.object({
   id,
   type: z.literal('section'),
   title: z.string().min(1),
-})
+}).strict()
 
 export const MapBlockSchema = z.object({
   id,
@@ -74,7 +74,7 @@ export const MapBlockSchema = z.object({
   label: z.string().min(1),
   sublabel: z.string().optional(),
   url,
-})
+}).strict()
 
 export const VideoBlockSchema = z.object({
   id,
@@ -83,7 +83,7 @@ export const VideoBlockSchema = z.object({
   url,
   title: z.string().optional(),
   thumbnail: z.string().optional(),
-})
+}).strict()
 
 export const BlockSchema = z.discriminatedUnion('type', [
   LinkBlockSchema,
@@ -99,7 +99,7 @@ export const ThemeSchema = z.object({
   colors: z.enum(COLOR_PRESET_IDS),
   fonts: z.enum(FONT_PRESET_IDS),
   mode: z.enum(['system', 'light', 'dark']),
-})
+}).strict()
 
 export const ProfileInfoSchema = z.object({
   name: z.string().min(1),
@@ -108,12 +108,12 @@ export const ProfileInfoSchema = z.object({
   avatar: z.string().nullable().optional(),
   status: z.string().optional(),
   theme: ThemeSchema,
-})
+}).strict()
 
 export const LayoutSchema = z.object({
   desktop: z.array(id),
   mobile: z.array(id).optional(),
-})
+}).strict()
 
 export const ProfileSchema = z
   .object({

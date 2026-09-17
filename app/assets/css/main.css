@@ -27,7 +27,7 @@
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 
-  --radius-tile: 28px;
+  --radius-tile: var(--tile-radius);
 }
 
 @layer base {
@@ -59,3 +59,7 @@
     }
   }
 }
+
+/* tile radius: 24px on phones, 28px from md up (PLAN.md 5.6) */
+:root { --tile-radius: 24px; }
+@media (min-width: 768px) { :root { --tile-radius: 28px; } }
