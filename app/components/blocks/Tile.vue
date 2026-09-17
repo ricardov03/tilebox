@@ -1,10 +1,10 @@
 <!--
   Base chrome for every tile. PLAN.md 5.6.
-  Renders an <a> when `href` is set, else a <div>. Fills the grid cell.
-  http(s) links open in a new tab. mailto: links stay in the same tab.
+  Renders an <a> when `href` is an http(s) or mailto: URL, else a <div>.
+  Fills the grid cell. http(s) links open in a new tab. mailto: stays.
 -->
 <script setup lang="ts">
-import { isHttpUrl, type TileVariant } from './media'
+import { isHttpUrl, isSafeHref, type TileVariant } from './media'
 
 const props = withDefaults(defineProps<{
   href?: string
@@ -23,7 +23,9 @@ const props = withDefaults(defineProps<{
   clip: false,
 })
 
-const external = computed(() => props.href !== undefined && isHttpUrl(props.href))
+/** Only http(s) and mailto: become links. Anything else renders as a plain tile. */
+const link = computed(() => (props.href !== undefined && isSafeHref(props.href) ? props.href : null))
+const external = computed(() => link.value !== null && isHttpUrl(link.value))
 
 const VARIANT_CLASSES: Record<TileVariant, string> = {
   tile: 'border border-line bg-tile text-ink',
@@ -37,17 +39,17 @@ const classes = computed(() => [
   VARIANT_CLASSES[props.variant],
   props.padded ? 'p-5 md:p-7' : 'p-0',
   props.clip ? 'overflow-hidden' : '',
-  props.href ? 'md:hover:-translate-y-0.5 motion-reduce:hover:translate-y-0' : '',
-  props.href && props.variant === 'tile' ? 'md:hover:text-hover' : '',
+  link.value ? 'md:hover:-translate-y-0.5 motion-reduce:hover:translate-y-0' : '',
+  link.value && props.variant === 'tile' ? 'md:hover:text-hover' : '',
 ])
 </script>
 
 <template>
   <a
-    v-if="href"
-    :href="href"
+    v-if="link"
+    :href="link"
     :target="external ? '_blank' : undefined"
-    :rel="external ? 'noopener' : undefined"
+    :rel="external ? 'noopener noreferrer' : undefined"
     :aria-label="ariaLabel"
     :class="classes"
   >
@@ -55,6 +57,7 @@ const classes = computed(() => [
   </a>
   <div
     v-else
+    :role="ariaLabel ? 'group' : undefined"
     :aria-label="ariaLabel"
     :class="classes"
   >

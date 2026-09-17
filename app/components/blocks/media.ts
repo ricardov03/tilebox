@@ -28,6 +28,11 @@ export function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
 
+/** True for the schemes a tile may link to: http(s) and mailto:. */
+export function isSafeHref(url: string): boolean {
+  return isHttpUrl(url) || /^mailto:/i.test(url)
+}
+
 /** YouTube video id for watch, shorts, embed, live and youtu.be URLs. `null` otherwise. */
 export function youtubeId(url: string): string | null {
   let parsed: URL
@@ -42,7 +47,7 @@ export function youtubeId(url: string): string | null {
   if (host === 'youtu.be') return valid(parsed.pathname.slice(1).split('/')[0])
   if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
     if (parsed.pathname === '/watch') return valid(parsed.searchParams.get('v'))
-    const match = parsed.pathname.match(/^\/(?:embed|shorts|v|live)\/([\w-]{11})/)
+    const match = parsed.pathname.match(/^\/(?:embed|shorts|v|live)\/([\w-]{11})(?:[/?#]|$)/)
     return valid(match?.[1])
   }
   return null
