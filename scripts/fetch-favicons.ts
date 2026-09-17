@@ -13,8 +13,13 @@ import { parseProfile } from '../types/profile'
 import { hostOf, youtubeId } from '../app/components/blocks/media'
 
 const TIMEOUT_MS = 5000
+/** Largest body accepted. A favicon is a few KB, a YouTube thumbnail under 100 KB. */
+const MAX_BYTES = 5 * 1024 * 1024
 const ICONS_DIR = resolve(process.cwd(), 'public/icons')
 const THUMBS_DIR = resolve(process.cwd(), 'public/thumbs')
+
+const FAVICON_URL = (host: string) => `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`
+const THUMB_URL = (id: string) => `https://img.youtube.com/vi/${encodeURIComponent(id)}/hqdefault.jpg`
 
 interface Job {
   /** Manifest key: host for favicons, video id for thumbnails. */
@@ -45,7 +50,17 @@ async function download(job: Job): Promise<boolean> {
       process.stdout.write(`skip ${job.key}: HTTP ${response.status} ${type || 'no content-type'}\n`)
       return false
     }
-    await writeFile(target, Buffer.from(await response.arrayBuffer()))
+    const declared = Number(response.headers.get('content-length') ?? 0)
+    if (declared > MAX_BYTES) {
+      process.stdout.write(`skip ${job.key}: body is ${declared} bytes, limit ${MAX_BYTES}\n`)
+      return false
+    }
+    const body = Buffer.from(await response.arrayBuffer())
+    if (body.byteLength > MAX_BYTES) {
+      process.stdout.write(`skip ${job.key}: body is ${body.byteLength} bytes, limit ${MAX_BYTES}\n`)
+      return false
+    }
+    await writeFile(target, body)
     process.stdout.write(`got  ${job.key} -> ${job.file}\n`)
     return true
   }
@@ -78,7 +93,7 @@ async function run(): Promise<void> {
         key: host,
         file: `${createHash('sha1').update(host).digest('hex').slice(0, 12)}.png`,
         dir: ICONS_DIR,
-        url: `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`,
+        url: FAVICON_URL(host),
       })
     }
     if (block.type === 'video') {
@@ -88,19 +103,17 @@ async function run(): Promise<void> {
         key: id,
         file: `${id}.jpg`,
         dir: THUMBS_DIR,
-        url: `https://img.youtube.com/vi/${id}/hqdefault.jpg`,
+        url: THUMB_URL(id),
       })
     }
   }
 
-  const icons = new Map<string, string>()
-  for (const job of faviconJobs.values()) {
-    if (await download(job)) icons.set(job.key, job.file)
+  /** Downloads every job at once. Keeps the ones that are on disk afterwards. */
+  const fetched = async (jobs: Map<string, Job>): Promise<Map<string, string>> => {
+    const results = await Promise.all([...jobs.values()].map(async job => [job, await download(job)] as const))
+    return new Map(results.filter(([, ok]) => ok).map(([job]) => [job.key, job.file]))
   }
-  const thumbs = new Map<string, string>()
-  for (const job of thumbJobs.values()) {
-    if (await download(job)) thumbs.set(job.key, job.file)
-  }
+  const [icons, thumbs] = await Promise.all([fetched(faviconJobs), fetched(thumbJobs)])
 
   await writeManifest(ICONS_DIR, icons)
   await writeManifest(THUMBS_DIR, thumbs)
