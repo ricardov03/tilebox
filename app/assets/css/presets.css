@@ -1,0 +1,122 @@
+/* generated, do not edit. Source: app/utils/presets.ts. Run `npm run presets`. */
+
+/* Color presets. Light values, then dark values under [data-theme="dark"]. */
+[data-colors="condomera"] {
+  --color-ground: #EEF4F8;
+  --color-tile: #FFFFFF;
+  --color-line: rgba(12,74,110,0.10);
+  --color-ink: #0B1F33;
+  --color-muted: #4A6075;
+  --color-accent: #0C4A6E;
+  --color-accent-ink: #FFFFFF;
+  --color-accent-soft: #BAE6FD;
+  --color-pop: #0369A1;
+  --color-pop-ink: #FFFFFF;
+  --color-dot: #0EA5E9;
+  --color-photo: #C7DEEC;
+  --color-hover: #0369A1;
+}
+[data-colors="condomera"][data-theme="dark"] {
+  --color-ground: #081726;
+  --color-tile: #0F2438;
+  --color-line: #1E3A55;
+  --color-ink: #EAF3FA;
+  --color-muted: #9FB6CA;
+  --color-accent: #38BDF8;
+  --color-accent-ink: #081726;
+  --color-accent-soft: #0A3D5C;
+  --color-pop: #38BDF8;
+  --color-pop-ink: #081726;
+  --color-dot: #38BDF8;
+  --color-photo: #16324B;
+  --color-hover: #7DD3FC;
+}
+[data-colors="lunchbox"] {
+  --color-ground: #E8EBE4;
+  --color-tile: #FFFFFF;
+  --color-line: rgba(27,33,28,0.08);
+  --color-ink: #1B211C;
+  --color-muted: #5A635B;
+  --color-accent: #3E6B3B;
+  --color-accent-ink: #FFFFFF;
+  --color-accent-soft: #DCE5D6;
+  --color-pop: #F0C24B;
+  --color-pop-ink: #1B211C;
+  --color-dot: #F0C24B;
+  --color-photo: #C9D3C2;
+  --color-hover: #3E6B3B;
+}
+[data-colors="lunchbox"][data-theme="dark"] {
+  --color-ground: #161A17;
+  --color-tile: #1F2521;
+  --color-line: rgba(238,241,236,0.10);
+  --color-ink: #EEF1EC;
+  --color-muted: #A5ADA6;
+  --color-accent: #5C8F58;
+  --color-accent-ink: #0F140F;
+  --color-accent-soft: #0F1A0D;
+  --color-pop: #F0C24B;
+  --color-pop-ink: #1B211C;
+  --color-dot: #F0C24B;
+  --color-photo: #2A332C;
+  --color-hover: #8FBF8B;
+}
+[data-colors="night"] {
+  --color-ground: #F2F3F6;
+  --color-tile: #FFFFFF;
+  --color-line: #DDE1EA;
+  --color-ink: #131826;
+  --color-muted: #5B6478;
+  --color-accent: #F3B33D;
+  --color-accent-ink: #131826;
+  --color-accent-soft: #0C4A6E;
+  --color-pop: #F3B33D;
+  --color-pop-ink: #131826;
+  --color-dot: #F3B33D;
+  --color-photo: #232B40;
+  --color-hover: #855400;
+}
+[data-colors="night"][data-theme="dark"] {
+  --color-ground: #131826;
+  --color-tile: #1B2233;
+  --color-line: #2B3448;
+  --color-ink: #EEF1F7;
+  --color-muted: #9AA3B8;
+  --color-accent: #F3B33D;
+  --color-accent-ink: #131826;
+  --color-accent-soft: #0C4A6E;
+  --color-pop: #F3B33D;
+  --color-pop-ink: #131826;
+  --color-dot: #F3B33D;
+  --color-photo: #232B40;
+  --color-hover: #F3B33D;
+}
+
+/* Font presets. */
+[data-fonts="geist"] {
+  --font-display: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display-weight: 600;
+}
+[data-fonts="geist"] .font-display {
+  letter-spacing: -0.04em;
+}
+[data-fonts="lunchbox"] {
+  --font-display: 'Fraunces', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display-weight: 500;
+}
+[data-fonts="lunchbox"] .font-display {
+  font-variation-settings: "opsz" 144, "SOFT" 40; letter-spacing: -0.03em;
+}
+[data-fonts="night"] {
+  --font-display: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display-weight: 700;
+}
+[data-fonts="night"] .font-display {
+  font-variation-settings: "opsz" 96; letter-spacing: -0.045em;
+}
