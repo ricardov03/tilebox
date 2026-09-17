@@ -1,60 +1,119 @@
 # tilebox
 
-Bento-style personal link page. Edit locally, host static on Cloudflare Pages.
+Bento-style personal link page. One profile, a grid of tiles you arrange yourself.
+Edit locally in the browser, commit a JSON file, host it static on Cloudflare Pages.
 
-tilebox is a self-hosted alternative to [Bento.me](https://bento.me) (shut down in February 2026) and Linktree. One page. A profile block. A grid of tiles you arrange yourself. No backend, no database, no account.
+## Features
 
-> Status: planning. No code yet. The full plan is in [`PLAN.md`](./PLAN.md).
+- Profile block: avatar, name, handle, bio, status line.
+- Seven tile types: link, social, image, text, section, map, video.
+- Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
+- Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
+- Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
+- Static output. No backend, no database, no runtime network calls on the public page.
 
-## What it does
+## Quick start
 
-- **Profile.** Avatar, name, bio, a status line.
-- **Tiles.** Link, social, image, text, section title, map, video. Sizes `1x1`, `2x1`, `1x2`, `2x2` on a 4-column grid.
-- **Two orders.** One tile order for desktop, one for phone.
-- **Themes like PowerPoint.** Pick a color preset and a font preset. One click changes the whole page. Light and dark mode.
-- **Local editor.** Run `npm run dev`, open `/edit`, drag tiles, edit text, pick icons, save. The editor never ships to production.
-- **Static output.** `npm run generate` writes plain HTML, CSS and JS to `dist/`. Push to Git. Cloudflare Pages or Netlify builds and hosts it.
+```sh
+npm install
+npm run dev
+```
 
-## Stack
+1. Open http://localhost:3000/edit.
+2. Edit your profile and tiles. Click **Save**. This writes `content/profile.json`.
+3. `git commit` and `git push`. Your host builds and publishes the page.
 
-| Part | Choice |
+Restart `npm run dev` after you change the color preset, the font preset or an icon name.
+`nuxt.config.ts` reads `profile.json` once at start to pick fonts and bundle icons.
+
+## Editing by hand
+
+Everything lives in `content/profile.json`. The schema is in `types/profile.ts` (zod).
+Run `npm run check:profile` to validate it.
+
+```json
+{
+  "profile": {
+    "name": "Ricardo Vargas",
+    "handle": "ricardov03",
+    "bio": "Front-end developer.",
+    "status": "Now building CONDOMERA",
+    "theme": { "colors": "condomera", "fonts": "geist", "mode": "system" }
+  },
+  "blocks": [
+    { "id": "b1", "type": "link", "size": "2x1", "title": "CONDOMERA", "url": "https://example.com", "accent": true },
+    { "id": "b2", "type": "social", "size": "1x1", "network": "github", "url": "https://github.com/ricardov03" },
+    { "id": "b3", "type": "section", "title": "Projects" }
+  ],
+  "layout": {
+    "desktop": ["b1", "b2", "b3"],
+    "mobile": ["b2", "b1", "b3"]
+  }
+}
+```
+
+Rules: every block `id` is unique. `layout.desktop` lists every block id. `layout.mobile` is optional.
+`size` is one of `1x1`, `2x1`, `1x2`, `2x2`. Section blocks have no `size`.
+
+| Type | Required fields | Optional fields |
+|---|---|---|
+| `link` | `title`, `url` | `description`, `icon`, `accent`, `pop` |
+| `social` | `network`, `url` | `label` |
+| `image` | `src`, `alt`, `source` (or `null`) | `caption` |
+| `text` | `body` | `title`, `footnote` |
+| `section` | `title` | |
+| `map` | `label`, `url` | `sublabel` |
+| `video` | `url` | `title`, `thumbnail` |
+
+Presets: colors `condomera`, `lunchbox`, `night`. Fonts `geist`, `lunchbox`, `night`.
+Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/collection/line-md.
+Brand icons that `line-md` lacks come from `simple-icons`.
+Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
+
+Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`. Avatar goes in `public/`.
+
+## Scripts
+
+| Command | What it does |
 |---|---|
-| Framework | Nuxt 4, static output |
-| CSS | Tailwind CSS 4 |
-| Fonts | `@nuxt/fonts`, self-hosted Google Fonts |
-| Icons | `@nuxt/icon` with Iconify. Default set `line-md`. Browse at [icones.js.org](https://icones.js.org/collection/line-md) |
-| Drag and drop | `vue-draggable-plus` |
-| Hosting | Cloudflare Pages (Netlify also works) |
-| Node | 24 |
+| `npm run dev` | Dev server with the editor at `/edit` |
+| `npm run generate` | Static build to `dist/` |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `nuxt typecheck` (app, scripts, types) |
+| `npm run presets` | Writes `app/assets/css/presets.css` from `app/utils/presets.ts` |
+| `npm run check:contrast` | WCAG contrast check for every preset |
+| `npm run check:profile` | Validates `content/profile.json` |
+| `npm run check:icons` | Fails on an unknown icon name |
+| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` |
 
-## How you use it
+`predev` runs presets and check:profile. `pregenerate` also runs check:contrast and check:icons.
 
-1. Clone the repo. Run `npm install`.
-2. Run `npm run dev`. Open `http://localhost:3000/edit`.
-3. Change your profile, add tiles, pick a theme. Click **Save**. Everything lands in `content/profile.json`. Images go to `public/blocks/`.
-4. Commit and push.
-5. Cloudflare Pages builds it. Settings: build command `npm run generate`, output folder `dist`, env `NODE_VERSION=24`.
+## Deploy
 
-## Project layout
+### Cloudflare Pages
 
-```
-content/profile.json   your data. The only file the editor writes.
-public/                avatar, tile images, favicons
-app/                   Nuxt app: public page, editor, components
-server/api/            dev-only routes (save, upload). Not in the build.
-design/canvas/         the design boards (light and dark)
-PLAN.md                the plan. Source of truth.
-```
+1. Push the repo to GitHub.
+2. Cloudflare dashboard: **Workers & Pages > Create > Pages > Connect to Git**. Pick the repo.
+3. Build settings: framework preset **None**. Build command `npm run generate`. Output directory `dist`.
+4. Environment variable `NODE_VERSION` = `24`. Cloudflare also reads `.node-version` in the repo root, which says `24`. Cloudflare's default Node is too old for Nuxt 4.
+5. Save and deploy. Add a custom domain under **Custom domains** after the first build.
+
+No Nitro preset is set. The build is plain static files. `/edit` and `/api` are not in `dist/`.
+
+### Netlify
+
+Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers.
 
 ## Roadmap
 
-- v1: public page, all tile types, local editor, presets, deploy.
-- Later: Pexels photo picker in the editor. Personal photo uploads to Cloudflare R2. A left-rail layout preset. Import a Bento.me export zip.
+- Pexels photo picker in the editor, with attribution on the tile.
+- Personal photo uploads to Cloudflare R2.
+- Left-rail layout preset.
+- Import a Bento.me export zip.
+- Open Graph image built from the profile at generate time.
 
-## Design
-
-The look is on a Claude Design canvas. A local copy of the boards is in `design/canvas/`. Default preset: CONDOMERA blues with the Geist font family.
+Full plan and decisions: `PLAN.md`.
 
 ## License
 
-MIT. To be added with the first code commit.
+MIT. See `LICENSE`.
