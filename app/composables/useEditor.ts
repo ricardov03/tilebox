@@ -10,6 +10,16 @@ export type EditorTab = 'profile' | 'blocks' | 'theme'
 
 export const BLOCK_TYPES: readonly BlockType[] = ['link', 'social', 'image', 'text', 'section', 'map', 'video'] as const
 
+/**
+ * Grid columns, row height and gap for the preview. Same shape as BentoGrid
+ * (`--row`, `--gap`, `auto-rows-auto`, tiles carry their height). The desktop
+ * row shrinks with the pane so 4 columns fit next to the panel.
+ */
+export const PREVIEW_GRID_CLASSES: Record<2 | 4, string> = {
+  4: 'grid-cols-4 [--gap:16px] [--row:clamp(120px,13vw,240px)] xl:[--gap:20px]',
+  2: 'grid-cols-2 [--gap:12px] [--row:173px]',
+}
+
 export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
   link: 'Link',
   social: 'Social',

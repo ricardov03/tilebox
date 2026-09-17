@@ -1,15 +1,16 @@
 <!--
-  Static preview grid (no drag). Used as the SSR/fallback surface and by
-  BlockGridEditor before the drag library loads. Same grid rules as
-  PLAN.md 4: 4 columns on desktop, 2 on mobile, sections span a full row.
-  The integration agent (WP5) may swap this for the real BentoGrid.
+  Static preview grid (no drag). The SSR fallback and what BlockGridEditor
+  shows before the drag library loads. Same grid rules as BentoGrid: the
+  profile tile first (2x2), 4 columns on desktop, 2 on mobile, sections
+  span a full row, row tracks are auto and tiles carry their height.
 -->
 <script setup lang="ts">
-import type { Block } from '~~/types/profile'
+import type { Block, ProfileInfo } from '~~/types/profile'
 
 defineProps<{
   blocks: Block[]
   columns: 2 | 4
+  profile: ProfileInfo
   selectedId: string | null
 }>()
 
@@ -18,9 +19,15 @@ const emit = defineEmits<{ select: [id: string] }>()
 
 <template>
   <ul
-    :class="columns === 4 ? 'grid-cols-4 auto-rows-[clamp(120px,13vw,240px)] gap-4 xl:gap-5' : 'grid-cols-2 auto-rows-[173px] gap-4'"
-    class="grid list-none p-0"
+    :class="PREVIEW_GRID_CLASSES[columns]"
+    class="grid list-none auto-rows-auto gap-[var(--gap)] p-0"
   >
+    <li
+      data-profile
+      class="col-span-2 row-span-2 h-[calc(var(--row)*2+var(--gap))]"
+    >
+      <ProfileHeader :profile="profile" />
+    </li>
     <EditorPreviewTile
       v-for="block in blocks"
       :key="block.id"

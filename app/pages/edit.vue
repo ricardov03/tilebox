@@ -60,6 +60,25 @@ function onBeforeUnload(event: BeforeUnloadEvent) {
   if (dirty.value) event.preventDefault()
 }
 
+/**
+ * Capture-phase click handler for the preview. The tiles are the real
+ * block components, so they contain links and buttons. A click on a tile
+ * selects its block. Anything that is not an editor control (Edit, grip)
+ * is stopped, so links never navigate and the video never starts.
+ */
+function onPreviewClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (target.closest('[data-editor-control]')) return
+  const tile = target.closest('li[data-id]')
+  if (tile instanceof HTMLElement && tile.dataset.id) editor.select(tile.dataset.id)
+  else if (target.closest('li[data-profile]')) tab.value = 'profile'
+  if (target.closest('a[href], button')) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+}
+
 onMounted(() => {
   media = window.matchMedia('(prefers-color-scheme: dark)')
   systemDark.value = media.matches
@@ -147,59 +166,15 @@ function setAvatar(value: string | null | undefined) {
           :data-colors="draft.profile.theme.colors"
           :data-fonts="draft.profile.theme.fonts"
           :data-theme="previewTheme"
-          :class="layoutKey === 'mobile' ? 'mx-auto w-[390px] max-w-full px-4 py-8' : 'px-4 py-8 xl:px-10'"
+          :class="layoutKey === 'mobile' ? 'mx-auto w-[390px] max-w-full p-4' : 'p-4 xl:p-10'"
           class="rounded-tile bg-ground text-ink transition-colors motion-reduce:transition-none"
+          @click.capture="onPreviewClick"
         >
-          <div
-            :class="layoutKey === 'mobile' ? 'mb-6 gap-3' : 'mb-8 gap-4'"
-            class="flex flex-col"
-          >
-            <div class="flex items-center gap-4">
-              <img
-                v-if="draft.profile.avatar"
-                :src="draft.profile.avatar"
-                alt=""
-                :class="layoutKey === 'mobile' ? 'size-16' : 'size-24'"
-                class="rounded-full object-cover"
-              >
-              <span
-                v-else
-                :class="layoutKey === 'mobile' ? 'size-16 text-xl' : 'size-24 text-4xl'"
-                class="flex items-center justify-center rounded-full bg-accent font-display font-semibold text-accent-soft"
-                aria-hidden="true"
-              >{{ draft.profile.name.split(' ').map(w => w[0]).join('').slice(0, 2) }}</span>
-            </div>
-            <h1
-              :class="layoutKey === 'mobile' ? 'text-[42px]' : 'text-5xl xl:text-[68px]'"
-              class="font-display font-semibold leading-none"
-            >
-              {{ draft.profile.name }}
-            </h1>
-            <p
-              :class="layoutKey === 'mobile' ? 'text-base' : 'text-[19px]'"
-              class="max-w-[34ch] leading-snug text-muted"
-            >
-              {{ draft.profile.bio }}
-            </p>
-            <p
-              v-if="draft.profile.status"
-              class="flex items-center gap-2 text-[15px] font-medium"
-            >
-              <span
-                class="size-2.5 rounded-full bg-dot"
-                aria-hidden="true"
-              />
-              {{ draft.profile.status }}
-            </p>
-            <p class="font-mono text-sm text-muted">
-              @{{ draft.profile.handle }}
-            </p>
-          </div>
-
           <ClientOnly>
             <EditorBlockGridEditor
               :blocks="orderedBlocks"
               :columns="layoutKey === 'mobile' ? 2 : 4"
+              :profile="draft.profile"
               :selected-id="selectedId"
               @reorder="editor.setOrder"
               @select="editor.select"
@@ -208,6 +183,7 @@ function setAvatar(value: string | null | undefined) {
               <EditorPreviewGrid
                 :blocks="orderedBlocks"
                 :columns="layoutKey === 'mobile' ? 2 : 4"
+                :profile="draft.profile"
                 :selected-id="selectedId"
                 @select="editor.select"
               />
