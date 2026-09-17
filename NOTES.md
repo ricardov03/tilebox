@@ -186,3 +186,6 @@ Branch: `wp/4-deploy-docs`. Date: 2026-09-17. Node used: 22.23.1.
 ```
 
 `dist/` check: `test -f dist/index.html && ! test -e dist/edit` passes. `dist/og.png` present, 32893 bytes.
+
+### WP4 review (OCR / DeepSeek, branch range, 2026-09-17)
+Applied: `permissions: contents: read`, `timeout-minutes: 10`, push trigger limited to `main`, dist check also guards `dist/edit.html`. `.node-version` kept next to `.nvmrc` on purpose: Cloudflare Pages reads `.node-version`, nvm reads `.nvmrc`. Ownership recorded here.
