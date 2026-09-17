@@ -4,6 +4,7 @@
 -->
 <script setup lang="ts">
 import type { ImageBlock } from '~~/types/profile'
+import { isHttpUrl } from './media'
 import Tile from './Tile.vue'
 
 const props = defineProps<{ block: ImageBlock }>()
@@ -18,9 +19,12 @@ onMounted(() => {
   if (el && el.complete && el.naturalWidth === 0) failed.value = true
 })
 
+/** Author credit. The link renders only for an http(s) author URL. */
 const credit = computed(() => {
   const source = props.block.source
-  return source?.author ? { author: source.author, url: source.authorUrl } : null
+  if (!source?.author) return null
+  const url = source.authorUrl && isHttpUrl(source.authorUrl) ? source.authorUrl : null
+  return { author: source.author, url }
 })
 </script>
 
@@ -60,7 +64,7 @@ const credit = computed(() => {
           v-if="credit.url"
           :href="credit.url"
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
           class="underline underline-offset-2"
         >{{ credit.author }}</a>
         <template v-else>{{ credit.author }}</template>
