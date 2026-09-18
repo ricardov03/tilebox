@@ -23,7 +23,10 @@
     "fetch:favicons": "tsx scripts/fetch-favicons.ts",
     "predev": "npm run presets && npm run check:profile",
     "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast && npm run check:icons && npm run fetch:favicons",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "release": "node scripts/release.mjs",
+    "deploy": "npm run generate && wrangler pages deploy dist --project-name tilebox --branch main",
+    "deploy:preview": "npm run generate && wrangler pages deploy dist --project-name tilebox --branch preview"
   },
   "dependencies": {
     "@nuxt/fonts": "^0.14.0",
