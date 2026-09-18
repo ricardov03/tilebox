@@ -415,6 +415,18 @@ export async function buildSiteAssets(options: BuildSiteAssetsOptions): Promise<
     await writeFile(resolve(outDir, name), body)
     files.add(name)
   }
+  /**
+   * A kind that failed leaves NO file behind. A file of an older build would still be "present"
+   * (`siteAssetsIfPresent()`), and the head would point at a stale or half-written set instead of
+   * the tracked `/favicon.ico` and `/og.png`.
+   */
+  const remove = async (names: readonly string[]) => {
+    for (const name of names) {
+      await rm(resolve(outDir, name), { force: true }).catch(() => undefined)
+      files.delete(name)
+    }
+  }
+  const FAVICON_SET = [SITE_FILES.faviconIco, SITE_FILES.icon192, SITE_FILES.icon512, SITE_FILES.appleTouchIcon, SITE_FILES.iconMask, SITE_FILES.iconSvg, SITE_FILES.manifest]
 
   try {
     await mkdir(outDir, { recursive: true })
@@ -482,10 +494,12 @@ export async function buildSiteAssets(options: BuildSiteAssetsOptions): Promise<
       faviconSource = art.source
     }
     catch (error) {
+      await remove(FAVICON_SET)
       messages.push(`site: favicon set not written (${reasonOf(error)}), the page keeps /favicon.ico`)
     }
   }
   else {
+    await remove(FAVICON_SET)
     messages.push('site: no favicon source worked, the page keeps /favicon.ico')
   }
 
@@ -516,6 +530,7 @@ export async function buildSiteAssets(options: BuildSiteAssetsOptions): Promise<
       ogSource = 'generated'
     }
     catch (error) {
+      await remove([SITE_FILES.ogImage])
       messages.push(`site: social image not generated (${reasonOf(error)}), the page keeps /og.png`)
     }
   }

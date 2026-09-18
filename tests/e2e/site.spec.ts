@@ -386,6 +386,29 @@ test.describe('buildSiteAssets', () => {
     expect(siteAssetsIfPresent(join(dir, 'out2'))).toEqual({})
   })
 
+  test('C5: when a kind fails, its files of an older build are removed, so the head falls back to /favicon.ico and /og.png', async () => {
+    const first = await build(BASE)
+    expect(first.files).toEqual(ALL_FILES)
+    expect(Object.keys(siteAssetsIfPresent(outDir)).length).toBeGreaterThan(0)
+
+    // No fonts: the initials tile and the generated card both fail. Nothing of the older build may stay.
+    const noFonts = await buildSiteAssets({ profile: BASE, publicDir, outDir, fontsDir: join(dir, 'no-fonts'), gravatarFile: join(dir, 'no-gravatar.jpg') })
+    expect(noFonts.faviconSource).toBe('none')
+    expect(noFonts.ogSource).toBe('none')
+    expect(noFonts.files).toEqual([])
+    expect(readdirSync(outDir)).toEqual([])
+    expect(siteAssetsIfPresent(outDir)).toEqual({})
+
+    // One kind fails, the other works: only the failed kind is removed.
+    await build(BASE)
+    writeFileSync(join(publicDir, 'site-uploads/og.jpg'), await photo(1200, 630, '#00aa55'))
+    const onlyOg = await buildSiteAssets({ profile: { ...BASE, site: { ogImage: '/site-uploads/og.jpg' } }, publicDir, outDir, fontsDir: join(dir, 'no-fonts'), gravatarFile: join(dir, 'no-gravatar.jpg') })
+    expect(onlyOg.faviconSource).toBe('none')
+    expect(onlyOg.ogSource).toBe('upload')
+    expect(readdirSync(outDir)).toEqual([SITE_FILES.ogImage])
+    expect(siteAssetsIfPresent(outDir)).toEqual({ ogImage: '/site/og.png' })
+  })
+
   test('icoFromPng writes the 22-byte header', () => {
     const ico = icoFromPng(Buffer.from([1, 2, 3]), 32)
     expect(ico.byteLength).toBe(25)
