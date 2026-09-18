@@ -145,30 +145,44 @@ test('adds a link block, edits it, moves it on mobile and saves with the keyboar
   expect(saved.layout.mobile?.at(-1)).toBe(mobileBefore.at(-2))
 })
 
-test('an invalid URL shows an error and is not written', async ({ page }) => {
+test('an invalid URL shows an error, blocks the save and is not written', async ({ page }) => {
   const before = readFileSync(PROFILE_PATH, 'utf8')
   await openEditor(page)
 
   await page.getByRole('button', { name: /^Edit Link block: /, exact: false }).first().click()
   const form = page.locator('form')
-  await form.locator('input[id$="-url"]').fill('not a url')
-  await expect(form.getByRole('alert')).toContainText('url')
+  const url = form.locator('input[id$="-url"]')
+  await url.fill('not a url')
+  // The message is an alert after the field lost the focus (editor-inputs.spec.ts has the timing).
+  await url.blur()
+  await expect(form.getByRole('alert')).toContainText('Invalid URL')
+  await expect(url).toHaveValue('not a url')
 
-  // The invalid value never reached the draft, so there is nothing to save.
+  // The invalid value never reached the draft, and the save key says why it does nothing.
   await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-save-blocked]')).toBeVisible()
   await page.waitForTimeout(500)
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
   expect(before).not.toContain('not a url')
 })
 
-test('the save route rejects an empty profile name', async ({ page }) => {
+test('an empty profile name never leaves the editor, and the save route rejects it too', async ({ page, baseURL }) => {
   const before = readFileSync(PROFILE_PATH, 'utf8')
   await openEditor(page)
 
   await page.getByRole('tab', { name: 'Profile' }).click()
   await page.locator('#p-name').fill('')
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.getByRole('alert')).toContainText('profile.name')
+  await expect(page.locator('#p-name-error')).toHaveText('Required')
+  await expect(page.locator('[data-field-problems]')).toContainText('Profile > Name: Required')
+  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
+
+  // The route has its own check: a client that skips the editor gets the schema error.
+  const profile = JSON.parse(before) as Profile
+  const response = await page.request.post('/api/save', { headers: { 'origin': baseURL ?? '', 'sec-fetch-site': 'same-origin' }, data: { ...profile, profile: { ...profile.profile, name: '' } } })
+  expect(response.status()).toBe(400)
+  expect(await response.text()).toContain('profile.name')
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
 })
 
@@ -226,9 +240,11 @@ test('an invalid email shows an inline error and is not written', async ({ page 
   await page.locator('#p-email').fill('not-an-email')
   await expect(page.locator('#p-email-error')).toContainText('email')
   await expect(page.locator('#p-email')).toHaveAttribute('aria-invalid', 'true')
+  await expect(page.locator('#p-email')).toHaveValue('not-an-email')
 
-  // The invalid value never reached the draft, so there is nothing to save.
+  // The invalid value never reached the draft, and the save is blocked.
   await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-save-blocked]')).toBeVisible()
   await page.waitForTimeout(500)
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
   expect(before).not.toContain('not-an-email')

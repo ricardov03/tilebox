@@ -1,7 +1,9 @@
 <!--
   Image field. A file input uploads through /api/upload (dev only) and
   sets `src`. Shows a preview. `alt` is required by the schema for image
-  blocks; pass `require-alt` to show that field.
+  blocks; pass `require-alt` to show that field, and `require-src` when the
+  path may not be empty. Both text fields are `EditorTextField`: an empty
+  required value stays in the input, shows "Required" and is never emitted.
 -->
 <script setup lang="ts">
 const src = defineModel<string | null | undefined>('src')
@@ -10,6 +12,7 @@ const alt = defineModel<string | undefined>('alt')
 const props = defineProps<{
   id: string
   label?: string
+  requireSrc?: boolean
   requireAlt?: boolean
 }>()
 
@@ -55,20 +58,9 @@ async function onFile(event: Event) {
   }
 }
 
-function onSrcInput(event: Event) {
-  const target = event.target
-  if (target instanceof HTMLInputElement) src.value = target.value || null
-}
-
-function onAltInput(event: Event) {
-  const target = event.target
-  if (target instanceof HTMLInputElement) alt.value = target.value
-}
-
 const fileId = computed(() => `${props.id}-file`)
 const srcId = computed(() => `${props.id}-src`)
 const altId = computed(() => `${props.id}-alt`)
-const inputClass = INPUT_CLASS
 </script>
 
 <template>
@@ -108,19 +100,17 @@ const inputClass = INPUT_CLASS
             @change="onFile"
           >
         </label>
-        <label
-          :for="srcId"
-          class="sr-only"
-        >Image path</label>
-        <input
+        <EditorTextField
           :id="srcId"
-          :value="src ?? ''"
-          type="text"
+          label="Image path"
+          label-hidden
+          :problem-label="`${label ?? 'Image'}: path`"
+          :required="requireSrc"
+          :model-value="src"
           placeholder="/blocks/sample.jpg"
-          :class="inputClass"
-          class="font-mono"
-          @input="onSrcInput"
-        >
+          mono
+          @commit="src = $event || null"
+        />
       </div>
     </div>
 
@@ -132,19 +122,14 @@ const inputClass = INPUT_CLASS
       {{ error }}
     </p>
 
-    <template v-if="requireAlt">
-      <label
-        :for="altId"
-        class="text-sm font-medium text-ink"
-      >Alt text <span class="text-muted">(required)</span></label>
-      <input
-        :id="altId"
-        :value="alt ?? ''"
-        type="text"
-        required
-        :class="inputClass"
-        @input="onAltInput"
-      >
-    </template>
+    <EditorTextField
+      v-if="requireAlt"
+      :id="altId"
+      label="Alt text"
+      required
+      required-mark
+      :model-value="alt"
+      @commit="alt = $event"
+    />
   </fieldset>
 </template>

@@ -5,7 +5,9 @@
   The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
   do not exist, so the page renders one short message and nothing else.
   Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice,
-  "Block deleted. Undo" for 8 seconds.
+  "Block deleted. Undo" for 8 seconds, and "Not saved yet" with the text fields
+  whose value the check refused (NOTES.md, "Editor input fix"). Save checks the
+  field you are typing in first, and is blocked while such a field exists.
   Delete or Backspace (focus outside a field) opens the delete confirm of the selected block.
 -->
 <script setup lang="ts">
@@ -82,10 +84,25 @@ function isTyping(target: EventTarget | null): boolean {
     && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
 }
 
+/** Text fields tell the page about a refused value (`useFieldDraft`). The draft keeps the last valid one. */
+const { problems: fieldProblems, flushAll } = provideFieldDrafts()
+provideFieldDraftGroup('Profile')
+/** A save was asked while a field had a refused value. */
+const saveBlocked = ref(false)
+watch(fieldProblems, (list) => {
+  if (list.length === 0) saveBlocked.value = false
+})
+
+/** The save key does not wait for the 600 ms of a field: check now, then save when every field is fine. */
+async function trySave() {
+  saveBlocked.value = !flushAll()
+  if (!saveBlocked.value) await editor.save()
+}
+
 function onKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
-    void editor.save()
+    void trySave()
     return
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -190,14 +207,13 @@ const savedLabel = computed(() => {
   return lastSavedAt.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 })
 
-const inputClass = INPUT_CLASS
-const labelClass = LABEL_CLASS
 const buttonClass = `min-h-11 rounded-full text-sm font-medium ${FOCUS_RING}`
 
-function setProfile(key: 'name' | 'handle' | 'bio' | 'status', event: Event) {
-  const control = formControl(event)
-  if (!control || !draft.value) return
-  const value = control.value
+type ProfileTextKey = 'name' | 'handle' | 'bio' | 'status' | 'email'
+
+/** A checked value from a Profile field. An empty status leaves the file. */
+function setProfile(key: ProfileTextKey, value: string) {
+  if (!draft.value) return
   if (key === 'status' && value === '') {
     delete draft.value.profile.status
     return
@@ -205,29 +221,24 @@ function setProfile(key: 'name' | 'handle' | 'bio' | 'status', event: Event) {
   draft.value.profile[key] = value
 }
 
+/** Why the schema refuses a value, or `undefined`. One stable function per key. */
+function profileCheck(key: ProfileTextKey) {
+  return (value: string): string | undefined => {
+    const result = ProfileInfoSchema.shape[key].safeParse(value)
+    return result.success ? undefined : (result.error.issues[0]?.message ?? 'Not valid')
+  }
+}
+const profileChecks: Record<ProfileTextKey, (value: string) => string | undefined> = {
+  name: profileCheck('name'),
+  handle: profileCheck('handle'),
+  bio: profileCheck('bio'),
+  status: profileCheck('status'),
+  email: profileCheck('email'),
+}
+
 function setAvatar(value: string | null | undefined) {
   if (!draft.value) return
   draft.value.profile.avatar = value || null
-}
-
-/** The email field keeps what you type. The draft only gets a valid email, so a bad one is never saved. */
-const emailInput = ref('')
-const emailError = ref<string | null>(null)
-watch(() => draft.value?.profile.email, (email) => {
-  if (email !== undefined && !emailError.value) emailInput.value = email
-}, { immediate: true })
-
-function setEmail(event: Event) {
-  const control = formControl(event)
-  if (!control || !draft.value) return
-  emailInput.value = control.value
-  const result = ProfileInfoSchema.shape.email.safeParse(control.value.trim())
-  if (!result.success) {
-    emailError.value = `email: ${result.error.issues[0]?.message ?? 'Invalid email'}`
-    return
-  }
-  emailError.value = null
-  draft.value.profile.email = result.data
 }
 
 function setShowEmail(event: Event) {
@@ -407,91 +418,56 @@ const previewProfile = computed(() => {
             aria-labelledby="tab-profile"
             class="flex flex-col gap-4"
           >
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-name"
-                :class="labelClass"
-              >Name</label>
-              <input
-                id="p-name"
-                :value="draft.profile.name"
-                type="text"
-                :class="inputClass"
-                @input="setProfile('name', $event)"
-              >
-            </div>
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-handle"
-                :class="labelClass"
-              >Handle</label>
-              <input
-                id="p-handle"
-                :value="draft.profile.handle"
-                type="text"
-                :class="inputClass"
-                class="font-mono"
-                @input="setProfile('handle', $event)"
-              >
-            </div>
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-bio"
-                :class="labelClass"
-              >Bio</label>
-              <textarea
-                id="p-bio"
-                :value="draft.profile.bio"
-                rows="4"
-                :class="inputClass"
-                class="py-2"
-                @input="setProfile('bio', $event)"
-              />
-            </div>
+            <EditorTextField
+              id="p-name"
+              label="Name"
+              required
+              :model-value="draft.profile.name"
+              :validate="profileChecks.name"
+              @commit="setProfile('name', $event)"
+            />
+            <EditorTextField
+              id="p-handle"
+              label="Handle"
+              required
+              mono
+              :model-value="draft.profile.handle"
+              :validate="profileChecks.handle"
+              @commit="setProfile('handle', $event)"
+            />
+            <EditorTextField
+              id="p-bio"
+              label="Bio"
+              multiline
+              :rows="4"
+              :model-value="draft.profile.bio"
+              :validate="profileChecks.bio"
+              @commit="setProfile('bio', $event)"
+            />
             <EditorHighlightsField
               :model-value="draft.profile.highlights"
               @update:model-value="setHighlights"
             />
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-status"
-                :class="labelClass"
-              >Status</label>
-              <input
-                id="p-status"
-                :value="draft.profile.status ?? ''"
-                type="text"
-                placeholder="Now building..."
-                :class="inputClass"
-                @input="setProfile('status', $event)"
-              >
-            </div>
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-email"
-                :class="labelClass"
-              >Email <span class="font-normal text-muted">(required)</span></label>
-              <input
-                id="p-email"
-                :value="emailInput"
-                type="email"
-                required
-                autocomplete="email"
-                :aria-invalid="emailError ? 'true' : undefined"
-                :aria-describedby="emailError ? 'p-email-error' : undefined"
-                :class="inputClass"
-                class="font-mono"
-                @input="setEmail"
-              >
-              <p
-                v-if="emailError"
-                id="p-email-error"
-                class="font-mono text-xs text-pop"
-                role="alert"
-              >
-                {{ emailError }}
-              </p>
-            </div>
+            <EditorTextField
+              id="p-status"
+              label="Status"
+              placeholder="Now building..."
+              :model-value="draft.profile.status"
+              :validate="profileChecks.status"
+              @commit="setProfile('status', $event)"
+            />
+            <EditorTextField
+              id="p-email"
+              label="Email"
+              type="email"
+              required
+              required-mark
+              mono
+              autocomplete="email"
+              :model-value="draft.profile.email"
+              :validate="profileChecks.email"
+              @commit="setProfile('email', $event)"
+            />
             <div class="flex flex-col gap-1">
               <label
                 for="p-show-email"
@@ -625,7 +601,7 @@ const previewProfile = computed(() => {
           :disabled="!dirty || saving"
           :class="buttonClass"
           class="bg-accent px-5 text-accent-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          @click="editor.save()"
+          @click="trySave()"
         >
           {{ saving ? 'Saving...' : 'Save' }}
         </button>
@@ -668,6 +644,32 @@ const previewProfile = computed(() => {
         role="status"
       >
         Restart <code class="font-mono">npm run dev</code> to apply the new color preset, download the new fonts or bundle the new icons.
+      </p>
+      <!-- Text fields whose value the check refused. The draft still has their last valid value. -->
+      <div
+        v-if="fieldProblems.length"
+        data-field-problems
+        class="mt-2 rounded-xl border border-line px-3 py-2 text-sm text-ink"
+        role="status"
+      >
+        <p>Not saved yet:</p>
+        <ul class="list-disc pl-4">
+          <li
+            v-for="problem in fieldProblems"
+            :key="problem"
+            class="font-mono text-xs"
+          >
+            {{ problem }}
+          </li>
+        </ul>
+      </div>
+      <p
+        v-if="saveBlocked"
+        data-save-blocked
+        class="mt-2 rounded-xl border border-pop px-3 py-2 text-sm text-ink"
+        role="alert"
+      >
+        Save is blocked. Fix the fields in "Not saved yet" first, or type their old value again. Nothing was written.
       </p>
       <ul
         v-if="errors.length"

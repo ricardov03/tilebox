@@ -75,8 +75,10 @@ test('edits the site fields, shows the previews, refuses a bad URL and saves', a
   // A bad URL shows the inline error and never reaches the draft.
   const url = panel.getByLabel('Site URL')
   await url.fill('http://ada.example')
-  await expect(panel.getByRole('alert')).toContainText('url:')
+  await url.blur()
+  await expect(panel.getByRole('alert')).toContainText('https URL')
   await expect(url).toHaveAttribute('aria-invalid', 'true')
+  await expect(url).toHaveValue('http://ada.example')
   await url.fill('https://ada.example/')
   await expect(panel.getByRole('alert')).toHaveCount(0)
   await expect(panel.locator('[data-site-snippet]')).toContainText('ada.example')
@@ -101,12 +103,20 @@ test('edits the site fields, shows the previews, refuses a bad URL and saves', a
   })
 })
 
-test('a bad URL is not saved, and an emptied field leaves the file', async ({ page }) => {
+test('a bad URL blocks the save, and an emptied field leaves the file', async ({ page }) => {
   await openSiteTab(page)
   const panel = page.locator('#panel-site')
-  await expect(panel.getByLabel('Site URL')).toHaveValue('https://ada.example')
-  await panel.getByLabel('Site URL').fill('ada.example')
-  await expect(panel.getByRole('alert')).toContainText('url:')
+  const url = panel.getByLabel('Site URL')
+  await expect(url).toHaveValue('https://ada.example')
+  await url.fill('ada.example')
+  await url.blur()
+  await expect(panel.getByRole('alert')).toContainText('https URL')
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  expect(readProfile().site?.url).toBe('https://ada.example')
+
+  // The old value again: the field is fine, the save works.
+  await url.fill('https://ada.example')
   await panel.getByLabel('Page title').fill('')
   await panel.getByLabel('Hide my page from search engines').uncheck()
   await save(page)

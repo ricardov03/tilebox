@@ -1,13 +1,14 @@
 <!--
-  Up to 3 highlights (the short lines under the bio). One input per slot,
-  with a character counter. The inputs keep their place while you type;
-  the model only gets the non-empty lines, so an empty input is never saved.
+  Up to 3 highlights (the short lines under the bio). One `EditorTextField`
+  per slot, with a character counter. The slots keep their place while you
+  type; the model only gets the non-empty lines, so an empty input is never saved.
 -->
 <script setup lang="ts">
 import { HIGHLIGHT_MAX_CHARS, HIGHLIGHTS_MAX } from '~~/types/profile'
 
 const model = defineModel<string[]>({ required: true })
 
+/** The checked value of every slot. '' = an empty slot. */
 const slots = ref<string[]>([])
 
 function fill(values: readonly string[]): string[] {
@@ -23,14 +24,17 @@ watch(model, (next) => {
   if (JSON.stringify(filled(slots.value)) !== JSON.stringify(next)) slots.value = fill(next)
 }, { immediate: true, deep: true })
 
-function onInput(index: number, event: Event) {
-  const control = formControl(event)
-  if (!control) return
-  slots.value[index] = control.value.slice(0, HIGHLIGHT_MAX_CHARS)
+function setSlot(index: number, value: string) {
+  slots.value[index] = value
   model.value = filled(slots.value)
 }
 
-const inputClass = INPUT_CLASS
+/** `maxlength` stops the keys. This stops a long paste in a browser that does not. */
+function tooLong(value: string): string | undefined {
+  return value.length > HIGHLIGHT_MAX_CHARS ? `At most ${HIGHLIGHT_MAX_CHARS} characters` : undefined
+}
+
+const trimmed = (text: string) => text.trim()
 </script>
 
 <template>
@@ -38,30 +42,19 @@ const inputClass = INPUT_CLASS
     <legend :class="LABEL_CLASS">
       Highlights <span class="font-normal text-muted">(up to {{ HIGHLIGHTS_MAX }}, shown under the bio)</span>
     </legend>
-    <div
+    <EditorTextField
       v-for="(value, i) in slots"
+      :id="`p-highlight-${i}`"
       :key="i"
-      class="flex items-center gap-2"
-    >
-      <label
-        :for="`p-highlight-${i}`"
-        class="sr-only"
-      >Highlight {{ i + 1 }}</label>
-      <input
-        :id="`p-highlight-${i}`"
-        :value="value"
-        type="text"
-        :maxlength="HIGHLIGHT_MAX_CHARS"
-        :placeholder="`Highlight ${i + 1}`"
-        :class="inputClass"
-        class="min-w-0 flex-1"
-        @input="onInput(i, $event)"
-      >
-      <span
-        class="w-12 shrink-0 text-right font-mono text-xs text-muted"
-        aria-hidden="true"
-      >{{ value.length }}/{{ HIGHLIGHT_MAX_CHARS }}</span>
-    </div>
+      :label="`Highlight ${i + 1}`"
+      label-hidden
+      :model-value="value"
+      :counter="HIGHLIGHT_MAX_CHARS"
+      :placeholder="`Highlight ${i + 1}`"
+      :validate="tooLong"
+      :normalize="trimmed"
+      @commit="setSlot(i, $event)"
+    />
     <p class="text-xs text-muted">
       Short lines work best. With 3 highlights, each one gets a single line on phones (about 40 characters).
     </p>

@@ -2,8 +2,10 @@
   Site tab (WP10b): the metadata of the page. Title, description, site URL,
   language, job title, location, X handle, "hide from search engines", the
   favicon, the social preview image, and two previews built from the draft.
-  Text fields keep what you type; the draft only gets a value the schema
-  accepts, so a bad URL is never saved. An empty `site` object is removed.
+  Text fields are `EditorTextField` (NOTES.md, "Editor input fix"): they keep
+  what you type, the check waits until you stop typing, and the draft only gets
+  a value the schema accepts, so a bad URL is never saved. An empty `site`
+  object is removed.
   Uploads go to /api/site/upload, "Regenerate" to /api/site/assets (dev only).
 -->
 <script setup lang="ts">
@@ -26,11 +28,6 @@ type AssetKey = 'favicon' | 'ogImage'
 const site = computed<Site>(() => props.profile.site ?? {})
 const info = computed(() => props.profile.profile)
 
-/** What the inputs show. Re-synced from the draft unless the field holds a value the schema refused. */
-const text = reactive<Record<TextKey, string>>({ title: '', description: '', url: '', lang: '', jobTitle: '', location: '', xHandle: '' })
-const fieldErrors = reactive<Partial<Record<TextKey, string>>>({})
-const TEXT_KEYS: readonly TextKey[] = ['title', 'description', 'url', 'lang', 'jobTitle', 'location', 'xHandle']
-
 /** What the draft gets for what you typed: no `@` on the X handle, no trailing slash on the URL. */
 function normalize(key: TextKey, raw: string): string {
   const value = raw.trim()
@@ -39,12 +36,30 @@ function normalize(key: TextKey, raw: string): string {
   return value
 }
 
-// Re-sync only when the draft changed from outside (load), not on our own emit.
-watch(site, (next) => {
-  for (const key of TEXT_KEYS) {
-    if (!fieldErrors[key] && normalize(key, text[key]) !== (next[key] ?? '')) text[key] = next[key] ?? ''
+/** Why the schema refuses a value, or `undefined`. */
+function fieldError(key: TextKey, value: string): string | undefined {
+  const result = SiteSchema.shape[key].safeParse(value)
+  return result.success ? undefined : (result.error.issues[0]?.message ?? 'Not valid')
+}
+
+/** One stable pair of functions per key, so a render does not give the field new props. */
+function fieldOf(key: TextKey) {
+  return {
+    normalize: (raw: string) => normalize(key, raw),
+    validate: (value: string) => fieldError(key, value),
   }
-}, { immediate: true, deep: true })
+}
+const fields: Record<TextKey, ReturnType<typeof fieldOf>> = {
+  title: fieldOf('title'),
+  description: fieldOf('description'),
+  url: fieldOf('url'),
+  lang: fieldOf('lang'),
+  jobTitle: fieldOf('jobTitle'),
+  location: fieldOf('location'),
+  xHandle: fieldOf('xHandle'),
+}
+
+provideFieldDraftGroup('Site')
 
 /** The next `site` object: `value` undefined or '' removes the key. No keys left = no `site`. */
 function withKey(key: keyof Site, value: string | boolean | undefined): Site | undefined {
@@ -52,22 +67,6 @@ function withKey(key: keyof Site, value: string | boolean | undefined): Site | u
   if (value === undefined || value === '' || value === false) Reflect.deleteProperty(next, key)
   else next[key] = value
   return Object.keys(next).length ? (next as Site) : undefined
-}
-
-function setText(key: TextKey, event: Event) {
-  const control = formControl(event)
-  if (!control) return
-  text[key] = control.value
-  const value = normalize(key, control.value)
-  if (value !== '') {
-    const result = SiteSchema.shape[key].safeParse(value)
-    if (!result.success) {
-      fieldErrors[key] = result.error.issues[0]?.message ?? 'Not valid'
-      return
-    }
-  }
-  Reflect.deleteProperty(fieldErrors, key)
-  emit('update:site', withKey(key, value))
 }
 
 function setNoindex(event: Event) {
@@ -182,7 +181,6 @@ const shownDescription = computed(() => siteDescription(info.value, site.value))
 /** The editor does not know `NUXT_PUBLIC_SITE_URL`; the preview shows `site.url`. */
 const shownHost = computed(() => siteHost(resolveSiteUrl('', site.value)) || 'your-site.example')
 
-const inputClass = INPUT_CLASS
 const labelClass = LABEL_CLASS
 const uploadClass = 'flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-line bg-ground px-3 text-sm font-medium text-ink hover:border-accent focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent'
 const buttonClass = `min-h-11 rounded-full border border-line px-4 text-sm font-medium text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS_RING}`
@@ -190,170 +188,102 @@ const buttonClass = `min-h-11 rounded-full border border-line px-4 text-sm font-
 
 <template>
   <div class="flex flex-col gap-4">
-    <div class="flex flex-col gap-1">
-      <label
-        for="s-title"
-        :class="labelClass"
-      >Page title</label>
-      <div class="flex items-center gap-2">
-        <input
-          id="s-title"
-          :value="text.title"
-          type="text"
-          :maxlength="SITE_TITLE_MAX"
-          :placeholder="defaultSiteTitle(info)"
-          :class="inputClass"
-          class="min-w-0 flex-1"
-          @input="setText('title', $event)"
-        >
-        <span
-          class="w-12 shrink-0 text-right font-mono text-xs text-muted"
-          aria-hidden="true"
-        >{{ text.title.length }}/{{ SITE_TITLE_MAX }}</span>
-      </div>
+    <EditorTextField
+      id="s-title"
+      label="Page title"
+      :model-value="site.title"
+      :counter="SITE_TITLE_MAX"
+      :placeholder="defaultSiteTitle(info)"
+      :normalize="fields.title.normalize"
+      :validate="fields.title.validate"
+      @commit="emit('update:site', withKey('title', $event))"
+    >
       <p class="text-xs text-muted">
         Empty = your name and handle.
       </p>
-    </div>
+    </EditorTextField>
 
-    <div class="flex flex-col gap-1">
-      <label
-        for="s-description"
-        :class="labelClass"
-      >Description</label>
-      <div class="flex items-start gap-2">
-        <textarea
-          id="s-description"
-          :value="text.description"
-          rows="3"
-          :maxlength="SITE_DESCRIPTION_MAX"
-          :placeholder="info.bio"
-          :class="inputClass"
-          class="min-w-0 flex-1 py-2"
-          @input="setText('description', $event)"
-        />
-        <span
-          class="w-14 shrink-0 pt-2 text-right font-mono text-xs text-muted"
-          aria-hidden="true"
-        >{{ text.description.length }}/{{ SITE_DESCRIPTION_MAX }}</span>
-      </div>
+    <EditorTextField
+      id="s-description"
+      label="Description"
+      multiline
+      :rows="3"
+      :model-value="site.description"
+      :counter="SITE_DESCRIPTION_MAX"
+      :placeholder="info.bio"
+      :normalize="fields.description.normalize"
+      :validate="fields.description.validate"
+      @commit="emit('update:site', withKey('description', $event))"
+    >
       <p class="text-xs text-muted">
         Empty = your bio.
       </p>
-    </div>
+    </EditorTextField>
 
-    <div class="flex flex-col gap-1">
-      <label
-        for="s-url"
-        :class="labelClass"
-      >Site URL</label>
-      <input
-        id="s-url"
-        :value="text.url"
-        type="url"
-        inputmode="url"
-        placeholder="https://example.com"
-        :aria-invalid="fieldErrors.url ? 'true' : undefined"
-        aria-describedby="s-url-help"
-        :class="inputClass"
-        class="font-mono"
-        @input="setText('url', $event)"
-      >
-      <p
-        v-if="fieldErrors.url"
-        id="s-url-error"
-        class="font-mono text-xs text-pop"
-        role="alert"
-      >
-        url: {{ fieldErrors.url }}
-      </p>
+    <EditorTextField
+      id="s-url"
+      label="Site URL"
+      type="url"
+      inputmode="url"
+      mono
+      :model-value="site.url"
+      placeholder="https://example.com"
+      describedby="s-url-help"
+      :normalize="fields.url.normalize"
+      :validate="fields.url.validate"
+      @commit="emit('update:site', withKey('url', $event))"
+    >
       <p
         id="s-url-help"
         class="text-xs text-muted"
       >
         The address of your page. It makes the links in previews absolute. <code class="font-mono">npm run publish</code> sets it for you.
       </p>
+    </EditorTextField>
+
+    <div class="grid grid-cols-2 items-start gap-3">
+      <EditorTextField
+        id="s-lang"
+        label="Language"
+        mono
+        :model-value="site.lang"
+        :placeholder="SITE_DEFAULT_LANG"
+        :normalize="fields.lang.normalize"
+        :validate="fields.lang.validate"
+        @commit="emit('update:site', withKey('lang', $event))"
+      />
+      <EditorTextField
+        id="s-x"
+        label="X handle"
+        mono
+        :model-value="site.xHandle"
+        placeholder="yourname"
+        :normalize="fields.xHandle.normalize"
+        :validate="fields.xHandle.validate"
+        @commit="emit('update:site', withKey('xHandle', $event))"
+      />
     </div>
 
-    <div class="grid grid-cols-2 gap-3">
-      <div class="flex flex-col gap-1">
-        <label
-          for="s-lang"
-          :class="labelClass"
-        >Language</label>
-        <input
-          id="s-lang"
-          :value="text.lang"
-          type="text"
-          :placeholder="SITE_DEFAULT_LANG"
-          :aria-invalid="fieldErrors.lang ? 'true' : undefined"
-          :class="inputClass"
-          class="font-mono"
-          @input="setText('lang', $event)"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          for="s-x"
-          :class="labelClass"
-        >X handle</label>
-        <input
-          id="s-x"
-          :value="text.xHandle"
-          type="text"
-          placeholder="yourname"
-          :aria-invalid="fieldErrors.xHandle ? 'true' : undefined"
-          :class="inputClass"
-          class="font-mono"
-          @input="setText('xHandle', $event)"
-        >
-      </div>
-      <p
-        v-if="fieldErrors.lang"
-        class="col-span-2 font-mono text-xs text-pop"
-        role="alert"
-      >
-        lang: {{ fieldErrors.lang }}
-      </p>
-      <p
-        v-if="fieldErrors.xHandle"
-        class="col-span-2 font-mono text-xs text-pop"
-        role="alert"
-      >
-        xHandle: {{ fieldErrors.xHandle }}
-      </p>
-    </div>
-
-    <div class="grid grid-cols-2 gap-3">
-      <div class="flex flex-col gap-1">
-        <label
-          for="s-job"
-          :class="labelClass"
-        >Job title</label>
-        <input
-          id="s-job"
-          :value="text.jobTitle"
-          type="text"
-          maxlength="100"
-          :class="inputClass"
-          @input="setText('jobTitle', $event)"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          for="s-location"
-          :class="labelClass"
-        >Location</label>
-        <input
-          id="s-location"
-          :value="text.location"
-          type="text"
-          maxlength="100"
-          placeholder="City"
-          :class="inputClass"
-          @input="setText('location', $event)"
-        >
-      </div>
+    <div class="grid grid-cols-2 items-start gap-3">
+      <EditorTextField
+        id="s-job"
+        label="Job title"
+        :maxlength="100"
+        :model-value="site.jobTitle"
+        :normalize="fields.jobTitle.normalize"
+        :validate="fields.jobTitle.validate"
+        @commit="emit('update:site', withKey('jobTitle', $event))"
+      />
+      <EditorTextField
+        id="s-location"
+        label="Location"
+        :maxlength="100"
+        placeholder="City"
+        :model-value="site.location"
+        :normalize="fields.location.normalize"
+        :validate="fields.location.validate"
+        @commit="emit('update:site', withKey('location', $event))"
+      />
       <p class="col-span-2 text-xs text-muted">
         Job title and location are not shown on the page. Search engines read them.
       </p>

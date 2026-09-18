@@ -1,9 +1,12 @@
 <!--
   Form for one block. Fields follow the zod schema in types/profile.ts.
-  Every change builds the whole block, runs it through BlockSchema and
-  emits it only when valid, so the preview updates live and never sees a
-  broken block. Optional string fields are removed when emptied (strict
-  schema, no ""). An invalid value shows an inline error and is not emitted.
+  Text fields are `EditorTextField` (NOTES.md, "Editor input fix"): the input
+  keeps what you type, the check waits until you stop typing, and only a value
+  that passes reaches `patch()`. Each one has a `key` with the block id, so
+  another block gets fresh fields. Selects and checkboxes patch at once.
+  `patch()` builds the whole block, runs it through BlockSchema and emits it
+  only when valid, so the preview never sees a broken block. Optional string
+  fields are removed when emptied (strict schema, no "").
   Link blocks (WP10a): the link preview (LinkEnrich), the icon with its "auto"
   label (LinkIconField) and the Spotlight select with a live sample.
   The last controls: Hide / Show, Duplicate, then "Delete this block", which
@@ -47,21 +50,44 @@ async function cancelDelete() {
 /** Values are checked by `BlockSchema` below, so a patch may carry any JSON value (the link preview sends `meta`). */
 type Patch = Record<string, unknown>
 
-/** Merge a patch, validate, emit. `undefined` or "" on an optional key deletes the key. */
-function patch(changes: Patch, optionalKeys: string[] = []) {
+/** The block with a patch on it. `undefined` or "" on an optional key deletes the key. */
+function merge(changes: Patch, optionalKeys: string[]): Record<string, unknown> {
   const next: Record<string, unknown> = {}
   const merged: Record<string, unknown> = { ...props.block, ...changes }
   for (const [key, value] of Object.entries(merged)) {
     if (optionalKeys.includes(key) && (value === undefined || value === '')) continue
     next[key] = value
   }
-  const result = BlockSchema.safeParse(next)
+  return next
+}
+
+/** Merge a patch, validate, emit. */
+function patch(changes: Patch, optionalKeys: string[] = []) {
+  const result = BlockSchema.safeParse(merge(changes, optionalKeys))
   if (!result.success) {
     errors.value = result.error.issues.map(issue => `${issue.path.join('.') || 'block'}: ${issue.message}`)
     return
   }
   errors.value = []
   emit('update:block', result.data)
+}
+
+/** Why the schema refuses `value` for one key of this block, or `undefined`. The check of a text field. */
+function fieldError(key: string, value: string): string | undefined {
+  const result = BlockSchema.safeParse(merge({ [key]: value }, []))
+  if (result.success) return undefined
+  return result.error.issues.find(issue => issue.path[0] === key)?.message
+}
+
+/** One stable function per key, so a render does not give the field a new prop. */
+const checks = new Map<string, (value: string) => string | undefined>()
+function checkOf(key: string): (value: string) => string | undefined {
+  let check = checks.get(key)
+  if (!check) {
+    check = value => fieldError(key, value)
+    checks.set(key, check)
+  }
+  return check
 }
 
 function text(event: Event): string {
@@ -73,19 +99,21 @@ function checked(event: Event): boolean {
   return target instanceof HTMLInputElement && target.checked
 }
 
-/** A new local file replaces any stock-photo source. An empty value is ignored: `src` is required. */
+/** A new local file replaces any stock-photo source. The picker never sends an empty `src`: it is required. */
 function onImageSrc(value: string | null | undefined) {
   if (!value) return
   patch({ src: value, source: null })
 }
 
-/** `alt` is required for image blocks. An empty value is ignored. */
+/** `alt` is required for image blocks. The picker never sends an empty one. */
 function onImageAlt(value: string | undefined) {
   if (!value) return
   patch({ alt: value })
 }
 
 const SPOTLIGHT_LABELS: Record<Spotlight, string> = { pop: 'Pop', wobble: 'Wobble', buzz: 'Buzz' }
+
+provideFieldDraftGroup('Blocks')
 
 const fid = (name: string) => `blk-${props.block.id}-${name}`
 const inputClass = INPUT_CLASS
@@ -141,47 +169,35 @@ const labelClass = LABEL_CLASS
 
     <!-- link -->
     <template v-if="block.type === 'link'">
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('title')"
-          :class="labelClass"
-        >Title</label>
-        <input
-          :id="fid('title')"
-          :value="block.title"
-          type="text"
-          :class="inputClass"
-          @input="patch({ title: text($event) })"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('url')"
-          :class="labelClass"
-        >URL</label>
-        <input
-          :id="fid('url')"
-          :value="block.url"
-          type="url"
-          :class="inputClass"
-          @input="patch({ url: text($event) })"
-          @paste="linkEnrich?.urlPasted()"
-          @blur="linkEnrich?.urlBlurred()"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('description')"
-          :class="labelClass"
-        >Description</label>
-        <input
-          :id="fid('description')"
-          :value="block.description ?? ''"
-          type="text"
-          :class="inputClass"
-          @input="patch({ description: text($event) }, ['description'])"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('title')"
+        :key="fid('title')"
+        label="Title"
+        required
+        :model-value="block.title"
+        :validate="checkOf('title')"
+        @commit="patch({ title: $event })"
+      />
+      <EditorTextField
+        :id="fid('url')"
+        :key="fid('url')"
+        label="URL"
+        type="url"
+        required
+        :model-value="block.url"
+        :validate="checkOf('url')"
+        @commit="patch({ url: $event })"
+        @paste="linkEnrich?.urlPasted()"
+        @blur="linkEnrich?.urlBlurred()"
+      />
+      <EditorTextField
+        :id="fid('description')"
+        :key="fid('description')"
+        label="Description"
+        :model-value="block.description"
+        :validate="checkOf('description')"
+        @commit="patch({ description: $event }, ['description'])"
+      />
       <EditorLinkEnrich
         ref="linkEnrich"
         :block="block"
@@ -190,6 +206,7 @@ const labelClass = LABEL_CLASS
       />
       <EditorLinkIconField
         :id="fid('icon')"
+        :key="fid('icon')"
         :block="block"
         @update:icon="patch({ icon: $event }, ['icon'])"
       />
@@ -277,195 +294,147 @@ const labelClass = LABEL_CLASS
           </option>
         </select>
       </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('url')"
-          :class="labelClass"
-        >URL</label>
-        <input
-          :id="fid('url')"
-          :value="block.url"
-          type="url"
-          :class="inputClass"
-          @input="patch({ url: text($event) })"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('label')"
-          :class="labelClass"
-        >Label</label>
-        <input
-          :id="fid('label')"
-          :value="block.label ?? ''"
-          type="text"
-          placeholder="@handle"
-          :class="inputClass"
-          @input="patch({ label: text($event) }, ['label'])"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('url')"
+        :key="fid('url')"
+        label="URL"
+        type="url"
+        required
+        :model-value="block.url"
+        :validate="checkOf('url')"
+        @commit="patch({ url: $event })"
+      />
+      <EditorTextField
+        :id="fid('label')"
+        :key="fid('label')"
+        label="Label"
+        placeholder="@handle"
+        :model-value="block.label"
+        :validate="checkOf('label')"
+        @commit="patch({ label: $event }, ['label'])"
+      />
     </template>
 
     <!-- image -->
     <template v-else-if="block.type === 'image'">
       <EditorImagePicker
         :id="fid('image')"
+        :key="fid('image')"
         :src="block.src"
         :alt="block.alt"
+        require-src
         require-alt
         @update:src="onImageSrc"
         @update:alt="onImageAlt"
       />
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('caption')"
-          :class="labelClass"
-        >Caption</label>
-        <input
-          :id="fid('caption')"
-          :value="block.caption ?? ''"
-          type="text"
-          :class="inputClass"
-          @input="patch({ caption: text($event) }, ['caption'])"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('caption')"
+        :key="fid('caption')"
+        label="Caption"
+        :model-value="block.caption"
+        :validate="checkOf('caption')"
+        @commit="patch({ caption: $event }, ['caption'])"
+      />
     </template>
 
     <!-- text -->
     <template v-else-if="block.type === 'text'">
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('title')"
-          :class="labelClass"
-        >Title</label>
-        <input
-          :id="fid('title')"
-          :value="block.title ?? ''"
-          type="text"
-          :class="inputClass"
-          @input="patch({ title: text($event) }, ['title'])"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('body')"
-          :class="labelClass"
-        >Body</label>
-        <textarea
-          :id="fid('body')"
-          :value="block.body"
-          rows="5"
-          :class="inputClass"
-          class="py-2"
-          @input="patch({ body: text($event) })"
-        />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('footnote')"
-          :class="labelClass"
-        >Footnote</label>
-        <input
-          :id="fid('footnote')"
-          :value="block.footnote ?? ''"
-          type="text"
-          :class="inputClass"
-          @input="patch({ footnote: text($event) }, ['footnote'])"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('title')"
+        :key="fid('title')"
+        label="Title"
+        :model-value="block.title"
+        :validate="checkOf('title')"
+        @commit="patch({ title: $event }, ['title'])"
+      />
+      <EditorTextField
+        :id="fid('body')"
+        :key="fid('body')"
+        label="Body"
+        multiline
+        :rows="5"
+        :model-value="block.body"
+        :validate="checkOf('body')"
+        @commit="patch({ body: $event })"
+      />
+      <EditorTextField
+        :id="fid('footnote')"
+        :key="fid('footnote')"
+        label="Footnote"
+        :model-value="block.footnote"
+        :validate="checkOf('footnote')"
+        @commit="patch({ footnote: $event }, ['footnote'])"
+      />
     </template>
 
     <!-- section -->
     <template v-else-if="block.type === 'section'">
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('title')"
-          :class="labelClass"
-        >Title</label>
-        <input
-          :id="fid('title')"
-          :value="block.title"
-          type="text"
-          :class="inputClass"
-          @input="patch({ title: text($event) })"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('title')"
+        :key="fid('title')"
+        label="Title"
+        required
+        :model-value="block.title"
+        :validate="checkOf('title')"
+        @commit="patch({ title: $event })"
+      />
     </template>
 
     <!-- map -->
     <template v-else-if="block.type === 'map'">
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('label')"
-          :class="labelClass"
-        >Label</label>
-        <input
-          :id="fid('label')"
-          :value="block.label"
-          type="text"
-          :class="inputClass"
-          @input="patch({ label: text($event) })"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('sublabel')"
-          :class="labelClass"
-        >Sublabel</label>
-        <input
-          :id="fid('sublabel')"
-          :value="block.sublabel ?? ''"
-          type="text"
-          placeholder="GMT-5"
-          :class="inputClass"
-          @input="patch({ sublabel: text($event) }, ['sublabel'])"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('url')"
-          :class="labelClass"
-        >Map URL</label>
-        <input
-          :id="fid('url')"
-          :value="block.url"
-          type="url"
-          :class="inputClass"
-          @input="patch({ url: text($event) })"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('label')"
+        :key="fid('label')"
+        label="Label"
+        required
+        :model-value="block.label"
+        :validate="checkOf('label')"
+        @commit="patch({ label: $event })"
+      />
+      <EditorTextField
+        :id="fid('sublabel')"
+        :key="fid('sublabel')"
+        label="Sublabel"
+        placeholder="GMT-5"
+        :model-value="block.sublabel"
+        :validate="checkOf('sublabel')"
+        @commit="patch({ sublabel: $event }, ['sublabel'])"
+      />
+      <EditorTextField
+        :id="fid('url')"
+        :key="fid('url')"
+        label="Map URL"
+        type="url"
+        required
+        :model-value="block.url"
+        :validate="checkOf('url')"
+        @commit="patch({ url: $event })"
+      />
     </template>
 
     <!-- video -->
     <template v-else-if="block.type === 'video'">
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('url')"
-          :class="labelClass"
-        >Video URL</label>
-        <input
-          :id="fid('url')"
-          :value="block.url"
-          type="url"
-          :class="inputClass"
-          @input="patch({ url: text($event) })"
-        >
-      </div>
-      <div class="flex flex-col gap-1">
-        <label
-          :for="fid('title')"
-          :class="labelClass"
-        >Title</label>
-        <input
-          :id="fid('title')"
-          :value="block.title ?? ''"
-          type="text"
-          :class="inputClass"
-          @input="patch({ title: text($event) }, ['title'])"
-        >
-      </div>
+      <EditorTextField
+        :id="fid('url')"
+        :key="fid('url')"
+        label="Video URL"
+        type="url"
+        required
+        :model-value="block.url"
+        :validate="checkOf('url')"
+        @commit="patch({ url: $event })"
+      />
+      <EditorTextField
+        :id="fid('title')"
+        :key="fid('title')"
+        label="Title"
+        :model-value="block.title"
+        :validate="checkOf('title')"
+        @commit="patch({ title: $event }, ['title'])"
+      />
       <EditorImagePicker
         :id="fid('thumbnail')"
+        :key="fid('thumbnail')"
         label="Thumbnail (optional)"
         :src="block.thumbnail"
         @update:src="patch({ thumbnail: $event ?? undefined }, ['thumbnail'])"

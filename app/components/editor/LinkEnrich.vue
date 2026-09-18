@@ -7,8 +7,11 @@
   only after 1.2 s without a key AND only when the text is a whole http(s) URL
   with a dot in the host. So `https://nu`, `https://nux`, ... ask nothing
   (each one would be a real request from your machine to a host you never meant).
-  An older answer that arrives late is dropped. The answer fills `meta`, `favicon` and `image` (LOCAL files), and
-  pre-fills the title and the description only when they are empty. When they
+  It never sees a key: `block.url` is the CHECKED URL of the form field, which
+  changes 600 ms after the last key (or at once on blur, Enter and a paste), so
+  this component waits only for the rest of the 1.2 s. A new URL cancels the
+  running request. An older answer that arrives late is dropped.
+  The answer fills `meta`, `favicon` and `image` (LOCAL files), and pre-fills the title and the description only when they are empty. When they
   differ, "Use fetched title / description" copies them on request.
   Turning switch 1 off keeps what you typed and clears `meta`, `favicon`, `image`.
   Nothing here runs on the public page.
@@ -49,14 +52,17 @@ const emit = defineEmits<{
 
 /** Typing: wait this long after the last key. A paste and a blur do not wait. */
 const TYPING_MS = 1200
+/** The URL field already waited `FIELD_DEBOUNCE_MS` before it gave us the URL. */
+const AFTER_CHECK_MS = Math.max(0, TYPING_MS - FIELD_DEBOUNCE_MS)
 const OPTIONAL = ['enrich', 'showImage', 'favicon', 'image', 'imageAlt', 'meta', 'description']
 
 const loading = ref(false)
 const reason = ref<string | null>(null)
 const note = ref<string | null>(null)
 let timer: ReturnType<typeof setTimeout> | undefined
-/** The URL field just got a paste: the change that follows is a whole URL, not a key. */
-let pasted = false
+/** The URL field just got a paste or lost the focus: the change that follows is a whole URL, not a key. */
+let whole = false
+let wholeTimer: ReturnType<typeof setTimeout> | undefined
 /** The URL changed and no request was made for it yet. A blur makes it. */
 let urlPending = false
 let controller: AbortController | undefined
@@ -141,30 +147,40 @@ function apply(answer: Extract<UnfurlAnswer, { ok: true }>) {
   emit('patch', changes, OPTIONAL)
 }
 
-/** A new URL. Typing: ask after 1.2 s of silence, and only for a whole URL. A paste: ask now. */
+/** A new checked URL. Typing: ask after 1.2 s of silence, and only for a whole URL. A paste and a blur: ask now. */
 watch(() => props.block.url, (url) => {
   if (!props.block.enrich) return
   cancel()
   reason.value = null
   urlPending = true
-  const wait = pasted ? 0 : TYPING_MS
-  pasted = false
+  const wait = whole ? 0 : AFTER_CHECK_MS
+  whole = false
   if (!looksComplete(url)) return
   timer = setTimeout(() => void load(false), wait)
 })
 
-/** The form tells us what happens in its URL field (`BlockForm.vue`). */
-function urlPasted() {
-  pasted = true
-  // A paste that changes nothing fires no `input`: the flag must not wait for the next key.
-  setTimeout(() => {
-    pasted = false
+/** The URL that follows within 100 ms is a whole one. A paste or a blur that changes nothing is followed by none. */
+function expectWholeUrl() {
+  whole = true
+  clearTimeout(wholeTimer)
+  wholeTimer = setTimeout(() => {
+    whole = false
   }, 100)
 }
 
+/** The form tells us what happens in its URL field (`BlockForm.vue`). */
+function urlPasted() {
+  expectWholeUrl()
+}
+
+/** The field checked its text just before this call. A new URL reaches `block.url` with the next render. */
 function urlBlurred() {
-  if (!props.block.enrich || !urlPending || !looksComplete(props.block.url)) return
-  void load(false)
+  expectWholeUrl()
+  // After that render, so a URL that is already replaced is never asked.
+  void nextTick(() => {
+    if (unmounted || !props.block.enrich || !urlPending || !looksComplete(props.block.url)) return
+    void load(false)
+  })
 }
 
 defineExpose({ urlPasted, urlBlurred })
@@ -177,7 +193,12 @@ watch(() => props.block.id, () => {
   note.value = null
 })
 
-onBeforeUnmount(cancel)
+let unmounted = false
+onBeforeUnmount(() => {
+  unmounted = true
+  cancel()
+  clearTimeout(wholeTimer)
+})
 
 function setEnrich(event: Event) {
   const on = event.target instanceof HTMLInputElement && event.target.checked

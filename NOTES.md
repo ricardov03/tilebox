@@ -1143,3 +1143,55 @@ nuxt.com served only a PNG icon link on that day, so vite.dev (an SVG favicon) w
 ### Open
 - Safari and Firefox: not checked (headless Chromium only).
 - A host other than Cloudflare Pages or Netlify needs the `_headers` rules in its own format.
+
+## Editor input fix
+
+Branch `fix/editor-inputs`. Bug report: "a wrong behavior in the links avoids to clear the input field", and "it validates too often".
+
+### Root cause
+- The text inputs were CONTROLLED by the draft: `:value="block.url"` plus `@input="patch({ url: text($event) })"` (`app/components/editor/BlockForm.vue:162-168` on the base commit `39f6970`, the same shape for all 15 text inputs of the 7 block types).
+- `patch()` ran `BlockSchema.safeParse()` on EVERY key (`BlockForm.vue:51-65`). A result that failed was not emitted (`:59-62`), but it wrote `errors.value`, and that re-rendered the form.
+- Vue patches the `value` prop of an input on every render, also when the vnode prop did not change (`runtime-core` `patchProps`: `next !== prev || key === 'value'`). So the render wrote the OLD `block.url` back into the input.
+- Result: a required field could not be cleared (`""` fails `z.url()` and `min(1)`), and no text could pass through an invalid state (`h`, `http`, `https://exa`). The top error list flashed on every key.
+- Same family, other places: the image `alt` and `src` ignored an empty value (`BlockForm.vue:77-86`), the icon paste field was controlled and checked on `change` (`IconPicker.vue:79-84`), the email and the Site fields kept a local text but checked on every key (`edit.vue:213-231`, `SitePanel.vue:57-71`), `name` / `handle` went to the draft unchecked, so an empty name reached the save route.
+
+### The pattern (one for every text field)
+- `app/utils/field-draft.ts`: the state machine. Pure, no Vue. `text` (what the input shows), `error`, `pending`, `focused`, `edited`, `blurred`.
+- `app/composables/useFieldDraft.ts`: makes the state reactive, watches the model, registers the field with the page (`provideFieldDrafts()`, `provideFieldDraftGroup()`).
+- `app/components/editor/TextField.vue` (`<EditorTextField>`): label + input or textarea + inline error. The input shows the LOCAL `text`, never the model.
+- The check is debounced: `FIELD_DEBOUNCE_MS` = 600 ms after the last key. At once on blur, Enter, a paste and the save key. A key hides the old message.
+- Pass: `commit` is emitted, the draft, the preview and the dirty flag change. Fail: nothing is emitted, the text stays, the reason shows under the field (`aria-invalid`, `aria-describedby`, `role="alert"` only after the first blur, `text-pop`).
+- Empty + optional: `commit('')`, the owner removes the key. Empty + required: "Required", the input stays empty, the draft keeps the LAST VALID value.
+- The model writes into the input only when it changed from OUTSIDE (undo, "Use fetched title", a reload) and the user is not typing there (no focus, or focus without a key yet). The field's own commit never rewrites a focused input; after the blur the input shows the stored form (a Site URL without its trailing slash).
+- Block form fields have `:key` = the field id, which holds the block id: another block gets fresh fields. A field that unmounts commits nothing (the form may already show another block).
+- Save bar (`edit.vue`): "Not saved yet:" lists every mounted field with an error (`Blocks > URL: Required`). Save and Cmd/Ctrl+S run `flushAll()` first (check the field with waiting keys now), then save only when the list is empty. Else: "Save is blocked...", nothing is written.
+- Selects, checkboxes, uploads, Hide, Duplicate: unchanged, they patch at once.
+- Link preview (`LinkEnrich.vue`): it watches `block.url`, which is now the CHECKED URL. It waits only the rest of the 1.2 s (`TYPING_MS - FIELD_DEBOUNCE_MS`), so a typed URL is still asked 1.2 s after the last key, and at once after a paste or a blur. A new URL aborts the running request. The blur handler runs after the render, so a URL that was just replaced is never asked.
+
+### Fields converted (33)
+- `BlockForm.vue` (15): link title, url, description; social url, label; image caption; text title, body, footnote; section title; map label, sublabel, url; video url, title.
+- `ImagePicker.vue` (2): the image path (required for an image block with `require-src`), the alt text (required). Used by the image block, the video thumbnail and the avatar.
+- `IconPicker.vue` (1): the pasted icon name, checked with the schema of `LinkBlock.icon`. The search box has no model and keeps its own 300 ms debounce.
+- `edit.vue`, Profile tab (5): name, handle (required), bio, status (optional), email (required).
+- `HighlightsField.vue` (3): the three slots.
+- `SitePanel.vue` (7): title, description, url, lang, xHandle, jobTitle, location. The two counters moved into the field (`counter`).
+- `LinkEnrich.vue` has no text input: only the timing changed.
+
+### Deviations
+- A field with a refused value blocks the save only while it is mounted. The Profile and Site tabs stay mounted (`v-show`). A block form unmounts when you pick another block: its refused text is dropped and the draft still has the last valid value.
+- The error texts are the zod messages without the `url:` / `email:` prefix (the label is right above). Three older tests changed for that and for the blocked save: `editor.spec.ts` (invalid URL, empty name, invalid email) and `site-editor.spec.ts` (bad URL).
+- `types/profile.ts` is unchanged.
+
+### Tests
+- `tests/e2e/editor-inputs.spec.ts` (dev, 10 tests): written first, failed on the old code with `Expected: "" Received: "https://example.com/condomera"`.
+- `tests/e2e/field-draft.spec.ts` (static project, no browser, 7 tests): the state machine with a fake clock.
+```
+$ npm run lint && npm run typecheck                                              -> clean
+$ npm run generate                                                               -> ok
+$ E2E_STATIC_PORT=4421 E2E_DEV_PORT=3421 npx playwright test --project=static    -> 159 passed (was 152: +7)
+$ E2E_STATIC_PORT=4421 E2E_DEV_PORT=3421 npx playwright test --project=dev       -> 55 passed (was 45: +10)
+```
+
+### Open
+- Safari and Firefox: not checked (headless Chromium only).
+- A value typed with an IME is checked like any other: 600 ms after the last `input` event.
