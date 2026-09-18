@@ -262,6 +262,7 @@ function resetState() {
 // ---------------------------------------------------------------- prompts
 
 async function askProvider() {
+  if (opts.yes) usageError('--yes never asks. Pass --provider cloudflare|netlify.')
   log('')
   log('    Where do you want to host the page?')
   log('      1) Cloudflare Pages   https://<name>.pages.dev')
@@ -276,6 +277,7 @@ async function askProvider() {
 }
 
 async function askName(provider) {
+  if (opts.yes) usageError('--yes never asks. Pass --name <site-name>.')
   const { domain } = PROVIDERS[provider]
   log('')
   log(`    Pick a site name. The page will be at https://<name>.${domain}`)
