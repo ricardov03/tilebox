@@ -9,7 +9,7 @@ import { readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { extname, join, relative, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { profileIsPersonal, readProfile, ROOT } from './helpers'
-import { toPublicProfile, type Profile } from '../../types/profile'
+import { ProfileSchema, PublicProfileSchema, toPublicProfile, type Profile } from '../../types/profile'
 
 const EXAMPLE_EMAIL = 'hello@example.com'
 const TEXT_EXTENSIONS = new Set(['.html', '.json', '.js', '.mjs', '.css', '.txt', '.xml', '.svg', '.map', '.webmanifest'])
@@ -143,6 +143,40 @@ test.describe('toPublicProfile', () => {
 
     const on = toPublicProfile({ ...input, blocks: [...base.blocks, { ...link, showImage: true }] }).blocks[1]
     expect(on).toEqual({ id: 'b2', type: 'link', size: '2x1', title: 'Mine', url: 'https://example.com/', favicon, showImage: true, image, imageAlt: 'Alt' })
+  })
+
+  test('one call: a hidden block title and the hidden email are gone, and `site` passes through', () => {
+    const input: Profile = {
+      ...base,
+      blocks: [
+        { id: 'b1', type: 'section', title: 'Projects' },
+        { id: 'b2', type: 'social', size: '1x1', network: 'github', url: 'https://github.com/secret-account', label: 'Secret account', hidden: true },
+        { id: 'b3', type: 'link', size: '1x1', title: 'Secret draft', url: 'https://example.com/secret', hidden: true },
+        { id: 'b4', type: 'social', size: '1x1', network: 'github', url: 'https://github.com/shown' },
+      ],
+      layout: { desktop: ['b1', 'b2', 'b3', 'b4'], mobile: ['b4', 'b3', 'b2', 'b1'] },
+      site: { title: 'My page', lang: 'en', favicon: '/site-uploads/favicon-1a2b3c.png', ogImage: '/site-uploads/og-4d5e6f.jpg' },
+    }
+    const extras = { assets: { ogImage: '/site/og.png' }, builtAt: '2026-09-18T00:00:00.000Z' }
+    const result = toPublicProfile(input, undefined, extras)
+    const text = JSON.stringify(result)
+    for (const secret of ['private@tilebox.test', 'Secret draft', 'example.com/secret', 'Secret account', 'secret-account', 'site-uploads']) {
+      expect(text, secret).not.toContain(secret)
+    }
+    expect(result.layout).toEqual({ desktop: ['b1', 'b4'], mobile: ['b4', 'b1'] })
+    expect(result.site).toEqual({ title: 'My page', lang: 'en', ...extras })
+    // The public shape is strict: a key that is not public fails here.
+    expect(PublicProfileSchema.safeParse(result).success).toBe(true)
+    expect(PublicProfileSchema.safeParse({ ...result, profile: { ...result.profile, showEmail: false } }).success).toBe(false)
+  })
+
+  test('an old profile (no site, no hidden, no link extras) is still valid and keeps its blocks', () => {
+    expect(ProfileSchema.safeParse(base).success).toBe(true)
+    const result = toPublicProfile(base)
+    expect(result.blocks).toEqual(base.blocks)
+    expect(result.layout).toEqual(base.layout)
+    expect(result.site).toEqual({})
+    expect(PublicProfileSchema.safeParse(result).success).toBe(true)
   })
 
   test('does not change its input', () => {

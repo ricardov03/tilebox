@@ -211,6 +211,18 @@ test.describe('buildHead', () => {
     expect('image' in ld.mainEntity).toBe(false)
   })
 
+  test('JSON-LD sameAs leaves out a hidden social block: the head reads the sanitized profile', () => {
+    const hiddenUrl = 'https://mastodon.social/@ada'
+    const input: Profile = { ...BASE, blocks: BASE.blocks.map(block => (block.id === 'b4' ? { ...block, hidden: true } : block)) }
+    const publicProfile = toPublicProfile(input, undefined, { builtAt: '2026-09-18T00:00:00.000Z' })
+    expect(publicProfile.blocks.map(block => block.id)).toEqual(['b1', 'b2', 'b3'])
+    expect(sameAsOf(publicProfile)).toEqual(['https://github.com/ada'])
+    const head = buildHead(publicProfile)
+    const ld = JSON.parse(head.script[0]?.innerHTML ?? '') as { mainEntity: { sameAs?: string[] } }
+    expect(ld.mainEntity.sameAs).toEqual(['https://github.com/ada'])
+    expect(JSON.stringify(head)).not.toContain(hiddenUrl)
+  })
+
   test('favicon links fall back to the tracked /favicon.ico and /og.png', () => {
     const head = buildHead(toPublicProfile(BASE))
     expect(head.link).toEqual([{ rel: 'icon', href: '/favicon.ico', sizes: '32x32' }])
