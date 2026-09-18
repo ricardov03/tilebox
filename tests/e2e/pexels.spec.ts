@@ -4,9 +4,10 @@
  * host with a public address, so the real guard of content/unfurl.ts runs but nothing leaves the machine.
  * Files go to a temp folder (`dir`), never to `public/blocks/`.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import sharp from 'sharp'
 import {
@@ -26,7 +27,8 @@ import {
 import { sniffImage, type Transport, type TransportResponse } from '../../content/unfurl'
 import { pruneLinkFiles } from '../../content/unfurl-cache'
 import { ImageBlockSchema } from '../../types/profile'
-import { readProfile } from './helpers'
+import { imageCredit } from '../../app/components/blocks/media'
+import { readProfile, ROOT } from './helpers'
 
 const KEY = 'test-key-5f2c9a7e41b8d3c6-never-a-real-key'
 const NOW = Date.parse('2026-09-18T10:00:00Z')
@@ -424,4 +426,94 @@ test('fetch:links housekeeping never touches public/blocks', async () => {
   finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test.describe('the credit line (imageCredit)', () => {
+  test('pexels: the author and the provider, each with its link', () => {
+    expect(imageCredit({ provider: 'pexels', url: 'https://www.pexels.com/photo/desk-1/', author: 'Ada Example', authorUrl: 'https://www.pexels.com/@ada' }))
+      .toEqual({ author: 'Ada Example', authorUrl: 'https://www.pexels.com/@ada', provider: 'Pexels', providerUrl: 'https://www.pexels.com/photo/desk-1/' })
+  })
+
+  test('pexels is always credited: no author, no photo URL, or a URL that is not http(s)', () => {
+    expect(imageCredit({ provider: 'pexels' })).toEqual({ author: null, authorUrl: null, provider: 'Pexels', providerUrl: 'https://www.pexels.com' })
+    expect(imageCredit({ provider: 'pexels', url: 'javascript:alert(1)', author: ' Ada ', authorUrl: 'javascript:alert(2)' }))
+      .toEqual({ author: 'Ada', authorUrl: null, provider: 'Pexels', providerUrl: 'https://www.pexels.com' })
+  })
+
+  test('the URLs stay as they are: no tracking parameters are added', () => {
+    const credit = imageCredit({ provider: 'pexels', url: 'https://www.pexels.com/photo/desk-1/', author: 'Ada', authorUrl: 'https://www.pexels.com/@ada' })
+    expect(`${credit?.authorUrl}${credit?.providerUrl}`).not.toMatch(/[?&]utm_/)
+  })
+
+  test('no source, or an own file without an author: no line', () => {
+    expect(imageCredit(null)).toBeNull()
+    expect(imageCredit(undefined)).toBeNull()
+    expect(imageCredit({ provider: 'r2' })).toBeNull()
+    expect(imageCredit({ provider: 'r2', author: 'Me' })).toEqual({ author: 'Me', authorUrl: null, provider: null, providerUrl: null })
+  })
+})
+
+/**
+ * The key canary. To make the VALUE check real, build with the dummy key:
+ * `PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate`. A key in `.env` or in the
+ * environment of this run is looked for too. Only file names are printed, never a key.
+ */
+test.describe('the Pexels key stays on the server', () => {
+  const NAME = ['PEXELS', 'API', 'KEY'].join('_')
+  const CANARY = 'tilebox-canary-pexels-key-0f3a9c'
+  const TEXT = /\.(html|json|js|mjs|css|txt|xml|svg|map|webmanifest|vue|ts)$/
+
+  function textFiles(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : textFiles(path)
+      return TEXT.test(entry.name) ? [path] : []
+    })
+  }
+
+  function filesWith(dir: string, needle: string): string[] {
+    return textFiles(dir).filter(file => readFileSync(file, 'utf8').includes(needle)).map(file => relative(ROOT, file))
+  }
+
+  /** The dummy key, plus the owner's real key when this machine has one. */
+  function keyValues(): string[] {
+    const values = new Set([CANARY])
+    const fromEnv = (process.env[NAME] ?? '').trim()
+    if (fromEnv.length >= 8) values.add(fromEnv)
+    const envFile = resolve(ROOT, '.env')
+    if (existsSync(envFile)) {
+      const line = readFileSync(envFile, 'utf8').split(/\r?\n/).find(item => item.trim().startsWith(`${NAME}=`)) ?? ''
+      const value = line.slice(line.indexOf('=') + 1).trim().replace(/^["']|["']$/g, '')
+      if (value.length >= 8) values.add(value)
+    }
+    return [...values]
+  }
+
+  /** `dist/` always. `.nuxt/dist/client` and `.output/server` only when a build left them. */
+  const builtDirs = () => ['dist', '.nuxt/dist/client', '.output/server'].map(dir => resolve(ROOT, dir)).filter(dir => existsSync(dir)).map(dir => realpathSync(dir))
+
+  test('no built file holds the name of the variable, a key value or the engine', () => {
+    const dirs = builtDirs()
+    expect(dirs.some(dir => existsSync(join(dir, 'index.html')))).toBe(true)
+    for (const dir of dirs) {
+      const where = relative(ROOT, dir) || dir
+      expect(filesWith(dir, NAME), `${where}: the variable name`).toEqual([])
+      for (const value of keyValues()) expect(filesWith(dir, value), `${where}: a key value`).toEqual([])
+      // The engine is dev only: a build has no copy of it.
+      expect(filesWith(dir, 'api.pexels.com'), `${where}: the engine`).toEqual([])
+    }
+  })
+
+  test('no client source reads the key, and the config does not publish it', () => {
+    expect(filesWith(resolve(ROOT, 'app'), NAME)).toEqual([])
+    const config = readFileSync(resolve(ROOT, 'nuxt.config.ts'), 'utf8')
+    expect(config).not.toContain(NAME)
+    expect(config.toLowerCase()).not.toContain('pexels')
+  })
+
+  test('.env is ignored, and the tracked example has no value', () => {
+    expect(execFileSync('git', ['check-ignore', '-v', '.env'], { cwd: ROOT, encoding: 'utf8' })).toContain('.env')
+    expect(execFileSync('git', ['ls-files', '.env'], { cwd: ROOT, encoding: 'utf8' }).trim()).toBe('')
+    expect(readFileSync(resolve(ROOT, '.env.example'), 'utf8')).toMatch(new RegExp(`^${NAME}=$`, 'm'))
+  })
 })

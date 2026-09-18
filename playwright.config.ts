@@ -2,7 +2,7 @@
  * Two projects:
  * - `static`: the prerendered site in `dist/` (run `npm run generate` first),
  *   served by scripts/serve-dist.mjs on :4173, plus repo.spec.ts, privacy.spec.ts, gravatar.spec.ts, links.spec.ts, unfurl.spec.ts, security.spec.ts, pexels.spec.ts (no browser, no internet) and site.spec.ts (head + asset builder). Runs in CI.
- * - `dev`: the editor on `nuxt dev` at :3111, plus security-dev.spec.ts (the dev routes and headers). Writes content/profile.json and
+ * - `dev`: the editor on `nuxt dev` at :3111, plus security-dev.spec.ts (the dev routes and headers) and pexels-editor.spec.ts (the Pexels tab, mocked routes). Writes content/profile.json and
  *   public/blocks/, so it runs locally only.
  * Only the servers of the selected projects start.
  */
@@ -44,7 +44,7 @@ export default defineConfig({
     },
     {
       name: 'dev',
-      testMatch: ['editor.spec.ts', 'site-editor.spec.ts', 'security-dev.spec.ts'],
+      testMatch: ['editor.spec.ts', 'site-editor.spec.ts', 'security-dev.spec.ts', 'pexels-editor.spec.ts'],
       timeout: 90_000,
       use: { baseURL: DEV_URL },
     },
