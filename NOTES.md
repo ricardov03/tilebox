@@ -1749,3 +1749,140 @@ $ npx nuxt build; grep -rl tilebox-unfurl .output/server | wc -l -> 0
 - The dev server prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. They were already in the first dev run of this branch, before any editor change. Not looked into.
 - Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport (the live check was a 404).
 The 2 skips are the two "example only" tests of WP14 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start. New tests: static +9 (gravatar 13 for 5, second-wave +1), dev +4 (pexels-editor +1, second-wave-editor +3).
+
+
+## WP16
+
+Branch `wp/16-review-align` (from the local `merge/main-tmp`, which holds WP15; `origin/main` was still `1556a81`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged into `main`, no tag. Goal: make the stub retry of the review pipeline the same as the one the owner measured in his other project, get the Grok verdicts that WP15 still owed, and turn every delete control of the editor into one small red outlined trash button.
+
+### A. The review pipeline (`scripts/review/`, commits `168a939`, `0a1190c`)
+- **What the owner's other project found (the same script runs there).** A first-turn stub has one shape: `num_turns` absent or 1, and the last schema-shaped object of `.text` says `passed: false` with `findings: []` (the summary says it is starting). Measured there: 8 of 8 stubs had that shape, and EVERY forced retry as a fresh call gave a real verdict.
+- **What changed here.** WP15 resumed the SAME session for the retry ("You stopped after announcing your plan. Continue now"). A resumed session keeps its own empty answer in context. Now the retry is a **fresh call**: a new `--session-id`, never `--resume`, the same flags, the full turn budget, the same prompt file plus the section `## Retry` (the text of the other project, word for word). stderr: `grok-review: progress stub on attempt 1 (one turn, no findings) — retrying once`. A second stub is exit 3. The prompt template has the new first bullet of "How to work" ("Your first action must be a tool call. ...").
+- **Stub signals kept (either one).** A = the measured shape above, exactly (no `stopReason` condition, `num_turns` absent counts). B = from WP15: `end_turn`, and zero tool calls in `grok export` (or `num_turns` 1 or less), and no valid verdict at all (plain text such as "Starting the review", or the empty verdict). B is reliable enough: the export count worked on every live session of WP15 and WP16, and a wrong B costs one call and can never turn a run green.
+- **Kept from WP15, unchanged:** `session=`, `retries=`, `evidence=full|diff-only` in the trailer and in `_meta`; `<hash>.raw.json` on exit 3; the turn-cap `--conclude` flow, `--conclude-tools`, the refusal of a tool-less conclude on a session that read nothing; 14 turns / 12 minutes; `--no-plan`; `GROK_REVIEW_CACHE_DIR`. `continue_call` stays for `--conclude-tools` only.
+- **New because the retry is a second session:** `session=` is the session of the retry, `_meta.stub_session_id` is the discarded one, and stderr names both. `grok-verdict.py merge-usage` adds the books of the two sessions, so `turns`, the tokens and the cost in the trailer still cover everything that was paid for.
+- **Cache key.** It was and is `sha256(diff + prompt template + schema)`. The `## Retry` section goes into `prompt.retry` of the second call only, so the verdict of a retry is stored under the key of the base prompt. The suite proves it: a run after a retried run is `cached=1` with no call.
+- **Suite:** 143 assertions (was 130). Ported from the other project: the per-call `queue/<n>.json` replies of the fake `grok`, "stub then verdict = exit 0, two calls, retry announced, `## Retry` in the last prompt", "stub twice = exit 3, no third call". Adapted here: no `--resume` in the retry, a session id of its own, the full budget, the allowlist, the first prompt has no `## Retry` and the second is the first plus the section, `_meta.stub_session_id`, the books of both sessions added up, a stub with no `num_turns`, the text stub, the diff-only verdict, the cache hit.
+- **Live measurement (this round, 3 first attempts):**
+
+| Run | First attempt | Fresh retry | Result |
+|---|---|---|---|
+| R2 | STUB (1 turn, 40,548 tokens in, 99 out, $0.028) | real verdict: 9 turns, 49 tool calls, `evidence=full`, 1 warning (REAL) | rescued |
+| R1 | real verdict | not needed | |
+| R3 | real verdict | not needed | |
+
+1 stub in 3 first attempts; the fresh retry rescued 1 of 1. With the owner's numbers that is 9 of 9 for the fresh call. Stub rate here so far: 3 of 6 (WP14), 1 of 4 (WP15), 1 of 3 (WP16).
+
+### B. The missing verdicts (range `1556a81..HEAD`, `--scope block --ledger`, defaults 14 turns / 12 minutes)
+`git log --oneline -3 origin/main` = `1556a81 chore: merge wp/14-reviewed` first, so `1556a81` is the base as planned. All runs on this branch, cache in `/tmp/wp16-grok-cache` (the worktree may not write the shared `.git` cache). The three runs were recorded with `--branch main`, not `--branch wp/16-review-align`: the rows describe code that is already on `main`, and that is the branch the earlier rows of the same files use. The agent rows of the fixes carry `wp/16-review-align`.
+
+| Block | Files | diff_chars | Grok calls | turns | elapsed_s | tokens in / out | Verdict | Cost |
+|---|---|---|---|---|---|---|---|---|
+| R1 Gravatar | `content/gravatar.ts content/gravatar-fetch.ts scripts/fetch-avatar.ts server/api/avatar/` | 16,804 | 1 | 5 | 286 | 358,517 / 13,390 | PASS, 0 findings, 30 tool calls | $0.19 |
+| R2 editor fixes of WP15 | `PexelsPicker.vue ImagePicker.vue useSiteAssets.ts QrPanel.vue SitePanel.vue BlockForm.vue app/pages/edit.vue content/site-extras.ts` (`PexelsPicker.vue` has no change in the range) | 14,651 | 2 (stub + fresh retry) | 10 | 309 | 739,326 / 15,162 | FAIL, 1 warning | $0.23 |
+| R3 the pipeline itself | `grok-review.sh grok-verdict.py grok-review.prompt.md` (`--title`: only correctness and the never-green guarantee; the suite is read from disk: with it the diff is 64,473 characters) | 43,847 | 1 | 4 | 444 | 295,070 / 23,779 | PASS, 0 findings, 15 tool calls | $0.15 |
+
+Trailer lines, as printed:
+```
+grok-review: scope=block files=5 diff_chars=16804 cached=0 turns=5 elapsed_s=286 tokens_in=358517 tokens_out=13390 retries=0 evidence=full session=17c6a581-f7a1-4258-b736-879885c314fb critical=0 warning=0 suggestion=0 verdict=PASS
+grok-review: scope=block files=7 diff_chars=14651 cached=0 turns=10 elapsed_s=309 tokens_in=739326 tokens_out=15162 retries=1 evidence=full session=e48e3150-bf21-483b-a5d9-67e1c4736687 critical=0 warning=1 suggestion=0 verdict=FAIL
+grok-review: scope=block files=3 diff_chars=43847 cached=0 turns=4 elapsed_s=444 tokens_in=295070 tokens_out=23779 retries=0 evidence=full session=28dd2781-3234-4920-b6ef-bca57e144f71 critical=0 warning=0 suggestion=0 verdict=PASS
+```
+Grok calls: 4 of 6 (3 review calls, 1 fresh retry, no conclude call: no run hit the cap). Cost from `grok usage`: $0.58. The stub session of R2 was `de45a0a9-1ca1-495c-8fd9-62c334f1e800`. R3 said: "PASS/exit 0 only after that check (or a cache of such a verdict)"; it named every exit-3 path.
+
+| Finding | Block | Triage | Fix |
+|---|---|---|---|
+| `draft-qr-write-failure-deletes-saved-file` (warning, editor-state, `content/site-extras.ts:114`) | R2 | REAL. WP14 and WP15 guarded the no-URL branch with `!options.draft`; the `catch` of the draw still removed `qr.svg`. A schema-valid URL can make the draw throw: `https://ada.example/` plus 3,000 letters gives `Data too long` from `uqr`. The new test failed first (`ENOENT ... qr.svg`). Neighbour blocks checked: the contact card is never touched by a draft (WP15); the favicon set of `content/site-assets.ts` removes a failed kind by design (a generated preview, the stated exception of `docs/invariants.md` 8) | `0c68b41`: the code is drawn, written to a scratch file and renamed (no half-written file), and the `catch` removes `qr.svg` only for a save or a build. Test: `second-wave.spec.ts`, "a DRAFT whose QR code cannot be drawn keeps the QR code of the saved profile; a save removes it" |
+| `hidden-row-text-half-opaque` (warning, a11y, `BlockList.vue:141`) | the new axe check of part C, not Grok | REAL. The type and the name of a hidden block were drawn at 50% opacity: axe `color-contrast`. The new check failed first | `61c99d8`: the `muted` token, no opacity. The eye-off icon and the "(hidden)" text for a screen reader stay |
+
+1 Grok finding: 1 real (fixed), 0 false positives, 0 already fixed, no critical. The fixes of THIS branch (`0c68b41`, part C) have no Grok verdict of their own; 2 calls of the budget were left unused on purpose (a re-review of a 20-line fix was not worth a call). Next: `npm run review -- --range merge/main-tmp..wp/16-review-align --files app/components/editor content/site-extras.ts --ledger`.
+
+### C. The delete button (commits `cd4789c`, `2811265`, `61c99d8`, `aaa200d`, `9f30307`)
+- **Tokens.** Two new color roles in `app/utils/presets.ts` (15 roles now), written to `presets.css` by `scripts/build-presets.ts` with no change, mapped in `@theme inline` of `main.css` (`--color-danger`, `--color-danger-ink`), in the tables of `PLAN.md` 5.1 / 5.2 and in `docs/invariants.md` 3. No `danger-soft`: the 12% fill is `color-mix(in oklab, var(--color-danger) 12%, transparent)`. The starting values passed at once, so they are the values:
+
+| Preset | `danger` | `danger-ink` | danger on tile | danger on ground | danger-ink on danger |
+|---|---|---|---|---|---|
+| condomera light | `#C81E1E` | `#FFFFFF` | 5.74:1 | 5.17:1 | 5.74:1 |
+| condomera dark | `#F87171` | `#081726` | 5.71:1 | 6.54:1 | 6.54:1 |
+| lunchbox light | `#B42318` | `#FFFFFF` | 6.57:1 | 5.46:1 | 6.57:1 |
+| lunchbox dark | `#F97066` | `#161A17` | 5.60:1 | 6.31:1 | 6.31:1 |
+| night light | `#B42318` | `#FFFFFF` | 6.57:1 | 5.93:1 | 6.57:1 |
+| night dark | `#F87171` | `#131826` | 5.74:1 | 6.40:1 | 6.40:1 |
+
+`npm run check:contrast`: 72 pairs (was 54), all pass, minimum 4.5:1 for the three new pairs. On the 12% hover fill the icon keeps 4.25:1 or more (the lowest: condomera light on the ground); an icon needs 3:1.
+- **One component, three places.** `app/components/editor/DeleteButton.vue` (`<EditorDeleteButton>`): the list row (`BlockList.vue`), the tile corner (`PreviewTile.vue`, with `backed`: a `tile` plate at 90% behind the box, because a tile can hold a photo or the accent color) and the form footer (`BlockForm.vue`: the full-width "Delete this block" is gone; the small button sits right-aligned in its own footer row and the confirm opens in its place). A real `<button type="button">` of 44x44 px with no paint (the hit area); inside it a 32x32 px box (40x40 under `hover: none`), 1px `danger` border, transparent, `rounded-lg`, the 18 px `line-md:trash` icon in `danger`. Hover and keyboard focus: the 12% fill. Focus ring: `danger`, 2px, 2px offset, around the box.
+- **`aria-label` and `title`: decided.** The name is `aria-label="Delete <block label>"` on the button. The `title` with the same words is on the inner box, which is `aria-hidden`. So a mouse user gets the tooltip, and a screen reader never reads the words twice (VoiceOver reads a `title` as a help text even when it equals the name). The test holds this: `title` on the box, `aria-hidden="true"`, no `title` on the button.
+- **The confirm** keeps "Delete?", "Yes", "No". "Yes" is a small filled pill (`danger` background, `danger-ink` text, `danger` focus ring), "No" is neutral, keeps the first focus and the `accent` ring. Both: a 32 px pill inside a 44 px hit area. The undo bar is unchanged.
+- **Why a scoped style block and not utility classes (`aaa200d`).** Tailwind writes every utility it finds in `app/` into the ONE stylesheet that the public page inlines. With utilities, `dist/index.html` went from 68,029 to 71,352 bytes (+3,323). With the look in `<style scoped>` of the two components (tokens only, `var(--color-danger)`), it is 68,759 bytes: +730 raw, +135 gzip (14,203 to 14,338), which is the 12 token declarations and the 2 theme variables. The button CSS is in `dist/_nuxt/edit.*.css`, which the public page does not load.
+- **Tests.** No test looked for "Delete this block" (checked with grep), so nothing had to move. New in `editor.spec.ts` (dev project): (1) the three triggers, each found by role and accessible name, have the same computed look (all four border colors and the icon color equal the resolved `--color-danger`, 1px solid, transparent box and transparent button, 32x32 box, 18x18 icon, 8px radius), a hit area of 44x44 or more, the form button is less than half the footer wide and on its right edge, the keyboard focus ring (danger, 2px, 2px offset, a fill that is not transparent), "Yes" = `danger` background with `danger-ink` text in a 32 px pill, both confirm buttons 44x44 or more, "No" focused first, a cancel gives the focus back to the trash button. (2) axe (`@axe-core/playwright`, the dev project had none) on the block list with the confirm open in one row, and on the form footer with the button and then with the confirm, light and dark: 0 violations. It found the hidden-row defect above on its first run.
+- **Looked at, by eye.** Two rounds of screenshots at 1280 px, `deviceScaleFactor: 2`, from a throwaway Playwright script in `.tilebox-test/` (ignored by git, deleted after the run; the dev server ran on port 3462). Round 1 before `aaa200d`, round 2 after it, so the scoped-style move is covered. What the PNGs show, read one by one:
+  - **List row.** `link · CONDOMERA · 2x1 · ↑ · ↓ ·` then the red button at the right end. A red rounded square (8 px radius), 1 px border, a red trash glyph, nothing filled. "Hide" and "Duplicate" sit on the second line of the row and did not move. Measured in the page: hit 44x44, box 32x32, border and glyph `rgb(200, 30, 30)` = `#C81E1E`. Hover: a very light pink fill (the 12% mix; a shot taken 0 ms after the hover caught the 150 ms transition half way, one taken after 600 ms shows the full value). Focus: the fill plus a second red ring 2 px outside the box, clearly separate from it. Dark: the same in `#F87171` on the dark ground.
+  - **Tile corner.** On the 2x1 accent tile the four controls are one row: round Edit, round Hide, the red square on its `tile` plate, round drag grip. Equal gaps, no overlap, the grip untouched at the end. On the 1x1 tile the grip wraps to a second line, as it did before the change. On the photo tile the white plate keeps the red readable over the image.
+  - **Form footer.** "Hide from the page" and "Duplicate" as two wide pills on one line, and under them, right-aligned, the small red square. It is far narrower than half the footer.
+  - **Confirm open.** In the row: `Delete?` then a filled red "Yes" (white text) and an outlined "No" that carries the focus ring; the block name is truncated to make room. In the footer: the same three parts under the two pills. Measured: "No" is `document.activeElement`, "Yes" has `rgb(200, 30, 30)` on `rgb(255, 255, 255)` text, both pills 32 px high in a 44 px hit area.
+  - One thing to know when reading a screenshot of this button: `line-md:trash` draws itself when it mounts. A shot taken right after a cancel (which re-mounts the button) can catch a half-drawn can. Waited 1.5 s: the glyph is whole. Not a defect, and no test depends on the glyph shape.
+
+### Ledger report
+```
+# Findings ledger: 111 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 26
+- untrusted-input: 22
+- editor-state: 17
+- second-code-path: 13
+- a11y: 9
+- test-green-wrong-reason: 8
+- schema-drift: 7
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- grok: 41
+- ocr: 35
+- agent: 27
+- human: 8
+
+## By severity
+- warning: 87
+- suggestion: 13
+- critical: 11
+
+## By area
+- app/components: 23
+- server/api: 9
+- content/unfurl.ts: 9
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- scripts/publish.mjs: 6
+- .github/workflows: 5
+- app/pages: 5
+
+findings-ledger: rows=111 top_category=untrusted-input top_count=22 grok=41 ocr=35 agent=27 human=8
+```
+
+### Verification
+```
+$ npm ci                                   -> exit 0
+$ npm run lint                             -> exit 0
+$ npm run typecheck                        -> exit 0
+$ npm run test:review                      -> exit 0, passed=143 failed=0 total=143 expected=143
+$ npm run check:contrast                   -> exit 0, all 72 pairs pass
+$ npm run check:icons                      -> exit 0, 68 icons found
+$ npm run generate                         -> exit 0
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ E2E_STATIC_PORT=4461 E2E_DEV_PORT=3461 npx playwright test   (ONE run, both projects)
+    static: 239 passed, 2 skipped   dev: 83 passed   total: 322 passed, 2 skipped, exit 0
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the two "example only" static tests, the same as in WP15 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server writes `content/profile.json` before they start, so they skip themselves. New since WP15: dev +2 (the delete-button look, the axe check of the list and the footer), static +1 (the draft QR code that cannot be drawn).
+
+### Open
+- The fixes of this branch (`0c68b41`, the delete button, the two docs commits) have no Grok verdict of their own. Command in part B.
+- The fresh retry is proven on 1 live stub here and 8 in the owner's other project. To measure it further: count `retries=` over the next 20 trailers.
+- The three Grok rows of this round carry `branch=main` in the ledger (they review code that is on `main`); the task asked for `wp/16-review-align`. The agent rows of the fixes carry the branch.
+- `docs/invariants.md` 8 keeps its stated exception from WP15 (a draft may WRITE a generated preview, never DELETE a saved file). The QR code now follows the delete half of it in every path.
+- Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport; Safari and Firefox were never checked by hand; the history rewrite that drops the old attribution trailers.
