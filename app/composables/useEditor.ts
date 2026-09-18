@@ -51,7 +51,7 @@ export function newBlock(type: BlockType): Block {
     case 'social':
       return { id, type, size: '1x1', network: 'github', url: 'https://github.com/' }
     case 'image':
-      return { id, type, size: '2x2', src: '/blocks/photo.jpg', alt: 'Photo', source: null }
+      return { id, type, size: '2x2', src: '/blocks/sample.jpg', alt: 'Sample image', source: null }
     case 'text':
       return { id, type, size: '1x2', title: 'Note', body: 'Write something.' }
     case 'section':
