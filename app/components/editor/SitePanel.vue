@@ -48,7 +48,7 @@ watch(site, (next) => {
 
 /** The next `site` object: `value` undefined or '' removes the key. No keys left = no `site`. */
 function withKey(key: keyof Site, value: string | boolean | undefined): Site | undefined {
-  const next: Record<string, string | boolean> = { ...site.value }
+  const next: Record<string, Site[keyof Site]> = { ...site.value }
   if (value === undefined || value === '' || value === false) Reflect.deleteProperty(next, key)
   else next[key] = value
   return Object.keys(next).length ? (next as Site) : undefined
@@ -597,5 +597,6 @@ const buttonClass = `min-h-11 rounded-full border border-line px-4 text-sm font-
         </div>
       </div>
     </section>
+    <EditorSiteExtras />
   </div>
 </template>

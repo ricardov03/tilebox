@@ -109,6 +109,8 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
       </div>
     </div>
 
+    <EditorLinkCheckButton v-if="blocks.length > 0" />
+
     <p
       v-if="blocks.length === 0"
       class="text-sm text-muted"
@@ -195,7 +197,11 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
             </button>
           </template>
         </div>
-        <div class="flex justify-end gap-1">
+        <div class="flex items-center justify-end gap-1">
+          <EditorBlockRowBadges
+            :block="block"
+            class="mr-auto pl-3"
+          />
           <button
             type="button"
             :data-hide-block="block.id"
