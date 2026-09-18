@@ -4,13 +4,14 @@
  * Always that file, never the example: it is created when it does not exist.
  * The write is atomic: a temp file in the same folder, then a rename.
  * `restartNeeded` is true when nuxt.config.ts must re-read the file
- * (theme preset or icon set changed), and always on the first save that
- * creates content/profile.json: the `#profile` alias is still bound to the example.
+ * (theme preset or icon set changed). Text changes need no restart:
+ * modules/public-profile.ts watches `content/` and rewrites the sanitized
+ * `#profile` copy, also on the first save that creates content/profile.json.
  */
 import { rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { ProfileSchema, type Profile } from '~~/types/profile'
-import { assertDev, checkIcons, iconsOf, PROFILE_WRITE_PATH, profileReadPath, readProfileFile } from '../utils/editor'
+import { assertDev, checkIcons, iconsOf, PROFILE_WRITE_PATH, readProfileFile } from '../utils/editor'
 
 function invalid(errors: string[]): never {
   throw createError({
@@ -46,10 +47,6 @@ export default defineEventHandler(async (event) => {
   const iconErrors = await checkIcons(iconsOf(next))
   if (iconErrors.length) invalid(iconErrors)
 
-  // Before this save the dev server read the example (no personal file yet).
-  // After it, the personal file exists, but the running build still uses the example.
-  const firstPersonalSave = profileReadPath() !== PROFILE_WRITE_PATH
-
   let restartNeeded = true
   try {
     const previous = ProfileSchema.safeParse(await readProfileFile())
@@ -64,7 +61,6 @@ export default defineEventHandler(async (event) => {
   catch {
     restartNeeded = true
   }
-  if (firstPersonalSave) restartNeeded = true
 
   await writeAtomic(PROFILE_WRITE_PATH, `${JSON.stringify(next, null, 2)}\n`)
   return { ok: true as const, restartNeeded }
