@@ -25,7 +25,7 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 - Deploy: Cloudflare Pages, build `npm run generate`, output `dist`, `NODE_VERSION=24`.
 - Commit messages: Conventional Commits (`type(scope): subject`, present tense, lower case, max 72 chars). A local commitlint hook rejects the rest. No attribution lines.
 - Release: `npm run release` (local, makes the version commit and the tag), then `git push --follow-tags origin main`. The tag starts the GitHub release workflow.
-- Deploy: `npm run deploy` (wrangler, local, manual). Preview: `npm run deploy:preview`. The pipeline never deploys.
+- Publish: `npm run publish` (local, `scripts/publish.mjs`). First run: pick Cloudflare Pages or Netlify, browser login, site name, availability check, create, build, upload. Later runs: build + upload. State in `.tilebox/publish.json` (ignored). No tokens in the repo. `npm run deploy` = `publish -- --provider cloudflare`, `npm run deploy:preview` adds `--preview`. The pipeline never deploys.
 
 ## Still needed from Ricardo (not blocking WP0)
 - Real links (GitHub, LinkedIn, X, email, CONDOMERA URL), city, avatar, one photo.
