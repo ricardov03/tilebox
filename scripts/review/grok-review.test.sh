@@ -23,6 +23,10 @@
 #   LEDGER        --ledger appends one line per finding with category and branch; a cache hit and a forced
 #                 re-review of the same branch add nothing
 #   BUDGET        the prompt states the turn budget; the grok call carries the read-only flags
+#   STUB          a 1-turn progress stub (JSON stub or plain text, no tool call) ⇒ ONE automatic retry on the
+#                 same session with the tools and the rest of the budget; a second stub ⇒ exit 3 with the
+#                 session id on stderr and in a verdict=BLIND trailer; retries= and evidence= in the trailer
+#   CONCLUDE      --conclude on a session that made no tool call is refused; --conclude-tools resumes with tools
 #   TURN CAP      grok exits "max turns reached" with no verdict ⇒ ONE conclude call resumes the same
 #                 session; it answers ⇒ a verdict; it fails too ⇒ exit 3; --conclude <id> skips the review call
 #   GRAPH         with a graph present, the graph callers are listed and their source is pasted
@@ -42,7 +46,7 @@ IMPACT="$SCRIPT_DIR/impact-map.py"
 [[ -f "$REVIEW" && -f "$LEDGER_SH" && -f "$IMPACT" ]] || { echo "grok-review.test: scripts missing" >&2; exit 2; }
 for tool in git python3; do command -v "$tool" >/dev/null 2>&1 || { echo "grok-review.test: $tool missing" >&2; exit 2; }; done
 
-PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=94
+PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=130
 assert_eq() { # name expected actual
     if [[ "$2" == "$3" ]]; then PASSED=$((PASSED+1)); echo "  ok   $1"; else FAILED=$((FAILED+1)); echo "  FAIL $1: expected [$2] got [$3]"; fi
 }
@@ -71,17 +75,27 @@ cat > "$BIN/grok" <<'FAKE'
 # If $FAKE_DIR/hang exists it never answers (watchdog case).
 set -euo pipefail
 [[ "${1:-}" == usage ]] && exit 1          # `grok usage <session>`: the fake keeps no books
+if [[ "${1:-}" == export ]]; then          # `grok export <session>`: Markdown, one "## Tools" section per tool turn
+    [[ -f "$FAKE_DIR/no-export" ]] && exit 1
+    # The prompt can hold any heading: a "## Tools" before the first "## Assistant" is not a tool turn.
+    printf '## User\n\nthe prompt\n\n## Tools\n\n- Read: a/heading/inside/the/prompt.md\n\n## Assistant\n\n{ "passed": false }\n\n'
+    # `no-tools`: the session never called a tool. `tools-on-resume`: none before the first resume call.
+    if [[ -f "$FAKE_DIR/no-tools" || ( -f "$FAKE_DIR/tools-on-resume" && ! -f "$FAKE_DIR/did-resume" ) ]]; then exit 0; fi
+    printf '## Tools\n\n- Read: docs/invariants.md\n- Search: greetUser\n- List: app\n\n## Assistant\n\n{ "passed": true }\n'
+    exit 0
+fi
 prompt=""; resumed=0
 printf '%s\n' "$@" > "$FAKE_DIR/last-argv"
-[[ " $* " == *" --resume "* ]] && { resumed=1; printf '%s\n' "$@" > "$FAKE_DIR/resume-argv"; } || printf '%s\n' "$@" > "$FAKE_DIR/review-argv"
+[[ " $* " == *" --resume "* ]] && { resumed=1; touch "$FAKE_DIR/did-resume"; printf '%s\n' "$@" > "$FAKE_DIR/resume-argv"; } || printf '%s\n' "$@" > "$FAKE_DIR/review-argv"
 while [[ $# -gt 0 ]]; do
-    case "$1" in --prompt-file) prompt="$2"; shift 2 ;; --json-schema|--tools|--disallowed-tools|--effort|--max-turns|--output-format|--cwd|--deny|--session-id|--resume) shift 2 ;; *) shift ;; esac
+    case "$1" in --prompt-file) prompt="$2"; shift 2 ;; --json-schema|--tools|--disallowed-tools|--effort|--max-turns|--output-format|--cwd|--deny|--session-id|--resume|--rules) shift 2 ;; *) shift ;; esac
 done
 cp "$prompt" "$FAKE_DIR/last-prompt.md"
 echo x >> "$FAKE_DIR/calls"
 [[ -f "$FAKE_DIR/hang" ]] && sleep 600
 # grok 1.0.30 at the turn cap: exit 1, "Error: max turns reached", no envelope. `max-turns` = the review call only.
 [[ -f "$FAKE_DIR/max-turns-always" || ( -f "$FAKE_DIR/max-turns" && "$resumed" -eq 0 ) ]] && { echo "Error: max turns reached" >&2; exit 1; }
+[[ "$resumed" -eq 1 && -f "$FAKE_DIR/reply-resume.json" ]] && { cat "$FAKE_DIR/reply-resume.json"; exit 0; }
 cat "$FAKE_DIR/reply.json"
 FAKE
 chmod +x "$BIN/grok"
@@ -96,14 +110,15 @@ FAKE
 chmod +x "$BIN/graphify"
 calls() { [[ -f "$FAKE_DIR/calls" ]] && wc -l < "$FAKE_DIR/calls" | tr -d ' ' || echo 0; }
 
-reply() { # writes an envelope whose .text is the given string; $2 overrides stopReason
-    python3 - "$FAKE_DIR/reply.json" "$1" "${2:-end_turn}" <<'PY'
+reply() { # writes an envelope whose .text is the given string; $2 overrides stopReason, $3 num_turns, $4 the file
+    python3 - "$FAKE_DIR/${4:-reply.json}" "$1" "${2:-end_turn}" "${3:-4}" <<'PY'
 import json, sys
-json.dump({"text": sys.argv[2], "stopReason": sys.argv[3], "sessionId": "s1", "requestId": "r1", "num_turns": 4,
+json.dump({"text": sys.argv[2], "stopReason": sys.argv[3], "sessionId": "s1", "requestId": "r1", "num_turns": int(sys.argv[4]),
            "usage": {"input_tokens": 1200, "output_tokens": 300}, "modelUsage": {"grok-test-build": {}}},
           open(sys.argv[1], "w"))
 PY
 }
+reply_resume() { reply "$1" end_turn "${2:-3}" reply-resume.json; }   # what a --resume call answers
 FINDING='{"id":"save-without-guard","severity":"warning","category":"dev-route-guard","file":"server/api/save.post.ts","line":2,"claim":"the route skips assertEditorRequest","evidence":"x","failure_path":"a cross-site POST saves the profile","fix":"call the guard first"}'
 SUGG='{"id":"third-copy","severity":"suggestion","category":"schema-drift","file":"app/utils/greet.ts","line":3,"claim":"rule exists twice","evidence":"y","failure_path":"drift","fix":"share it"}'
 PROGRESS='{"passed": false, "summary": "reading…", "findings": []}'
@@ -201,7 +216,7 @@ assert_eq "trailer suggestion=1" 1 "$(field "$SANDBOX/out1" suggestion)"
 assert_eq "trailer cached=0" 0 "$(field "$SANDBOX/out1" cached)"
 assert_eq "trailer tokens_in from envelope" 1200 "$(field "$SANDBOX/out1" tokens_in)"
 assert_eq "trailer turns from envelope" 4 "$(field "$SANDBOX/out1" turns)"
-assert_grep "trailer format is stable" '^grok-review: scope=block files=1 diff_chars=[0-9]+ cached=0 turns=4 elapsed_s=[0-9]+ tokens_in=1200 tokens_out=300 critical=0 warning=1 suggestion=1 verdict=FAIL$' "$SANDBOX/out1"
+assert_grep "trailer format is stable" '^grok-review: scope=block files=1 diff_chars=[0-9]+ cached=0 turns=4 elapsed_s=[0-9]+ tokens_in=1200 tokens_out=300 retries=0 evidence=full session=[0-9a-f-]{36} critical=0 warning=1 suggestion=1 verdict=FAIL$' "$SANDBOX/out1"
 assert_grep "prompt carries the diff hunk" '^\+// touched' "$FAKE_DIR/last-prompt.md"
 assert_grep "prompt carries the title" 'Title:\*\* Guard the save route' "$FAKE_DIR/last-prompt.md"
 assert_grep "prompt carries the scope label" '^block: one task block' "$FAKE_DIR/last-prompt.md"
@@ -235,6 +250,7 @@ reply "$PROGRESS"        # passed=false with zero findings is a progress stub, n
 set +e; bash "$REVIEW" > "$SANDBOX/out5b" 2>"$SANDBOX/err5b"; rc=$?; set -e
 assert_eq "progress stub ⇒ exit 3, not 1" 3 "$rc"
 assert_grep "progress stub is named in stderr" 'progress stub' "$SANDBOX/err5b"
+assert_eq "a stub after 4 turns of tool calls is not the 1-turn stub: no retry" BLIND/0 "$(field "$SANDBOX/out5b" verdict)/$(field "$SANDBOX/out5b" retries)"
 reply "$PASS_VERDICT" max_turns
 set +e; bash "$REVIEW" > "$SANDBOX/out5c" 2>"$SANDBOX/err5c"; rc=$?; set -e
 assert_eq "run cut by max_turns ⇒ exit 3 even with a clean-looking verdict" 3 "$rc"
@@ -313,18 +329,81 @@ bash "$LEDGER_SH" report > "$SANDBOX/report"
 assert_grep "report names the top category" '^findings-ledger: rows=3 top_category=dev-route-guard top_count=2 grok=2 ocr=0 agent=0 human=1$' "$SANDBOX/report"
 
 echo "BUDGET"
-assert_grep "prompt states the turn budget" 'at most 8 tool turns' "$FAKE_DIR/last-prompt.md"
+assert_grep "prompt states the turn budget" 'at most 14 tool turns' "$FAKE_DIR/last-prompt.md"
 # The map is a text search capped at 40 per file, so the prompt must say so and must send Grok to grep
 # for the changed symbols: an overclaim here is what would make it skip the grep.
 assert_grep "prompt admits the impact map is not exhaustive" 'It is not exhaustive' "$FAKE_DIR/last-prompt.md"
 assert_grep "prompt tells Grok to grep the changed symbols" 'grep for the changed symbols' "$FAKE_DIR/last-prompt.md"
 assert_not_grep "prompt never claims the map lists every caller" 'lists every caller' "$FAKE_DIR/last-prompt.md"
 assert_grep "grok is called with --effort medium" '^medium$' "$FAKE_DIR/last-argv"
-assert_grep "grok is called with --max-turns 8" '^8$' "$FAKE_DIR/last-argv"
+assert_grep "grok is called with --max-turns 14 (the default)" '^14$' "$FAKE_DIR/last-argv"
+assert_grep "grok is called with plan mode off" '^--no-plan$' "$FAKE_DIR/last-argv"
+bash "$REVIEW" --help > "$SANDBOX/help" 2>&1
+assert_grep "--help names the new defaults" 'default: 14;' "$SANDBOX/help"
+assert_grep "--help names the watchdog default" 'default: 12;' "$SANDBOX/help"
+assert_grep "--help ends with the last header line" 'Suite: grok-review.test.sh' "$SANDBOX/help"
+assert_grep "the prompt opens with the no-plan rule" '^\*\*Do not announce a plan\. Your FIRST action must be a tool call' <(head -1 "$FAKE_DIR/last-prompt.md")
 assert_grep "grok gets read-only tools" '^read_file,grep,list_dir$' "$FAKE_DIR/last-argv"
 assert_eq "grok is denied MCP, shell, edit, write and web" "Bash Edit MCPTool WebFetch Write" "$(grep -A1 -E '^--deny$' "$FAKE_DIR/last-argv" | grep -vE '^--' | sort | tr '\n' ' ' | sed 's/ $//')"
 set +e; bash "$REVIEW" --force --max-turns 5 --effort low > /dev/null 2>&1; set -e
 assert_grep "--max-turns flows into the prompt budget" 'at most 5 tool turns' "$FAKE_DIR/last-prompt.md"
+
+echo "STUB (a 1-turn progress stub ⇒ one automatic retry with the tools)"
+reply "$PROGRESS" end_turn 1; reply_resume "$PASS_VERDICT" 5
+touch "$FAKE_DIR/tools-on-resume"; rm -f "$FAKE_DIR/did-resume"; before=$(calls)
+set +e; bash "$REVIEW" --force > "$SANDBOX/out20" 2>"$SANDBOX/err20"; rc=$?; set -e
+sid=$(grep -A1 -E '^--session-id$' "$FAKE_DIR/review-argv" | tail -1)
+assert_eq "stub, then the retry answers ⇒ exit 0 after two calls" "0/$((before+2))" "$rc/$(calls)"
+assert_eq "the retry resumes the session of the review call" "$sid" "$(grep -A1 -E '^--resume$' "$FAKE_DIR/resume-argv" | tail -1)"
+assert_grep "the retry prompt says continue" '^You stopped after announcing your plan\. Continue now: use your tools, then return ONLY the JSON verdict\.$' "$FAKE_DIR/last-prompt.md"
+assert_not_grep "the retry prompt does not forbid tools" 'Do NOT call any tool' "$FAKE_DIR/last-prompt.md"
+assert_grep "the retry keeps the read-only tool allowlist" '^read_file,grep,list_dir$' "$FAKE_DIR/resume-argv"
+assert_eq "the retry gets the rest of the turn budget (14 - 1)" 13 "$(grep -A1 -E '^--max-turns$' "$FAKE_DIR/resume-argv" | tail -1)"
+assert_eq "trailer retries=1" 1 "$(field "$SANDBOX/out20" retries)"
+assert_eq "trailer evidence=full (the retry read files)" full "$(field "$SANDBOX/out20" evidence)"
+assert_eq "trailer session= is the session id" "$sid" "$(field "$SANDBOX/out20" session)"
+assert_eq "trailer turns = both calls" 6 "$(field "$SANDBOX/out20" turns)"
+assert_grep "the session id is on stderr for a good run too" "^grok-review: session $sid" "$SANDBOX/err20"
+assert_grep "the report names the retry" 'automatic retry after a 1-turn stub' "$SANDBOX/out20"
+set +e; bash "$REVIEW" > "$SANDBOX/out20b" 2>/dev/null; set -e
+assert_eq "a cache hit keeps retries, evidence and session" "1/1/full/$sid" "$(field "$SANDBOX/out20b" cached)/$(field "$SANDBOX/out20b" retries)/$(field "$SANDBOX/out20b" evidence)/$(field "$SANDBOX/out20b" session)"
+rm -f "$FAKE_DIR/tools-on-resume" "$FAKE_DIR/did-resume" "$FAKE_DIR/reply-resume.json"
+
+reply "Starting independent review. I will read docs/invariants.md first." end_turn 1    # the text form of the stub
+touch "$FAKE_DIR/no-tools"; before=$(calls)
+set +e; bash "$REVIEW" --force > "$SANDBOX/out21" 2>"$SANDBOX/err21"; rc=$?; set -e
+sid=$(grep -A1 -E '^--session-id$' "$FAKE_DIR/review-argv" | tail -1)
+assert_eq "stub twice ⇒ exit 3 after ONE retry (two calls, not three)" "3/$((before+2))" "$rc/$(calls)"
+assert_grep "stub twice ⇒ the session id is printed with the resume advice" "^grok-review: session $sid .*--conclude $sid --conclude-tools" "$SANDBOX/err21"
+assert_grep "stub twice ⇒ stderr says the retry was spent" 'again after the 1 automatic retry' "$SANDBOX/err21"
+assert_eq "stub twice ⇒ BLIND trailer with the session, retries=1, evidence=diff-only" "BLIND/$sid/1/diff-only" "$(field "$SANDBOX/out21" verdict)/$(field "$SANDBOX/out21" session)/$(field "$SANDBOX/out21" retries)/$(field "$SANDBOX/out21" evidence)"
+assert_eq "stub twice ⇒ the trailer is the last line on stdout" 1 "$(tail -1 "$SANDBOX/out21" | grep -c '^grok-review: .* verdict=BLIND$')"
+assert_grep "stub twice ⇒ the raw output is kept and named" 'raw grok output kept at .*\.raw\.json' "$SANDBOX/err21"
+reply "$PROGRESS" end_turn 1; reply_resume "$PASS_VERDICT" 1
+set +e; bash "$REVIEW" --force > "$SANDBOX/out22" 2>/dev/null; rc=$?; set -e
+assert_eq "a verdict from a session that opened no file ⇒ evidence=diff-only" "0/diff-only" "$rc/$(field "$SANDBOX/out22" evidence)"
+assert_grep "the report labels a diff-only verdict" 'DIFF-ONLY: the reviewer opened no file' "$SANDBOX/out22"
+rm -f "$FAKE_DIR/reply-resume.json"
+
+echo "CONCLUDE (a session that read nothing is not concluded without tools)"
+reply "$PASS_VERDICT"; before=$(calls)
+set +e; bash "$REVIEW" --conclude 22222222-2222-4333-8444-555555555555 > "$SANDBOX/out23" 2>"$SANDBOX/err23"; rc=$?; set -e
+assert_eq "tool-less conclude of a session with no tool call ⇒ refused, exit 3, no call" "3/$before" "$rc/$(calls)"
+assert_grep "the refusal says why" 'made no tool call, so it read nothing' "$SANDBOX/err23"
+assert_grep "the refusal names --conclude-tools" 'add --conclude-tools' "$SANDBOX/err23"
+assert_eq "the refusal prints a BLIND trailer with the session" "BLIND/22222222-2222-4333-8444-555555555555" "$(field "$SANDBOX/out23" verdict)/$(field "$SANDBOX/out23" session)"
+rm -f "$FAKE_DIR/no-tools"; touch "$FAKE_DIR/tools-on-resume"; rm -f "$FAKE_DIR/did-resume"
+set +e; bash "$REVIEW" --conclude 22222222-2222-4333-8444-555555555555 --conclude-tools > "$SANDBOX/out24" 2>/dev/null; rc=$?; set -e
+assert_eq "--conclude-tools ⇒ one resume call, exit 0, evidence=full" "0/$((before+1))/full" "$rc/$(calls)/$(field "$SANDBOX/out24" evidence)"
+assert_grep "--conclude-tools resumes with the continue prompt" 'Continue now: use your tools' "$FAKE_DIR/last-prompt.md"
+assert_eq "--conclude-tools gets the full turn budget" 14 "$(grep -A1 -E '^--max-turns$' "$FAKE_DIR/resume-argv" | tail -1)"
+rm -f "$FAKE_DIR/tools-on-resume" "$FAKE_DIR/did-resume"
+touch "$FAKE_DIR/no-export"
+set +e; bash "$REVIEW" --force > "$SANDBOX/out25" 2>/dev/null; rc=$?; set -e
+assert_eq "no \`grok export\`: a 4-turn call counts as evidence=full" "0/full" "$rc/$(field "$SANDBOX/out25" evidence)"
+set +e; bash "$REVIEW" --conclude 22222222-2222-4333-8444-555555555555 > "$SANDBOX/out26" 2>"$SANDBOX/err26"; rc=$?; set -e
+assert_eq "no \`grok export\`: --conclude runs, labelled evidence=diff-only" "0/diff-only" "$rc/$(field "$SANDBOX/out26" evidence)"
+rm -f "$FAKE_DIR/no-export"
 
 echo "TURN CAP (no verdict at the cap ⇒ one conclude call on the same session)"
 reply "$PASS_VERDICT"
