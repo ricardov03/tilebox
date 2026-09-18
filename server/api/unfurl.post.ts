@@ -9,6 +9,9 @@
  * - The `Host` header must be localhost, 127.0.0.1 or [::1]: a DNS-rebinding page has another host.
  * - An `Origin` header, when present, must be this same origin: another website cannot POST here (CSRF).
  * - One request per target host at a time: the rest wait in line.
+ * - A request the editor closed (a newer URL, another block) stops its job in the engine
+ *   (`signal`), so the line for that host is free again and nothing is cached.
+ *   The engine also ends every job after 20 s in total.
  * The engine itself refuses private and loopback targets (SSRF).
  */
 import { z } from 'zod'
@@ -60,5 +63,12 @@ export default defineEventHandler(async (event): Promise<UnfurlResult> => {
   const key = engine.normalizeUrl(body.data.url)
   if (!key) return { ok: false, reason: 'not a web address (http or https)' }
   const { showImage, force } = body.data
-  return queued(new URL(key).hostname, () => engine.unfurl(key, { showImage, force }))
+
+  // `close` before the answer was written = the client went away.
+  const controller = new AbortController()
+  const res = event.node.res
+  res.once('close', () => {
+    if (!res.writableEnded) controller.abort()
+  })
+  return queued(new URL(key).hostname, () => engine.unfurl(key, { showImage, force, signal: controller.signal }))
 })

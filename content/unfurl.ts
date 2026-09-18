@@ -14,7 +14,13 @@
  * - the checked IP is pinned for the connection, so a second DNS answer cannot
  *   point the socket somewhere else (DNS rebinding);
  * - redirects are followed by hand, 5 at most, and every hop is checked again;
- * - 8 s timeout, an honest User-Agent, a byte limit on every body.
+ * - 8 s timeout per hop, 3 s for the DNS answer, an honest User-Agent, a byte limit on every body.
+ *
+ * One `unfurl()` call has ONE budget for all of its requests (page, oEmbed,
+ * manifest, icons, images): 20 s in total, 8 requests, 8 redirects. A slow or
+ * hostile website cannot hold the editor or the build for longer. The caller
+ * can stop the job early with `signal` (the editor closed the request).
+ * A failed read is remembered for 10 minutes (`force` asks again).
  *
  * It never throws for a network reason: the answer is `{ ok: false, reason }`.
  *
@@ -33,11 +39,13 @@ import { brandIconFor } from '../app/utils/brand-icons'
 import { ROOT } from './resolve'
 import {
   DEFAULT_DIRS,
+  failureFor,
   FRESH_MS,
   localFileExists,
   normalizeUrl,
   readCacheSync,
   updateCache,
+  updateFailure,
   type CacheEntry,
   type UnfurlData,
   type UnfurlDirs,
@@ -45,8 +53,18 @@ import {
 
 export { normalizeUrl, type UnfurlData, type UnfurlDirs }
 
+/** One hop. */
 const TIMEOUT_MS = 8000
+/** One DNS answer. `dns.lookup` has no timeout of its own. */
+const DNS_TIMEOUT_MS = 3000
+/** One whole `unfurl()`: every request of it together. */
+export const TOTAL_TIMEOUT_MS = 20_000
+/** Redirects of one request. */
 const MAX_REDIRECTS = 5
+/** Redirects of one whole `unfurl()`, all of its requests together. */
+export const MAX_TOTAL_REDIRECTS = 8
+/** Requests of one whole `unfurl()`: page, oEmbed, manifest, icons, images. */
+export const MAX_SUB_REQUESTS = 8
 const MAX_HTML_BYTES = 512 * 1024
 const MAX_JSON_BYTES = 256 * 1024
 const MAX_ICON_BYTES = 1024 * 1024
@@ -100,8 +118,12 @@ export type Transport = (url: URL, init: TransportInit) => Promise<TransportResp
 export interface UnfurlOptions {
   /** Also fetch the website's image (the second switch). */
   showImage?: boolean
-  /** Skip the 30-day freshness check. */
+  /** Skip the 30-day freshness check and the 10-minute memory of a failure. Sends no `If-None-Match`. */
   force?: boolean
+  /** The caller's stop button (the editor closed the request). The job ends with `reason: 'cancelled'` and caches nothing. */
+  signal?: AbortSignal
+  /** INTERNAL. The shared limits of one `unfurl()` call. `safeRequest()` makes its own when there is none. */
+  budget?: RequestBudget
   /** TESTS ONLY. Hosts that skip the address and port checks (a local test server on 127.0.0.1). */
   allowHosts?: readonly string[]
   /** TESTS ONLY. Replaces `dns.lookup`. */
@@ -114,7 +136,24 @@ export interface UnfurlOptions {
   now?: () => number
 }
 
-export type UnfurlResult = ({ ok: true, cached: boolean } & UnfurlData) | { ok: false, reason: string }
+export type UnfurlResult = ({ ok: true, cached: boolean } & UnfurlData) | { ok: false, reason: string, cached?: boolean }
+
+/** What one `unfurl()` call may still spend. Shared by every request of that call. */
+export interface RequestBudget {
+  /** Aborts at the total deadline, or when the caller's `signal` does. */
+  signal: AbortSignal
+  redirectsLeft: number
+  requestsLeft: number
+}
+
+export function newBudget(signal?: AbortSignal, totalMs: number = TOTAL_TIMEOUT_MS): RequestBudget {
+  const deadline = AbortSignal.timeout(totalMs)
+  return {
+    signal: signal ? AbortSignal.any([deadline, signal]) : deadline,
+    redirectsLeft: MAX_TOTAL_REDIRECTS,
+    requestsLeft: MAX_SUB_REQUESTS,
+  }
+}
 
 /** A failure with a short reason for the owner: "timeout", "http 403", "blocked address"... */
 export class UnfurlError extends Error {
@@ -179,6 +218,20 @@ export function isPublicAddress(address: string): boolean {
   return true
 }
 
+/** `dns.lookup` has no timeout: a resolver that never answers would hold the job. 3 s, then "timeout". */
+async function lookupInTime(lookup: LookupFn, host: string): Promise<LookupAddress[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new UnfurlError('timeout')), DNS_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([lookup(host), late])
+  }
+  finally {
+    clearTimeout(timer)
+  }
+}
+
 /** The SSRF guard for one URL. Returns the address to pin, or `null` for an allowed test host. */
 export async function checkTarget(url: URL, options: Pick<UnfurlOptions, 'allowHosts' | 'lookup'> = {}): Promise<LookupAddress | null> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new UnfurlError('not a web address')
@@ -193,9 +246,10 @@ export async function checkTarget(url: URL, options: Pick<UnfurlOptions, 'allowH
   }
   else {
     try {
-      addresses = await (options.lookup ?? defaultLookup)(host)
+      addresses = await lookupInTime(options.lookup ?? defaultLookup, host)
     }
-    catch {
+    catch (error) {
+      if (error instanceof UnfurlError) throw error
       throw new UnfurlError('offline or unknown host')
     }
   }
@@ -260,21 +314,35 @@ function networkReason(error: unknown): string {
   return 'offline or the site did not answer'
 }
 
-/** One GET through the guard. Follows redirects by hand. Throws `UnfurlError` only. */
+/** Why the budget's signal fired: the caller stopped the job, or the 20 s are over. */
+function stopReason(options: UnfurlOptions): string {
+  return options.signal?.aborted ? 'cancelled' : 'timeout'
+}
+
+/**
+ * One GET through the guard. Follows redirects by hand. Throws `UnfurlError` only.
+ * It spends from `options.budget` (one request, and one redirect per hop), so all
+ * requests of one `unfurl()` share the 20 s, the 8 requests and the 8 redirects.
+ */
 export async function safeRequest(target: string | URL, request: RequestOptions, options: UnfurlOptions = {}): Promise<SafeResponse> {
   const transport = options.transport ?? defaultTransport
+  const budget = options.budget ?? newBudget(options.signal)
+  if (budget.signal.aborted) throw new UnfurlError(stopReason(options))
+  if (budget.requestsLeft <= 0) throw new UnfurlError('too many requests')
+  budget.requestsLeft--
   let url = new URL(target)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (budget.signal.aborted) throw new UnfurlError(stopReason(options))
     const pinned = await checkTarget(url, options)
     const headers: Record<string, string> = { 'user-agent': USER_AGENT, 'accept': request.accept }
     if (hop === 0 && request.etag) headers['if-none-match'] = request.etag
     if (hop === 0 && request.lastModified) headers['if-modified-since'] = request.lastModified
     let response: TransportResponse
     try {
-      response = await transport(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS), pinned })
+      response = await transport(url, { headers, signal: AbortSignal.any([budget.signal, AbortSignal.timeout(TIMEOUT_MS)]), pinned })
     }
     catch (error) {
-      throw new UnfurlError(networkReason(error))
+      throw new UnfurlError(budget.signal.aborted ? stopReason(options) : networkReason(error))
     }
     try {
       const location = response.headers.get('location')
@@ -286,6 +354,8 @@ export async function safeRequest(target: string | URL, request: RequestOptions,
         catch {
           throw new UnfurlError('bad redirect')
         }
+        if (budget.redirectsLeft <= 0) throw new UnfurlError('too many redirects')
+        budget.redirectsLeft--
         url = next
         continue
       }
@@ -295,7 +365,7 @@ export async function safeRequest(target: string | URL, request: RequestOptions,
         body = await readLimited(response.body, request)
       }
       catch (error) {
-        throw new UnfurlError(networkReason(error))
+        throw new UnfurlError(budget.signal.aborted ? stopReason(options) : networkReason(error))
       }
       return { status: 200, url, headers: response.headers, body }
     }
@@ -777,7 +847,13 @@ function answer(data: UnfurlData, showImage: boolean, cached: boolean): UnfurlRe
   return { ok: true, cached, ...rest, ...(showImage && image ? { image, ...(imageAlt ? { imageAlt } : {}) } : {}) }
 }
 
-async function run(input: string, options: UnfurlOptions): Promise<UnfurlResult> {
+/** Refusals of the local guard. They cost no network, so they are not remembered. */
+const CHEAP_REASONS = new Set(['blocked address', 'blocked port', 'not a web address', 'offline or unknown host', 'cancelled'])
+
+async function run(input: string, caller: UnfurlOptions): Promise<UnfurlResult> {
+  // ONE budget for every request of this call: 20 s, 8 requests, 8 redirects.
+  const options: UnfurlOptions = { ...caller, budget: newBudget(caller.signal) }
+  const cancelled = () => caller.signal?.aborted === true
   const ctx = { dirs: options.dirs ?? DEFAULT_DIRS, now: options.now ?? Date.now }
   const showImage = options.showImage ?? false
   const key = normalizeUrl(input)
@@ -800,13 +876,17 @@ async function run(input: string, options: UnfurlOptions): Promise<UnfurlResult>
   let lastModified: string | undefined
   let note: string | undefined
 
+  // A read that failed less than 10 minutes ago is not tried again (`force` does).
+  const remembered = options.force ? undefined : failureFor(key, ctx.now(), ctx.dirs)
+  let pageError: string | undefined = remembered?.reason
+
   const oembed = oembedUrlFor(pageUrl)
-  if (oembed) {
+  if (oembed && !remembered) {
     found = await fromOembed(oembed, options)
     if (found) source = 'oembed'
   }
 
-  if (!found) {
+  if (!found && !remembered) {
     try {
       const response = await safeRequest(pageUrl, {
         accept: HTML_ACCEPT,
@@ -838,13 +918,20 @@ async function run(input: string, options: UnfurlOptions): Promise<UnfurlResult>
       found = { title: head.title, description: head.description, siteName: head.siteName, themeColor: head.themeColor, images }
     }
     catch (error) {
-      const reason = networkReason(error)
-      // A brand we know still gets its icon, with no network at all.
-      if (!brand) return { ok: false, reason }
-      source = 'brand'
-      note = `The website gave no data (${reason}). The brand icon still works.`
-      found = { siteName: pageUrl.hostname.replace(/^www\./, ''), images: [] }
+      pageError = cancelled() ? 'cancelled' : networkReason(error)
+      if (!CHEAP_REASONS.has(pageError)) {
+        await updateFailure(key, { reason: pageError, at: fetchedAt }, ctx.dirs, ctx.now())
+      }
     }
+  }
+
+  if (!found) {
+    const reason = pageError ?? 'the link could not be read'
+    // A brand we know still gets its icon, with no network at all.
+    if (!brand || reason === 'cancelled') return { ok: false, reason, ...(remembered ? { cached: true } : {}) }
+    source = 'brand'
+    note = `The website gave no data (${reason}). The brand icon still works.`
+    found = { siteName: pageUrl.hostname.replace(/^www\./, ''), images: [] }
   }
 
   const avatar = githubAvatarFor(pageUrl)
@@ -884,7 +971,9 @@ async function run(input: string, options: UnfurlOptions): Promise<UnfurlResult>
     fetchedAt,
     ...(note ? { note } : {}),
   }
-  // A brand-only answer is a failed read. It is not cached, so the next try asks the website again.
+  // The editor closed the request: what was found may be half of it. Nothing is cached.
+  if (cancelled()) return { ok: false, reason: 'cancelled' }
+  // A brand-only answer is a failed read. It is not cached as data (its failure is remembered for 10 minutes).
   if (source !== 'brand') {
     await updateCache(key, { data, imageTried: showImage || (entry?.imageTried === true && image !== undefined), etag, lastModified }, ctx.dirs)
   }

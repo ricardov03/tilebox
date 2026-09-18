@@ -20,6 +20,8 @@ import {
   decodeHtml,
   githubAvatarFor,
   isPublicAddress,
+  MAX_SUB_REQUESTS,
+  MAX_TOTAL_REDIRECTS,
   largestPngFromIco,
   normalizeUrl,
   oembedUrlFor,
@@ -28,13 +30,14 @@ import {
   rasterizeIcon,
   safeRequest,
   sniffImage,
+  TOTAL_TIMEOUT_MS,
   unfurl,
   USER_AGENT,
   type Transport,
   type UnfurlDirs,
   type UnfurlOptions,
 } from '../../content/unfurl'
-import { FRESH_MS, readCacheSync } from '../../content/unfurl-cache'
+import { FRESH_MS, NEGATIVE_MS, readCacheSync, readFailuresSync } from '../../content/unfurl-cache'
 
 /** 1x1 transparent PNG. */
 const TINY_PNG = Buffer.from(
@@ -110,6 +113,32 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...headers })
     res.end(body)
   }
+  // S2. `/slow-hop/N`: 7 s (under the 8 s limit of one hop), then a redirect. 3 of them pass the 20 s of one unfurl.
+  const slowHop = path.match(/^\/slow-hop\/(\d+)$/)
+  if (slowHop) {
+    const left = Number(slowHop[1])
+    const timer = setTimeout(() => {
+      res.writeHead(302, { location: left > 0 ? `/slow-hop/${left - 1}` : '/page' })
+      res.end()
+    }, 7000)
+    res.on('close', () => clearTimeout(timer))
+    return
+  }
+  // S2. `/ihop/N`: an icon behind N + 1 redirects.
+  const iconHop = path.match(/^\/ihop\/(\d+)$/)
+  if (iconHop) {
+    const left = Number(iconHop[1])
+    res.writeHead(302, { location: left > 0 ? `/ihop/${left - 1}` : '/real.png' })
+    res.end()
+    return
+  }
+  const pageHop = path.match(/^\/phop\/(\d+)$/)
+  if (pageHop) {
+    const left = Number(pageHop[1])
+    res.writeHead(302, { location: left > 0 ? `/phop/${left - 1}` : '/page-ihop' })
+    res.end()
+    return
+  }
   const hop = path.match(/^\/hop\/(\d+)$/)
   if (hop) {
     const left = Number(hop[1])
@@ -128,6 +157,20 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   switch (path) {
     case '/page':
       return html(PAGE)
+    case '/page-ihop':
+      return html('<html><head><title>Icon behind redirects</title><link rel="icon" type="image/png" sizes="96x96" href="/ihop/3"></head></html>')
+    case '/many-requests':
+      return html(`<html><head><title>Many requests</title>
+        <meta property="og:image" content="/fake.png">
+        <meta name="twitter:image" content="/real.png">
+        <link rel="icon" type="image/svg+xml" href="/missing-a.svg">
+        <link rel="apple-touch-icon" href="/missing-b.png">
+        <link rel="icon" type="image/png" href="/missing-c.png">
+        <link rel="manifest" href="/many.webmanifest"></head></html>`)
+    case '/many.webmanifest':
+      res.writeHead(200, { 'content-type': 'application/manifest+json' })
+      res.end(JSON.stringify({ icons: [{ src: '/missing-d.png', sizes: '192x192' }] }))
+      return
     case '/broken-icon-page':
       return html('<html><head><title>Broken icon</title><link rel="icon" type="image/png" sizes="96x96" href="/broken.png"></head></html>')
     case '/broken.png':
@@ -412,7 +455,8 @@ test.describe('fetching (local server, allowHosts)', () => {
     expect(await unfurl(`${base}/pdf`, options)).toEqual({ ok: false, reason: 'not html' })
     expect(await unfurl(`${base}/missing`, options)).toEqual({ ok: false, reason: 'http 404' })
     expect(await unfurl('not a url', options)).toMatchObject({ ok: false })
-    expect(existsSync(dirs.cache)).toBe(false)
+    // Failed reads are remembered (S2), but never as data.
+    expect(readCacheSync(dirs)).toEqual({})
   })
 
   test('the cache is fresh for 30 days, then a 304 keeps the data, and force asks again', async () => {
@@ -509,6 +553,103 @@ test.describe('S1: a remote SVG is never stored', () => {
   })
 })
 
+test.describe('S2: one budget for the whole unfurl', () => {
+  test('a slow website ends after 20 s in total, and the failure is remembered: the second call is instant', async () => {
+    test.setTimeout(40_000)
+    const url = `${base}/slow-hop/5`
+    const started = Date.now()
+    const result = await unfurl(url, options)
+    const took = Date.now() - started
+    expect(result).toEqual({ ok: false, reason: 'timeout' })
+    expect(took).toBeLessThanOrEqual(21_000)
+    expect(took).toBeGreaterThanOrEqual(19_000)
+    // Two hops of 7 s ended, the third was cut at 20 s. Without the total limit all six would run (42 s).
+    expect([...hits.keys()].filter(path => path.startsWith('/slow-hop/')).length).toBe(3)
+
+    const again = Date.now()
+    expect(await unfurl(url, options)).toEqual({ ok: false, reason: 'timeout', cached: true })
+    expect(Date.now() - again).toBeLessThan(200)
+    expect([...hits.keys()].filter(path => path.startsWith('/slow-hop/')).length).toBe(3)
+    expect(TOTAL_TIMEOUT_MS).toBe(20_000)
+  })
+
+  test('a failure is remembered for 10 minutes, `force` asks again, and a good read forgets it', async () => {
+    let now = Date.parse('2026-01-01T00:00:00Z')
+    const timed: UnfurlOptions = { ...options, now: () => now }
+    const url = `${base}/pdf`
+    expect(await unfurl(url, timed)).toEqual({ ok: false, reason: 'not html' })
+    expect(readFailuresSync(dirs)[url]).toEqual({ reason: 'not html', at: new Date(now).toISOString() })
+    expect(await unfurl(url, timed)).toEqual({ ok: false, reason: 'not html', cached: true })
+    expect(hits.get('/pdf')).toBe(1)
+
+    await unfurl(url, { ...timed, force: true })
+    expect(hits.get('/pdf')).toBe(2)
+
+    now += NEGATIVE_MS - 1000
+    await unfurl(url, timed)
+    expect(hits.get('/pdf')).toBe(2)
+    now += 2000
+    expect(await unfurl(url, timed)).toEqual({ ok: false, reason: 'not html' })
+    expect(hits.get('/pdf')).toBe(3)
+
+    // Refusals of the local guard cost nothing and are not remembered.
+    await unfurl('http://127.0.0.1/x', { dirs, now: () => now })
+    expect(Object.keys(readFailuresSync(dirs))).toEqual([url])
+    // A good read forgets the failure of its key.
+    await unfurl(`${base}/page`, timed)
+    expect(Object.keys(readFailuresSync(dirs))).toEqual([url])
+    expect(Object.keys(readCacheSync(dirs))).toEqual([`${base}/page`])
+  })
+
+  test('redirects are counted over ALL requests of one unfurl: 8 in total', async () => {
+    // 5 redirects to the page, so 3 are left. The icon sits behind 4: that request stops, the next source gives the icon.
+    const result = await unfurl(`${base}/phop/4`, options)
+    expect(result).toMatchObject({ ok: true, title: 'Icon behind redirects' })
+    const redirects = [...hits.entries()].filter(([path]) => /^\/(phop|ihop)\//.test(path)).reduce((sum, [, count]) => sum + count, 0)
+    expect(redirects).toBe(5 + 4)
+    expect(MAX_TOTAL_REDIRECTS).toBe(8)
+    // /ihop/0 answered with the 9th redirect, which was not followed.
+    expect(hits.get('/real.png')).toBeUndefined()
+    expect(hits.get('/favicon.ico')).toBe(1)
+    if (result.ok) expect(result.favicon).toMatch(/\.png$/)
+  })
+
+  test('one unfurl makes 8 requests at most', async () => {
+    const result = await unfurl(`${base}/many-requests`, { ...options, showImage: true })
+    expect(result).toMatchObject({ ok: true, title: 'Many requests' })
+    const total = [...hits.values()].reduce((sum, count) => sum + count, 0)
+    expect(total).toBeLessThanOrEqual(MAX_SUB_REQUESTS)
+    // page, 3 icons, manifest, its icon, /favicon.ico, the first image (not a picture) = 8. The second image was the 9th.
+    expect(total).toBe(8)
+    expect(hits.get('/fake.png')).toBe(1)
+    expect(hits.get('/real.png')).toBeUndefined()
+    if (result.ok) expect(result.image).toBeUndefined()
+  })
+
+  test('a DNS lookup that never answers ends after 3 s', async () => {
+    test.setTimeout(15_000)
+    const started = Date.now()
+    await expect(checkTarget(new URL('https://never.test/'), { lookup: () => new Promise(() => undefined) })).rejects.toMatchObject({ reason: 'timeout' })
+    expect(Date.now() - started).toBeLessThan(4000)
+  })
+
+  test('the caller can stop the job: it ends at once with "cancelled" and nothing is cached', async () => {
+    test.setTimeout(15_000)
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 300)
+    const started = Date.now()
+    const result = await unfurl(`${base}/slow-hop/2`, { ...options, signal: controller.signal })
+    expect(result).toEqual({ ok: false, reason: 'cancelled' })
+    expect(Date.now() - started).toBeLessThan(2000)
+    expect(readFailuresSync(dirs)).toEqual({})
+    expect(readCacheSync(dirs)).toEqual({})
+    // A job that starts after the stop makes no request at all.
+    hits.clear()
+    expect(await unfurl(`${base}/page`, { ...options, signal: controller.signal })).toEqual({ ok: false, reason: 'cancelled' })
+    expect(hits.size).toBe(0)
+  })
+})
+
 test.describe('oEmbed (mocked transport, no network)', () => {
   test('a YouTube link asks the oEmbed endpoint on the pinned address and never loads the page', async () => {
     const calls: { url: string, pinned: string | undefined, agent: string | undefined }[] = []
@@ -548,8 +689,9 @@ test.describe('oEmbed (mocked transport, no network)', () => {
     const brand = await unfurl('https://x.com/nuxt_js', { dirs, transport, lookup })
     expect(brand).toMatchObject({ ok: true, source: 'brand', siteName: 'x.com' })
     if (brand.ok) expect(brand.note).toContain('http 403')
-    // Not cached: the next try asks the website again.
-    expect(existsSync(dirs.cache)).toBe(false)
+    // Not cached as data. Only the failure is remembered, for 10 minutes (S2).
+    expect(readCacheSync(dirs)).toEqual({})
+    expect(readFailuresSync(dirs)['https://x.com/nuxt_js']?.reason).toBe('http 403')
     expect(await unfurl('https://unknown-site.test/', { dirs, transport, lookup })).toEqual({ ok: false, reason: 'http 403' })
   })
 })

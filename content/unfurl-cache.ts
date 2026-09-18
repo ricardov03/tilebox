@@ -35,6 +35,10 @@ export const DEFAULT_DIRS: UnfurlDirs = {
 export const MAX_URL_CHARS = 2048
 /** A cache entry is fresh for 30 days. */
 export const FRESH_MS = 30 * 24 * 60 * 60 * 1000
+/** A failed read is remembered for 10 minutes, so a dead or hostile link does not cost every build and every keystroke again. */
+export const NEGATIVE_MS = 10 * 60 * 1000
+/** Most failures kept in the file. Older ones go first. */
+export const MAX_FAILURES = 200
 
 /** Longest `imageAlt`. The same number caps the fetched description (content/unfurl.ts). */
 export const IMAGE_ALT_MAX = 200
@@ -72,9 +76,18 @@ export const CacheEntrySchema = z.object({
 }).strict()
 export type CacheEntry = z.infer<typeof CacheEntrySchema>
 
+/** A failed read: why, and when. Kept for `NEGATIVE_MS`. */
+export const CacheFailureSchema = z.object({
+  reason: z.string().min(1).max(200),
+  at: isoDate,
+}).strict()
+export type CacheFailure = z.infer<typeof CacheFailureSchema>
+
 interface CacheFile {
   version: 1
   entries: Record<string, CacheEntry>
+  /** Negative results, by the same key. Optional: an older file has none. */
+  failures: Record<string, CacheFailure>
 }
 
 /**
@@ -105,7 +118,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseCache(text: string): CacheFile {
-  const empty: CacheFile = { version: 1, entries: {} }
+  const empty: CacheFile = { version: 1, entries: {}, failures: {} }
   try {
     const parsed: unknown = JSON.parse(text)
     if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.entries)) return empty
@@ -115,7 +128,23 @@ function parseCache(text: string): CacheFile {
       const entry = CacheEntrySchema.safeParse(value)
       if (entry.success && key.length <= MAX_URL_CHARS) entries[key] = entry.data
     }
-    return { version: 1, entries }
+    const failures: Record<string, CacheFailure> = {}
+    for (const [key, value] of Object.entries(isRecord(parsed.failures) ? parsed.failures : {})) {
+      const failure = CacheFailureSchema.safeParse(value)
+      if (failure.success && key.length <= MAX_URL_CHARS) failures[key] = failure.data
+    }
+    return { version: 1, entries, failures }
+  }
+  catch {
+    return empty
+  }
+}
+
+function readCacheFileSync(dirs: UnfurlDirs): CacheFile {
+  const empty: CacheFile = { version: 1, entries: {}, failures: {} }
+  if (!existsSync(dirs.cache)) return empty
+  try {
+    return parseCache(readFileSync(dirs.cache, 'utf8'))
   }
   catch {
     return empty
@@ -124,25 +153,30 @@ function parseCache(text: string): CacheFile {
 
 /** The whole cache. A missing or broken file is an empty cache. */
 export function readCacheSync(dirs: UnfurlDirs = DEFAULT_DIRS): Record<string, CacheEntry> {
-  if (!existsSync(dirs.cache)) return {}
-  try {
-    return parseCache(readFileSync(dirs.cache, 'utf8')).entries
-  }
-  catch {
-    return {}
-  }
+  return readCacheFileSync(dirs).entries
+}
+
+/** The failed reads on file, old ones included. `failureFor()` is the one that checks the age. */
+export function readFailuresSync(dirs: UnfurlDirs = DEFAULT_DIRS): Record<string, CacheFailure> {
+  return readCacheFileSync(dirs).failures
+}
+
+/** The remembered failure of this key, when it is younger than 10 minutes. */
+export function failureFor(key: string, now: number, dirs: UnfurlDirs = DEFAULT_DIRS): CacheFailure | undefined {
+  const failure = readFailuresSync(dirs)[key]
+  if (!failure) return undefined
+  const age = now - Date.parse(failure.at)
+  return age >= 0 && age < NEGATIVE_MS ? failure : undefined
 }
 
 /** One writer at a time, so two requests never write half of each other's file. */
 let writeQueue: Promise<void> = Promise.resolve()
 
-/** Reads the file again, sets or removes one entry, writes through a tmp file + rename. */
-export function updateCache(key: string, entry: CacheEntry | null, dirs: UnfurlDirs = DEFAULT_DIRS): Promise<void> {
+/** Reads the file again, lets `change` edit it, writes through a tmp file + rename. */
+function mutateCache(dirs: UnfurlDirs, change: (file: CacheFile) => void): Promise<void> {
   const job = writeQueue.then(async () => {
-    const entries = new Map(Object.entries(readCacheSync(dirs)))
-    if (entry) entries.set(key, entry)
-    else entries.delete(key)
-    const file: CacheFile = { version: 1, entries: Object.fromEntries(entries) }
+    const file = readCacheFileSync(dirs)
+    change(file)
     const tmp = `${dirs.cache}.${process.pid}.tmp`
     try {
       await mkdir(dirname(dirs.cache), { recursive: true })
@@ -157,6 +191,32 @@ export function updateCache(key: string, entry: CacheEntry | null, dirs: UnfurlD
   // The cache is a convenience. A failed write must not break the queue or the caller.
   writeQueue = job.catch(() => undefined)
   return writeQueue
+}
+
+/** Sets or removes one entry. A good read also forgets the failure of that key. */
+export function updateCache(key: string, entry: CacheEntry | null, dirs: UnfurlDirs = DEFAULT_DIRS): Promise<void> {
+  return mutateCache(dirs, (file) => {
+    if (entry) {
+      file.entries[key] = entry
+      Reflect.deleteProperty(file.failures, key)
+    }
+    else {
+      Reflect.deleteProperty(file.entries, key)
+    }
+  })
+}
+
+/** Remembers a failed read (`null` forgets it). Failures older than 10 minutes leave the file, and at most `MAX_FAILURES` stay. */
+export function updateFailure(key: string, failure: CacheFailure | null, dirs: UnfurlDirs = DEFAULT_DIRS, now: number = Date.now()): Promise<void> {
+  return mutateCache(dirs, (file) => {
+    if (failure) file.failures[key] = failure
+    else Reflect.deleteProperty(file.failures, key)
+    const live = Object.entries(file.failures)
+      .filter(([, value]) => now - Date.parse(value.at) < NEGATIVE_MS)
+      .sort(([, a], [, b]) => Date.parse(b.at) - Date.parse(a.at))
+      .slice(0, MAX_FAILURES)
+    file.failures = Object.fromEntries(live)
+  })
 }
 
 /**
