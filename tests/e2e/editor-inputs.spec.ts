@@ -251,7 +251,13 @@ test('WP17: cleared title, bio, handle and email are saved as absent keys', asyn
   await expect(title).toBeVisible()
   await title.fill(block.title)
   await title.blur()
+  // An EditorTextField commits after a short idle, so Ctrl+S right after the blur
+  // can save the OLD model and leave the title out. Nothing would then save again
+  // and the poll below would wait for ever (WP19 saw exactly that in a full run).
+  // The preview tile is the model: wait until it carries the title.
+  await expect(page.locator(`li[data-id="${block.id}"]`)).toContainText(block.title)
   await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 })
   await expect.poll(() => savedLink(block.id).title, { timeout: 15_000 }).toBe(block.title)
 })
 
