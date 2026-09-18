@@ -304,6 +304,9 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 | `npm run fetch:favicons` | Old name. Alias of `npm run fetch:links` |
 | `npm run build:site-assets` | Writes the favicon set, the web manifest and the social preview image (`og.png`, 1200x630) to `public/site/` from your profile. No network. Never fails the build: on a problem the page keeps the tracked `/favicon.ico` and `/og.png` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
+| `npm run review` | Local code review by the Grok CLI: the diff and an impact map go into the prompt, the answer is a checked JSON verdict. `-- --range main..<branch> --files <paths> --ledger` for a block, `-- --dry-run` to see the prompt. Exit 0 pass, 1 fail, 2 nothing to review, 3 no valid verdict (see `docs/review-tools.md`) |
+| `npm run review:ledger` | The findings ledger: `-- add ...` records a finding with a category, `-- report` counts them. The top category is the next scripted check |
+| `npm run test:review` | The test suite of the review scripts, with a fake `grok` on `PATH`. No network, no cost. Runs in CI |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag. Then offers to push and make the GitHub Release (see Release) |
 | `npm run release:publish -- vX.Y.Z` | Push and make the GitHub Release for a tag that exists. No version bump (see Repair a release) |
 | `npm run publish` | Build and upload the page to Cloudflare Pages or Netlify from your machine (see Publish). `npm run site:publish` is the same command |
@@ -599,7 +602,9 @@ releases/                one notes file per version, used as the GitHub Release 
 tests/e2e/               public, a11y, repo, privacy, gravatar, links, unfurl, site, editor, site-editor specs
 public/                  og.png and favicon.ico (fallbacks), blocks/sample.jpg. Your images, site/ and site-uploads/ land here and are ignored
 design/canvas/           the design boards (light and dark)
-docs/review-tools.md     notes on the two code review tools used on this project
+docs/review-tools.md     how code review runs here (npm run review), and when to use another tool
+docs/invariants.md       the hard rules of the project on one page
+scripts/review/          grok-review.sh, impact-map.py, the prompt, the schema, the findings ledger, the suite
 .github/workflows/       ci.yml, release.yml
 PLAN.md  NOTES.md        the plan with every decision, and the build log per work package
 ```
@@ -638,7 +643,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 - `PLAN.md`: the plan, the design tokens, every decision and the roadmap.
 - `NOTES.md`: what each work package built, the deviations, the review findings and the test numbers.
 - `content/README.md`: the personal data rules in detail.
-- `docs/review-tools.md`: a comparison of the two code review tools used during the build, and what to use for large or security-critical files.
+- `docs/review-tools.md`: the review pipeline (`npm run review`), the blind-run guard, the cache, the findings ledger, and when to use OCR or an adversarial review agent instead.
+- `docs/invariants.md`: the hard rules on one page. Every reviewer reads it first.
 - `docs/security.md`: the threat model of the link preview engine and of the dev routes.
 - `releases/`: the notes of every version. `CHANGELOG.md` appears with the first release.
 
