@@ -54,4 +54,4 @@ profile: content/profile.example.json (example)
 ```
 
 GitHub CI and the release zip have no `profile.json`, so they build the **sample** site.
-Your real page leaves your Mac only with `npm run deploy` or `npm run deploy:preview`.
+Your real page leaves your Mac only with `npm run publish` or `npm run publish -- --preview` (`npm run deploy` and `npm run deploy:preview` are aliases).

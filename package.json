@@ -26,8 +26,10 @@
     "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast && npm run check:icons && npm run fetch:favicons",
     "test:e2e": "playwright test",
     "release": "node scripts/release.mjs",
-    "deploy": "npm run generate && wrangler pages deploy dist --project-name tilebox --branch main",
-    "deploy:preview": "npm run generate && wrangler pages deploy dist --project-name tilebox --branch preview"
+    "publish": "node scripts/publish.mjs",
+    "site:publish": "node scripts/publish.mjs",
+    "deploy": "node scripts/publish.mjs --provider cloudflare",
+    "deploy:preview": "node scripts/publish.mjs --provider cloudflare --preview"
   },
   "dependencies": {
     "@nuxt/fonts": "^0.14.0",
@@ -50,6 +52,7 @@
     "@playwright/test": "^1.63.0",
     "commit-and-tag-version": "^12.7.3",
     "eslint": "^10.10.0",
+    "netlify-cli": "^27.8.0",
     "simple-git-hooks": "^2.14.0",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
