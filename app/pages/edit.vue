@@ -251,8 +251,12 @@ async function loadGravatarState() {
   }
 }
 
+/** Every answer of the Gravatar route: the file may be new, the same, or gone. */
+function onGravatarResolved(exists: boolean) {
+  gravatar.value = { exists, version: Date.now() }
+}
+
 function onGravatarSaved() {
-  gravatar.value = { exists: true, version: Date.now() }
   setAvatar(null)
 }
 
@@ -509,6 +513,7 @@ const previewProfile = computed(() => {
             <div class="flex flex-col gap-1">
               <EditorGravatarButton
                 :email="draft.profile.email"
+                @resolved="onGravatarResolved"
                 @saved="onGravatarSaved"
               />
               <p class="text-xs text-muted">

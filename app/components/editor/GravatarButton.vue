@@ -1,13 +1,16 @@
 <!--
   "Use my Gravatar". Calls the dev-only route POST /api/avatar/gravatar with
-  the draft's email. On `saved` it emits `saved`, and the page clears
-  `profile.avatar` so the Gravatar file is used. The result shows inline.
+  the draft's email. Every answer emits `resolved` with `exists` (is the file on
+  disk now?), so the preview never points at a file that is gone. On `saved` it
+  also emits `saved`, and the page clears `profile.avatar` so the Gravatar file
+  is used. The result shows inline.
 -->
 <script setup lang="ts">
 const props = defineProps<{ email: string }>()
-const emit = defineEmits<{ saved: [] }>()
+const emit = defineEmits<{ saved: [], resolved: [exists: boolean] }>()
 
 type Status = 'saved' | 'none' | 'offline'
+interface GravatarResponse { status: Status, exists: boolean }
 
 const MESSAGES: Record<Status, string> = {
   saved: 'Gravatar saved. It is your avatar now. Save to keep it.',
@@ -32,9 +35,10 @@ async function run() {
   busy.value = true
   message.value = null
   try {
-    const res = await $fetch<{ status: Status }>('/api/avatar/gravatar', { method: 'POST', body: { email: props.email } })
+    const res = await $fetch<GravatarResponse>('/api/avatar/gravatar', { method: 'POST', body: { email: props.email } })
     failed.value = res.status !== 'saved'
     message.value = MESSAGES[res.status]
+    emit('resolved', res.exists)
     if (res.status === 'saved') emit('saved')
   }
   catch (error) {
