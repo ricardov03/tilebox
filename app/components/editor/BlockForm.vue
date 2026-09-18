@@ -1,10 +1,12 @@
 <!--
   Form for one block. Fields follow the zod schema in types/profile.ts.
-  Every change emits the whole block, so the preview updates live.
-  Optional string fields are removed when emptied (strict schema, no "").
+  Every change builds the whole block, runs it through BlockSchema and
+  emits it only when valid, so the preview updates live and never sees a
+  broken block. Optional string fields are removed when emptied (strict
+  schema, no ""). An invalid value shows an inline error and is not emitted.
 -->
 <script setup lang="ts">
-import type { Block } from '~~/types/profile'
+import { BlockSchema, type Block } from '~~/types/profile'
 import { SIZES } from '~/utils/sizes'
 import { NETWORK_IDS, NETWORKS } from '~/utils/networks'
 
@@ -16,13 +18,15 @@ const emit = defineEmits<{
 }>()
 
 const confirming = ref(false)
+const errors = ref<string[]>([])
 watch(() => props.block.id, () => {
   confirming.value = false
+  errors.value = []
 })
 
 type Patch = Partial<Record<string, string | boolean | null | undefined>>
 
-/** Merge a patch. `undefined` or "" on an optional key deletes the key. */
+/** Merge a patch, validate, emit. `undefined` or "" on an optional key deletes the key. */
 function patch(changes: Patch, optionalKeys: string[] = []) {
   const next: Record<string, unknown> = {}
   const merged: Record<string, unknown> = { ...props.block, ...changes }
@@ -30,20 +34,40 @@ function patch(changes: Patch, optionalKeys: string[] = []) {
     if (optionalKeys.includes(key) && (value === undefined || value === '')) continue
     next[key] = value
   }
-  emit('update:block', next as Block)
+  const result = BlockSchema.safeParse(next)
+  if (!result.success) {
+    errors.value = result.error.issues.map(issue => `${issue.path.join('.') || 'block'}: ${issue.message}`)
+    return
+  }
+  errors.value = []
+  emit('update:block', result.data)
 }
 
 function text(event: Event): string {
-  return (event.target as HTMLInputElement | HTMLTextAreaElement).value
+  return formControl(event)?.value ?? ''
 }
 
 function checked(event: Event): boolean {
-  return (event.target as HTMLInputElement).checked
+  const target = event.target
+  return target instanceof HTMLInputElement && target.checked
+}
+
+/** A new local file replaces any stock-photo source. An empty value is ignored: `src` is required. */
+function onImageSrc(value: string | null | undefined) {
+  if (!value) return
+  patch({ src: value, source: null })
+}
+
+/** `alt` is required for image blocks. An empty value is ignored. */
+function onImageAlt(value: string | undefined) {
+  if (!value) return
+  patch({ alt: value })
 }
 
 const fid = (name: string) => `blk-${props.block.id}-${name}`
-const inputClass = 'min-h-11 rounded-xl border border-line bg-ground px-3 text-sm text-ink'
-const labelClass = 'text-sm font-medium text-ink'
+const inputClass = INPUT_CLASS
+const labelClass = LABEL_CLASS
+const buttonClass = `min-h-11 rounded-full px-3 text-sm ${FOCUS_RING}`
 </script>
 
 <template>
@@ -62,14 +86,16 @@ const labelClass = 'text-sm font-medium text-ink'
         <span class="text-sm text-ink">Sure?</span>
         <button
           type="button"
-          class="min-h-11 rounded-full bg-pop px-4 text-sm font-medium text-pop-ink"
+          :class="buttonClass"
+          class="bg-pop px-4 font-medium text-pop-ink"
           @click="emit('delete', block.id)"
         >
           Yes, delete
         </button>
         <button
           type="button"
-          class="min-h-11 rounded-full px-3 text-sm text-muted hover:text-ink"
+          :class="buttonClass"
+          class="text-muted hover:text-ink"
           @click="confirming = false"
         >
           No
@@ -78,12 +104,27 @@ const labelClass = 'text-sm font-medium text-ink'
       <button
         v-else
         type="button"
-        class="min-h-11 rounded-full px-3 text-sm text-muted hover:text-pop"
+        :class="buttonClass"
+        class="text-muted hover:text-pop"
         @click="confirming = true"
       >
         Delete
       </button>
     </div>
+
+    <ul
+      v-if="errors.length"
+      class="list-disc rounded-xl border border-pop px-3 py-2 pl-7 text-sm text-ink"
+      role="alert"
+    >
+      <li
+        v-for="(error, i) in errors"
+        :key="i"
+        class="font-mono text-xs"
+      >
+        {{ error }}
+      </li>
+    </ul>
 
     <div
       v-if="block.type !== 'section'"
@@ -160,6 +201,7 @@ const labelClass = 'text-sm font-medium text-ink'
           <input
             type="checkbox"
             :checked="block.accent ?? false"
+            :class="FOCUS_RING"
             class="size-5 accent-accent"
             @change="patch({ accent: checked($event) || undefined }, ['accent'])"
           >
@@ -169,6 +211,7 @@ const labelClass = 'text-sm font-medium text-ink'
           <input
             type="checkbox"
             :checked="block.pop ?? false"
+            :class="FOCUS_RING"
             class="size-5 accent-accent"
             @change="patch({ pop: checked($event) || undefined }, ['pop'])"
           >
@@ -235,8 +278,8 @@ const labelClass = 'text-sm font-medium text-ink'
         :src="block.src"
         :alt="block.alt"
         require-alt
-        @update:src="patch({ src: $event ?? '' })"
-        @update:alt="patch({ alt: $event ?? '' })"
+        @update:src="onImageSrc"
+        @update:alt="onImageAlt"
       />
       <div class="flex flex-col gap-1">
         <label
