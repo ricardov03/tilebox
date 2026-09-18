@@ -23,9 +23,11 @@
 #   LEDGER        --ledger appends one line per finding with category and branch; a cache hit and a forced
 #                 re-review of the same branch add nothing
 #   BUDGET        the prompt states the turn budget; the grok call carries the read-only flags
-#   STUB          a 1-turn progress stub (JSON stub or plain text, no tool call) ⇒ ONE automatic retry on the
-#                 same session with the tools and the rest of the budget; a second stub ⇒ exit 3 with the
-#                 session id on stderr and in a verdict=BLIND trailer; retries= and evidence= in the trailer
+#   STUB-RETRY    a first-turn stub (JSON stub with `num_turns` 1 or absent, or plain text and no tool call)
+#                 ⇒ ONE automatic retry as a FRESH call (a new session, no --resume, the full budget, the
+#                 prompt plus a "## Retry" section); a second stub ⇒ exit 3 with the session id on stderr and
+#                 in a verdict=BLIND trailer; retries= and evidence= in the trailer; the verdict of a retry is
+#                 cached under the key of the base prompt; the books of both sessions are added up
 #   CONCLUDE      --conclude on a session that made no tool call is refused; --conclude-tools resumes with tools
 #   TURN CAP      grok exits "max turns reached" with no verdict ⇒ ONE conclude call resumes the same
 #                 session; it answers ⇒ a verdict; it fails too ⇒ exit 3; --conclude <id> skips the review call
@@ -46,7 +48,7 @@ IMPACT="$SCRIPT_DIR/impact-map.py"
 [[ -f "$REVIEW" && -f "$LEDGER_SH" && -f "$IMPACT" ]] || { echo "grok-review.test: scripts missing" >&2; exit 2; }
 for tool in git python3; do command -v "$tool" >/dev/null 2>&1 || { echo "grok-review.test: $tool missing" >&2; exit 2; }; done
 
-PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=130
+PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=143
 assert_eq() { # name expected actual
     if [[ "$2" == "$3" ]]; then PASSED=$((PASSED+1)); echo "  ok   $1"; else FAILED=$((FAILED+1)); echo "  FAIL $1: expected [$2] got [$3]"; fi
 }
@@ -74,29 +76,48 @@ cat > "$BIN/grok" <<'FAKE'
 # Fake Grok CLI: records the prompt file and argv it was given, counts calls, replies with $FAKE_DIR/reply.json.
 # If $FAKE_DIR/hang exists it never answers (watchdog case).
 set -euo pipefail
-[[ "${1:-}" == usage ]] && exit 1          # `grok usage <session>`: the fake keeps no books
+# `grok usage <session>`: the fake keeps no books, unless $FAKE_DIR/books exists: then the first session since
+# queue.calls was cleared (the stub) has 1 model call and every other session has 6.
+if [[ "${1:-}" == usage ]]; then
+    [[ -f "$FAKE_DIR/books" ]] || exit 1
+    if [[ "${2:-}" == "$(head -1 "$FAKE_DIR/queue.sessions" 2>/dev/null)" ]]; then
+        echo '{"session": {"modelCalls": 1, "inputTokens": 100, "outputTokens": 10, "costUsdTicks": 5}}'
+    else
+        echo '{"session": {"modelCalls": 6, "inputTokens": 1000, "outputTokens": 200, "costUsdTicks": 70, "primaryModelId": "grok-books"}}'
+    fi
+    exit 0
+fi
 if [[ "${1:-}" == export ]]; then          # `grok export <session>`: Markdown, one "## Tools" section per tool turn
     [[ -f "$FAKE_DIR/no-export" ]] && exit 1
     # The prompt can hold any heading: a "## Tools" before the first "## Assistant" is not a tool turn.
     printf '## User\n\nthe prompt\n\n## Tools\n\n- Read: a/heading/inside/the/prompt.md\n\n## Assistant\n\n{ "passed": false }\n\n'
     # `no-tools`: the session never called a tool. `tools-on-resume`: none before the first resume call.
     if [[ -f "$FAKE_DIR/no-tools" || ( -f "$FAKE_DIR/tools-on-resume" && ! -f "$FAKE_DIR/did-resume" ) ]]; then exit 0; fi
+    # `first-session-no-tools`: only the first session since queue.calls was cleared (the stub) called no tool.
+    if [[ -f "$FAKE_DIR/first-session-no-tools" && "${2:-}" == "$(head -1 "$FAKE_DIR/queue.sessions" 2>/dev/null)" ]]; then exit 0; fi
     printf '## Tools\n\n- Read: docs/invariants.md\n- Search: greetUser\n- List: app\n\n## Assistant\n\n{ "passed": true }\n'
     exit 0
 fi
-prompt=""; resumed=0
+prompt=""; resumed=0; session=""
+# Per-call replies: with $FAKE_DIR/queue/<n>.json present, the n-th call since queue.calls was cleared answers
+# with it (the retry case); otherwise reply.json as before. argv.<n> and prompt.<n>.md keep what call n got.
+echo x >> "$FAKE_DIR/queue.calls"
+n=$(wc -l < "$FAKE_DIR/queue.calls" | tr -d " ")
 printf '%s\n' "$@" > "$FAKE_DIR/last-argv"
+printf '%s\n' "$@" > "$FAKE_DIR/argv.$n"
 [[ " $* " == *" --resume "* ]] && { resumed=1; touch "$FAKE_DIR/did-resume"; printf '%s\n' "$@" > "$FAKE_DIR/resume-argv"; } || printf '%s\n' "$@" > "$FAKE_DIR/review-argv"
 while [[ $# -gt 0 ]]; do
-    case "$1" in --prompt-file) prompt="$2"; shift 2 ;; --json-schema|--tools|--disallowed-tools|--effort|--max-turns|--output-format|--cwd|--deny|--session-id|--resume|--rules) shift 2 ;; *) shift ;; esac
+    case "$1" in --prompt-file) prompt="$2"; shift 2 ;; --session-id) session="$2"; shift 2 ;; --json-schema|--tools|--disallowed-tools|--effort|--max-turns|--output-format|--cwd|--deny|--resume|--rules) shift 2 ;; *) shift ;; esac
 done
 cp "$prompt" "$FAKE_DIR/last-prompt.md"
+cp "$prompt" "$FAKE_DIR/prompt.$n.md"
+echo "${session:-resumed}" >> "$FAKE_DIR/queue.sessions"
 echo x >> "$FAKE_DIR/calls"
 [[ -f "$FAKE_DIR/hang" ]] && sleep 600
 # grok 1.0.30 at the turn cap: exit 1, "Error: max turns reached", no envelope. `max-turns` = the review call only.
 [[ -f "$FAKE_DIR/max-turns-always" || ( -f "$FAKE_DIR/max-turns" && "$resumed" -eq 0 ) ]] && { echo "Error: max turns reached" >&2; exit 1; }
 [[ "$resumed" -eq 1 && -f "$FAKE_DIR/reply-resume.json" ]] && { cat "$FAKE_DIR/reply-resume.json"; exit 0; }
-cat "$FAKE_DIR/reply.json"
+if [[ -f "$FAKE_DIR/queue/$n.json" ]]; then cat "$FAKE_DIR/queue/$n.json"; else cat "$FAKE_DIR/reply.json"; fi
 FAKE
 chmod +x "$BIN/grok"
 cat > "$BIN/graphify" <<'FAKE'
@@ -119,6 +140,19 @@ json.dump({"text": sys.argv[2], "stopReason": sys.argv[3], "sessionId": "s1", "r
 PY
 }
 reply_resume() { reply "$1" end_turn "${2:-3}" reply-resume.json; }   # what a --resume call answers
+queue_reset() { rm -rf "$FAKE_DIR/queue"; mkdir -p "$FAKE_DIR/queue"; : > "$FAKE_DIR/queue.calls"; : > "$FAKE_DIR/queue.sessions"; }
+stub_reply() { # a first-turn schema stub: passed=false, no findings, a "Starting…" summary; $2 = num_turns ("" = absent)
+    python3 - "$1" "${2-1}" <<'PY'
+import json, sys
+e = {"text": '{"passed": false, "summary": "Starting independent review: reading invariants and grepping changed symbols.", "findings": []}',
+     "stopReason": "end_turn", "sessionId": "s1", "requestId": "r1",
+     "usage": {"input_tokens": 900, "output_tokens": 140}, "modelUsage": {"grok-test-build": {}}}
+if sys.argv[2] != "":
+    e["num_turns"] = int(sys.argv[2])
+json.dump(e, open(sys.argv[1], "w"))
+PY
+}
+arg_of() { grep -A1 -E -- "^$2\$" "$1" | tail -1; }   # arg_of <argv file> <--flag> ⇒ its value
 FINDING='{"id":"save-without-guard","severity":"warning","category":"dev-route-guard","file":"server/api/save.post.ts","line":2,"claim":"the route skips assertEditorRequest","evidence":"x","failure_path":"a cross-site POST saves the profile","fix":"call the guard first"}'
 SUGG='{"id":"third-copy","severity":"suggestion","category":"schema-drift","file":"app/utils/greet.ts","line":3,"claim":"rule exists twice","evidence":"y","failure_path":"drift","fix":"share it"}'
 PROGRESS='{"passed": false, "summary": "reading…", "findings": []}'
@@ -348,42 +382,68 @@ assert_eq "grok is denied MCP, shell, edit, write and web" "Bash Edit MCPTool We
 set +e; bash "$REVIEW" --force --max-turns 5 --effort low > /dev/null 2>&1; set -e
 assert_grep "--max-turns flows into the prompt budget" 'at most 5 tool turns' "$FAKE_DIR/last-prompt.md"
 
-echo "STUB (a 1-turn progress stub ⇒ one automatic retry with the tools)"
-reply "$PROGRESS" end_turn 1; reply_resume "$PASS_VERDICT" 5
-touch "$FAKE_DIR/tools-on-resume"; rm -f "$FAKE_DIR/did-resume"; before=$(calls)
-set +e; bash "$REVIEW" --force > "$SANDBOX/out20" 2>"$SANDBOX/err20"; rc=$?; set -e
-sid=$(grep -A1 -E '^--session-id$' "$FAKE_DIR/review-argv" | tail -1)
-assert_eq "stub, then the retry answers ⇒ exit 0 after two calls" "0/$((before+2))" "$rc/$(calls)"
-assert_eq "the retry resumes the session of the review call" "$sid" "$(grep -A1 -E '^--resume$' "$FAKE_DIR/resume-argv" | tail -1)"
-assert_grep "the retry prompt says continue" '^You stopped after announcing your plan\. Continue now: use your tools, then return ONLY the JSON verdict\.$' "$FAKE_DIR/last-prompt.md"
-assert_not_grep "the retry prompt does not forbid tools" 'Do NOT call any tool' "$FAKE_DIR/last-prompt.md"
-assert_grep "the retry keeps the read-only tool allowlist" '^read_file,grep,list_dir$' "$FAKE_DIR/resume-argv"
-assert_eq "the retry gets the rest of the turn budget (14 - 1)" 13 "$(grep -A1 -E '^--max-turns$' "$FAKE_DIR/resume-argv" | tail -1)"
+echo "STUB-RETRY (a first-turn schema stub ⇒ one automatic retry as a FRESH call)"
+queue_reset; stub_reply "$FAKE_DIR/queue/1.json"
+reply "$PASS_VERDICT"
+touch "$FAKE_DIR/first-session-no-tools"; before=$(calls)
+set +e; bash "$REVIEW" --force --out "$SANDBOX/v20.json" > "$SANDBOX/out20" 2>"$SANDBOX/err20"; rc=$?; set -e
+sid1=$(arg_of "$FAKE_DIR/argv.1" --session-id); sid2=$(arg_of "$FAKE_DIR/argv.2" --session-id)
+assert_eq "one-turn stub then a verdict ⇒ exit 0" 0 "$rc"
+assert_eq "…grok called exactly twice" 2 "$(( $(calls) - before ))"
+assert_grep "the retry is announced" '^grok-review: progress stub on attempt 1 \(one turn, no findings\) — retrying once$' "$SANDBOX/err20"
+assert_grep "the retry prompt forbids the early JSON" '^## Retry' "$FAKE_DIR/last-prompt.md"
+assert_grep "the Retry section is the measured text" '^Your previous attempt returned the verdict JSON on its FIRST turn, before reading a single file\. That is not a review and it was discarded\. Your first action now MUST be a tool call \(read_file or grep on the changed files\); write the verdict JSON only after you have read them\.$' "$FAKE_DIR/last-prompt.md"
+assert_not_grep "the first prompt has no Retry section" '^## Retry' "$FAKE_DIR/prompt.1.md"
+assert_eq "the retry prompt is the first prompt plus the section, nothing else" same "$(cmp -s "$FAKE_DIR/prompt.1.md" <(head -c "$(wc -c < "$FAKE_DIR/prompt.1.md" | tr -d ' ')" "$FAKE_DIR/prompt.2.md") && echo same || echo differs)"
+assert_not_grep "the retry is a FRESH call: no --resume" '^--resume$' "$FAKE_DIR/argv.2"
+assert_eq "the retry has a session id of its own" new "$([[ -n "$sid2" && "$sid2" != "$sid1" ]] && echo new || echo same)"
+assert_grep "the retry keeps the read-only tool allowlist" '^read_file,grep,list_dir$' "$FAKE_DIR/argv.2"
+assert_eq "the retry gets the full turn budget" 14 "$(arg_of "$FAKE_DIR/argv.2" --max-turns)"
 assert_eq "trailer retries=1" 1 "$(field "$SANDBOX/out20" retries)"
 assert_eq "trailer evidence=full (the retry read files)" full "$(field "$SANDBOX/out20" evidence)"
-assert_eq "trailer session= is the session id" "$sid" "$(field "$SANDBOX/out20" session)"
-assert_eq "trailer turns = both calls" 6 "$(field "$SANDBOX/out20" turns)"
-assert_grep "the session id is on stderr for a good run too" "^grok-review: session $sid" "$SANDBOX/err20"
-assert_grep "the report names the retry" 'automatic retry after a 1-turn stub' "$SANDBOX/out20"
+assert_eq "trailer session= is the session of the retry" "$sid2" "$(field "$SANDBOX/out20" session)"
+assert_eq "trailer turns = both calls (1 + 4)" 5 "$(field "$SANDBOX/out20" turns)"
+assert_grep "both session ids are on stderr" "^grok-review: session $sid2 \(attempt 2: a fresh call, not a resume of $sid1\)" "$SANDBOX/err20"
+assert_grep "_meta names the discarded stub session" "\"stub_session_id\": \"$sid1\"" "$SANDBOX/v20.json"
+assert_grep "the report names the retry" 'automatic retry \(a fresh call\) after a first-turn stub' "$SANDBOX/out20"
 set +e; bash "$REVIEW" > "$SANDBOX/out20b" 2>/dev/null; set -e
-assert_eq "a cache hit keeps retries, evidence and session" "1/1/full/$sid" "$(field "$SANDBOX/out20b" cached)/$(field "$SANDBOX/out20b" retries)/$(field "$SANDBOX/out20b" evidence)/$(field "$SANDBOX/out20b" session)"
-rm -f "$FAKE_DIR/tools-on-resume" "$FAKE_DIR/did-resume" "$FAKE_DIR/reply-resume.json"
+assert_eq "the verdict of a retry is cached under the key of the base prompt, with its fields" "1/1/full/$sid2/$((before+2))" "$(field "$SANDBOX/out20b" cached)/$(field "$SANDBOX/out20b" retries)/$(field "$SANDBOX/out20b" evidence)/$(field "$SANDBOX/out20b" session)/$(calls)"
 
-reply "Starting independent review. I will read docs/invariants.md first." end_turn 1    # the text form of the stub
+queue_reset; stub_reply "$FAKE_DIR/queue/1.json"; touch "$FAKE_DIR/books"
+set +e; bash "$REVIEW" --force > "$SANDBOX/out20c" 2>/dev/null; rc=$?; set -e
+assert_eq "with \`grok usage\`: the books of the stub session are added (1+6 turns, 100+1000 in, 10+200 out)" "0/7/1100/210" "$rc/$(field "$SANDBOX/out20c" turns)/$(field "$SANDBOX/out20c" tokens_in)/$(field "$SANDBOX/out20c" tokens_out)"
+rm -f "$FAKE_DIR/books"
+
+queue_reset; stub_reply "$FAKE_DIR/queue/1.json" ""       # the envelope has no num_turns at all
+before=$(calls)
+set +e; bash "$REVIEW" --force > "$SANDBOX/out20d" 2>/dev/null; rc=$?; set -e
+assert_eq "a stub with no num_turns is the same stub ⇒ retried, exit 0, two calls" "0/2/1" "$rc/$(( $(calls) - before ))/$(field "$SANDBOX/out20d" retries)"
+rm -f "$FAKE_DIR/first-session-no-tools"
+
+queue_reset; stub_reply "$FAKE_DIR/queue/1.json"; stub_reply "$FAKE_DIR/queue/2.json"
 touch "$FAKE_DIR/no-tools"; before=$(calls)
 set +e; bash "$REVIEW" --force > "$SANDBOX/out21" 2>"$SANDBOX/err21"; rc=$?; set -e
-sid=$(grep -A1 -E '^--session-id$' "$FAKE_DIR/review-argv" | tail -1)
-assert_eq "stub twice ⇒ exit 3 after ONE retry (two calls, not three)" "3/$((before+2))" "$rc/$(calls)"
+sid1=$(arg_of "$FAKE_DIR/argv.1" --session-id); sid=$(arg_of "$FAKE_DIR/argv.2" --session-id)
+assert_eq "stub twice ⇒ exit 3, never green" 3 "$rc"
+assert_eq "…and no third call" 2 "$(( $(calls) - before ))"
+assert_not_grep "stub twice ⇒ no PASS trailer" 'verdict=PASS' "$SANDBOX/out21"
 assert_grep "stub twice ⇒ the session id is printed with the resume advice" "^grok-review: session $sid .*--conclude $sid --conclude-tools" "$SANDBOX/err21"
+assert_grep "stub twice ⇒ the discarded stub session is named too" "discarded stub session of attempt 1 was $sid1" "$SANDBOX/err21"
 assert_grep "stub twice ⇒ stderr says the retry was spent" 'again after the 1 automatic retry' "$SANDBOX/err21"
 assert_eq "stub twice ⇒ BLIND trailer with the session, retries=1, evidence=diff-only" "BLIND/$sid/1/diff-only" "$(field "$SANDBOX/out21" verdict)/$(field "$SANDBOX/out21" session)/$(field "$SANDBOX/out21" retries)/$(field "$SANDBOX/out21" evidence)"
 assert_eq "stub twice ⇒ the trailer is the last line on stdout" 1 "$(tail -1 "$SANDBOX/out21" | grep -c '^grok-review: .* verdict=BLIND$')"
 assert_grep "stub twice ⇒ the raw output is kept and named" 'raw grok output kept at .*\.raw\.json' "$SANDBOX/err21"
-reply "$PROGRESS" end_turn 1; reply_resume "$PASS_VERDICT" 1
+queue_reset
+reply "Starting independent review. I will read docs/invariants.md first." end_turn 1    # the text form of the stub
+before=$(calls)
+set +e; bash "$REVIEW" --force > "$SANDBOX/out21c" 2>/dev/null; rc=$?; set -e
+assert_eq "text stub with no tool call, twice ⇒ ONE retry, exit 3 (two calls, not three)" "3/2" "$rc/$(( $(calls) - before ))"
+assert_grep "the text stub gets the same fresh retry" '^## Retry' "$FAKE_DIR/last-prompt.md"
+queue_reset; stub_reply "$FAKE_DIR/queue/1.json"; reply "$PASS_VERDICT" end_turn 1
 set +e; bash "$REVIEW" --force > "$SANDBOX/out22" 2>/dev/null; rc=$?; set -e
 assert_eq "a verdict from a session that opened no file ⇒ evidence=diff-only" "0/diff-only" "$rc/$(field "$SANDBOX/out22" evidence)"
 assert_grep "the report labels a diff-only verdict" 'DIFF-ONLY: the reviewer opened no file' "$SANDBOX/out22"
-rm -f "$FAKE_DIR/reply-resume.json"
+queue_reset
 
 echo "CONCLUDE (a session that read nothing is not concluded without tools)"
 reply "$PASS_VERDICT"; before=$(calls)

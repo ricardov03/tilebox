@@ -2,9 +2,11 @@
 """scripts/review/grok-verdict.py: reads the JSON envelope of one Grok call for grok-review.sh.
 
   grok-verdict.py is-stub <envelope> <tool calls | unknown>
-      exit 0 = a 1-turn progress stub (the script resumes that session once, with the tools), 1 = anything else.
+      exit 0 = a first-turn stub (the script retries once, as a FRESH call), 1 = anything else.
+  grok-verdict.py merge-usage <usage a> <usage b> <out>
+      adds the `session` counters of two `grok usage` files (the retry session + the discarded stub session).
   grok-verdict.py final <envelope> <out> <hash> <scope> <schema> <elapsed> <usage> <concluded 0|1>
-                        <session id> <prior turns> <retries> <evidence> <tool calls | unknown>
+                        <session id> <prior turns> <retries> <evidence> <tool calls | unknown> <stub session | ->
       writes the checked verdict with its `_meta` to <out>. Exit 1 with ONE reason line on stderr when the
       envelope holds no valid verdict: that is a blind run, and the caller exits 3.
 
@@ -41,19 +43,40 @@ def stop_of(envelope):
 
 
 def is_stub(raw_f, tools):
-    """The run ended on its own after ONE turn (or with no tool call at all), and what it wrote is no verdict:
-    nothing schema-shaped ("Starting the review…"), or passed=false with zero findings."""
+    """Two signals, either one is a stub.
+    A, the measured shape (8 of 8 stubs in the owner's other project): `num_turns` absent or <= 1, and the last
+       schema-shaped object of `.text` says passed=false with findings == [].
+    B, kept from WP15: the run ended on its own (`end_turn`), `grok export` counted ZERO tool calls (or
+       `num_turns` <= 1), and there is no valid verdict at all: nothing schema-shaped ("Starting the review…"
+       as plain text), or passed=false with zero findings."""
     try:
         envelope = json.load(open(raw_f, encoding="utf-8"))
     except Exception:
         return False
-    if not isinstance(envelope, dict) or stop_of(envelope) != "endturn":
+    if not isinstance(envelope, dict):
         return False
     turns = envelope.get("num_turns")
-    one_turn = (isinstance(turns, int) and not isinstance(turns, bool) and turns <= 1) or tools == "0"
+    counted = isinstance(turns, int) and not isinstance(turns, bool)
     verdict, _ = last_verdict(envelope.get("text") or "")
-    empty = verdict is None or (not verdict["passed"] and not verdict["findings"])
-    return one_turn and empty
+    empty_verdict = verdict is not None and verdict["passed"] is False and verdict["findings"] == []
+    if (turns is None or (counted and turns <= 1)) and empty_verdict:
+        return True                                                     # signal A
+    read_nothing = tools == "0" or (counted and turns <= 1)
+    return stop_of(envelope) == "endturn" and read_nothing and (verdict is None or empty_verdict)   # signal B
+
+
+def merge_usage(a_f, b_f, out_f):
+    def session(path):
+        try:
+            return (json.load(open(path, encoding="utf-8")) or {}).get("session") or {}
+        except Exception:
+            return {}
+    a, b = session(a_f), session(b_f)
+    merged = dict(a)
+    for key in ("modelCalls", "inputTokens", "outputTokens", "cachedReadTokens", "costUsdTicks"):
+        if isinstance(a.get(key), (int, float)) or isinstance(b.get(key), (int, float)):
+            merged[key] = (a.get(key) or 0) + (b.get(key) or 0)
+    json.dump({"session": merged}, open(out_f, "w", encoding="utf-8"))
 
 
 def blind(msg):
@@ -65,6 +88,7 @@ def final(argv):
     raw_f, out_f, digest, scope, schema_f, elapsed, usage_f = argv[:7]
     concluded, session_id, prior_turns = argv[7] == "1", argv[8], int(argv[9])
     retries, evidence, tool_calls = int(argv[10]), argv[11], argv[12]
+    stub_session = argv[13] if argv[13] != "-" else None
     try:
         envelope = json.load(open(raw_f, encoding="utf-8"))
     except Exception as e:
@@ -119,7 +143,7 @@ def final(argv):
         "session_id": session_id or envelope.get("sessionId"), "request_id": envelope.get("requestId"),
         "turns": books.get("modelCalls") or (prior_turns + (envelope.get("num_turns") or 0)),
         "concluded_after_turn_cap": concluded,
-        "retries": retries, "evidence": evidence, "tool_calls": int(tool_calls) if tool_calls.isdigit() else None,
+        "retries": retries, "stub_session_id": stub_session, "evidence": evidence, "tool_calls": int(tool_calls) if tool_calls.isdigit() else None,
         "model": books.get("primaryModelId") or next(iter((envelope.get("modelUsage") or {}).keys()), None),
         "tokens_in": books.get("inputTokens") or usage.get("input_tokens", 0),
         "tokens_out": books.get("outputTokens") or usage.get("output_tokens", 0),
@@ -131,8 +155,11 @@ def final(argv):
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "is-stub":
         sys.exit(0 if is_stub(sys.argv[2], sys.argv[3]) else 1)
-    if len(sys.argv) == 15 and sys.argv[1] == "final":
+    if len(sys.argv) == 5 and sys.argv[1] == "merge-usage":
+        merge_usage(sys.argv[2], sys.argv[3], sys.argv[4])
+        sys.exit(0)
+    if len(sys.argv) == 16 and sys.argv[1] == "final":
         final(sys.argv[2:])
         sys.exit(0)
-    sys.stderr.write("usage: grok-verdict.py is-stub <envelope> <tools> | final <13 arguments>\n")
+    sys.stderr.write("usage: grok-verdict.py is-stub <envelope> <tools> | merge-usage <a> <b> <out> | final <14 arguments>\n")
     sys.exit(2)

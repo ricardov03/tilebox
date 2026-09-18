@@ -46,17 +46,20 @@
 #
 # Machine-greppable trailer (last line on stdout, for EVERY outcome; a run with no verdict says verdict=BLIND):
 #   grok-review: scope=… files=N diff_chars=N cached=0|1 turns=N elapsed_s=N tokens_in=N tokens_out=N retries=N evidence=full|diff-only session=<id> critical=N warning=N suggestion=N verdict=PASS|FAIL|BLIND
-#   retries  = automatic "continue" calls after a 1-turn progress stub (0 or 1).
+#   retries  = automatic fresh calls after a first-turn stub (0 or 1).
 #   evidence = full when the session read a file or ran a grep (`grok export <id>`); diff-only when the
 #              verdict comes from the pasted diff and the impact map alone (none: no call was made).
-#   session  = the Grok session id, for `grok export <id>`, `grok usage <id>` and `--conclude <id>`.
+#   session  = the Grok session id, for `grok export <id>`, `grok usage <id>` and `--conclude <id>`. After a
+#              retry it is the session of the retry; the discarded stub session is `_meta.stub_session_id`.
 #
 # Blind-run guard: a run that did not obtain a schema-valid verdict exits 3. It never reports green.
-# The 1-turn stub: Grok sometimes ends after ONE turn with a progress stub (passed=false and no finding, or
-# text that announces a plan) and no tool call. The script resumes that session ONCE, tools enabled, with the
-# rest of the turn budget ("You stopped after announcing your plan. Continue now"). A second stub exits 3.
+# The first-turn stub: Grok sometimes answers the schema before it opens a file (`num_turns` 1 or absent,
+# passed=false, zero findings, a summary that says it is starting). The script then makes ONE automatic retry
+# as a FRESH call (a new session, never a resume: a resumed session keeps its own empty answer in context)
+# whose prompt ends with a "## Retry" section: the first action must be a tool call. A second stub exits 3.
 # Budget: effort medium, 14 turns, callers pre-read into the prompt, one conclude call at the cap, watchdog.
-# Cache: <git common dir>/grok-review/<sha256(diff+prompt+schema)>.json. Same blobs, no call.
+# Cache: <git common dir>/grok-review/<sha256(diff+prompt template+schema)>.json. Same blobs, no call. The
+#        "## Retry" section is not part of the key: the verdict of a retry is cached under the same key.
 #        GROK_REVIEW_CACHE_DIR overrides the folder (for a sandbox that may not read the common dir).
 # Tools handed to Grok: read_file, grep, list_dir only; no subagents; no plan mode; MCP, shell, edit, write and
 # web DENIED by permission rule (the allowlist alone keeps the MCP servers loaded); cwd = repo root.
@@ -90,7 +93,7 @@ PR_NUMBER=""
 BRANCH=""
 OUT=""
 
-usage() { sed -n '2,63p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,66p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -277,12 +280,16 @@ else
     # reached" and prints no envelope at the cap, and the model does not count its turns (measured here:
     # two runs, 8 and 9+ turns of tool calls, 37 and 46 calls, no verdict). The exploration is paid for;
     # phase 2 is one short call that turns it into a verdict instead of a blind run.
-    # Phase 1b (only after a 1-turn stub): Grok sometimes ends after ONE turn with a progress stub and no
-    # tool call (measured here: 3 of 6 fresh calls). The script resumes that session ONCE with the tools on.
+    # Phase 1b (only after a first-turn stub): Grok sometimes answers the schema before it opens a file
+    # (measured here: 3 of 6 fresh calls, then 1 of 4). Measured in the owner's other project: 8 of 8 stubs
+    # had the shape `num_turns` 1, passed=false, zero findings, and every forced retry as a FRESH call gave a
+    # real verdict. So: one automatic retry, a new session, the same prompt plus a "## Retry" section that
+    # says the first action must be a tool call. A second stub still exits 3 (never green).
     SESSION_ID="$CONCLUDE_SESSION"
     ELAPSED=0
     CONCLUDED=0
     RETRIES=0
+    STUB_SESSION=""        # the discarded session of a first-turn stub (its turns and tokens were paid for too)
     PRIOR_TURNS=0
     TOOL_CALLS=""          # "" = unknown (no `grok export`), else the number of tool calls of the session
     READ_CALLS=""
@@ -333,6 +340,14 @@ try: n = json.load(open(sys.argv[1], encoding="utf-8")).get("num_turns")
 except Exception: n = None
 print(n if isinstance(n, int) and not isinstance(n, bool) else "")' "$WORK/grok.out" 2>/dev/null || true; }
 
+    # session_usage ⇒ $WORK/usage.json: the CLI's own books of the session, plus the books of the discarded
+    # stub session after a retry (a fresh call is a new session, and the stub was paid for too).
+    session_usage() {
+        grok usage "$SESSION_ID" > "$WORK/usage.json" 2>/dev/null || echo '{}' > "$WORK/usage.json"
+        [[ -n "$STUB_SESSION" && -s "$WORK/usage-stub.json" ]] || return 0
+        python3 "$VERDICT_PY" merge-usage "$WORK/usage.json" "$WORK/usage-stub.json" "$WORK/usage.json" 2>/dev/null || true
+    }
+
     # blind_exit <message>: EVERY exit 3 goes through here. The raw output is kept, the session id is printed
     # on stderr, and the trailer (verdict=BLIND, session=<id>) is the last line on stdout.
     blind_exit() {
@@ -342,8 +357,9 @@ print(n if isinstance(n, int) and not isinstance(n, bool) else "")' "$WORK/grok.
             echo "grok-review: raw grok output kept at $CACHE_DIR/$HASH.raw.json" >&2
         fi
         [[ -n "$TOOL_CALLS" ]] || session_tools
+        [[ -z "$STUB_SESSION" ]] || echo "grok-review: the discarded stub session of attempt 1 was $STUB_SESSION" >&2
         echo "grok-review: session $SESSION_ID (tool calls: ${TOOL_CALLS:-unknown}). Inspect: grok export $SESSION_ID. Resume: add --conclude $SESSION_ID$([[ "${TOOL_CALLS:-1}" == 0 ]] && echo ' --conclude-tools') to the same command." >&2
-        grok usage "$SESSION_ID" > "$WORK/usage.json" 2>/dev/null || echo '{}' > "$WORK/usage.json"
+        session_usage
         local books
         books=$(python3 -c 'import json,sys
 try: s = (json.load(open(sys.argv[1], encoding="utf-8")) or {}).get("session") or {}
@@ -369,7 +385,8 @@ print(s.get("modelCalls") or sys.argv[2] or 0, s.get("inputTokens") or 0, s.get(
         fi
     }
 
-    # continue_call <max turns>: resume the session WITH the tools.
+    # continue_call <max turns>: resume the session WITH the tools. For --conclude-tools only: the stub retry
+    # is a fresh call, never a resume.
     continue_call() {
         cat > "$WORK/continue" <<CONTINUE
 You stopped after announcing your plan. Continue now: use your tools, then return ONLY the JSON verdict.
@@ -388,12 +405,19 @@ CONTINUE
             session_tools
             if python3 "$VERDICT_PY" is-stub "$WORK/grok.out" "${TOOL_CALLS:-unknown}"; then
                 used=$(envelope_turns); [[ -n "$used" && "$used" -gt 0 ]] || used=1
-                left=$(( MAX_TURNS - used )); [[ "$left" -ge 2 ]] || left=2
                 RETRIES=1
                 PRIOR_TURNS=$used
-                echo "grok-review: 1-turn progress stub after ${ELAPSED}s (no tool call, no verdict). Automatic retry 1 of 1: resuming session $SESSION_ID with the tools, $left turns." >&2
-                continue_call "$left"
-                check_call "the automatic retry" "$left"
+                STUB_SESSION="$SESSION_ID"
+                grok usage "$STUB_SESSION" > "$WORK/usage-stub.json" 2>/dev/null || : > "$WORK/usage-stub.json"
+                echo "grok-review: progress stub on attempt 1 (one turn, no findings) — retrying once" >&2
+                # A FRESH call with the same prompt plus the Retry section. The cache key never sees the
+                # section: $HASH is made of the diff, the prompt template and the schema.
+                cp "$WORK/prompt" "$WORK/prompt.retry"
+                printf '\n\n## Retry\nYour previous attempt returned the verdict JSON on its FIRST turn, before reading a single file. That is not a review and it was discarded. Your first action now MUST be a tool call (read_file or grep on the changed files); write the verdict JSON only after you have read them.\n' >> "$WORK/prompt.retry"
+                SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+                echo "grok-review: session $SESSION_ID (attempt 2: a fresh call, not a resume of $STUB_SESSION)" >&2
+                run_grok "$TIMEOUT_MIN" --prompt-file "$WORK/prompt.retry" --session-id "$SESSION_ID" "${GROK_FLAGS[@]}" --max-turns "$MAX_TURNS"
+                check_call "the automatic retry" "$MAX_TURNS"
                 session_tools
             fi
         fi
@@ -427,13 +451,14 @@ CONCLUDE
             blind_exit "the conclude call for session $SESSION_ID failed (exit $GROK_EXIT, timed_out=$TIMED_OUT)"
         fi
     fi
-    # Session totals (both phases) from the CLI's own books; the envelope only knows its own call.
-    grok usage "$SESSION_ID" > "$WORK/usage.json" 2>/dev/null || echo '{}' > "$WORK/usage.json"
+    # Session totals (every phase, plus the stub session of a retry) from the CLI's own books; the envelope
+    # only knows its own call.
+    session_usage
 
     # The envelope is checked by grok-verdict.py (the rules are in its header). No valid verdict ⇒ exit 3.
     [[ -n "$READ_CALLS" ]] || session_tools
     EVIDENCE=$(evidence)
-    reason=$(python3 "$VERDICT_PY" final "$WORK/grok.out" "$WORK/verdict.json" "$HASH" "$SCOPE" "$SCHEMA_FILE" "$ELAPSED" "$WORK/usage.json" "$CONCLUDED" "$SESSION_ID" "$PRIOR_TURNS" "$RETRIES" "$EVIDENCE" "${TOOL_CALLS:-unknown}" 2>&1) \
+    reason=$(python3 "$VERDICT_PY" final "$WORK/grok.out" "$WORK/verdict.json" "$HASH" "$SCOPE" "$SCHEMA_FILE" "$ELAPSED" "$WORK/usage.json" "$CONCLUDED" "$SESSION_ID" "$PRIOR_TURNS" "$RETRIES" "$EVIDENCE" "${TOOL_CALLS:-unknown}" "${STUB_SESSION:--}" 2>&1) \
         || blind_exit "${reason:-no valid verdict}$([[ "$RETRIES" -gt 0 ]] && echo ', again after the 1 automatic retry' || true)"
     cp "$WORK/verdict.json" "$CACHE_FILE"
 fi
@@ -451,7 +476,7 @@ for f in v["findings"]:
     counts[f["severity"]] += 1
 print(f"# Grok review · {scope} · {'cached' if cached == '1' else 'fresh'} · {m.get('model') or 'grok'}"
       + (" · verdict forced at the turn cap" if m.get("concluded_after_turn_cap") else "")
-      + (f" · {m['retries']} automatic retry after a 1-turn stub" if m.get("retries") else "")
+      + (f" · {m['retries']} automatic retry (a fresh call) after a first-turn stub" if m.get("retries") else "")
       + (" · DIFF-ONLY: the reviewer opened no file" if m.get("evidence") == "diff-only" else ""))
 print(v.get("summary", "").strip())
 print()
