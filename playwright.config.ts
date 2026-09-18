@@ -8,9 +8,12 @@
  */
 import { defineConfig, devices } from '@playwright/test'
 
-/** `E2E_STATIC_PORT` / `E2E_DEV_PORT` move a server when the default port is taken by another checkout. */
-const STATIC_PORT = Number(process.env.E2E_STATIC_PORT ?? 4173)
-const DEV_PORT = Number(process.env.E2E_DEV_PORT ?? 3111)
+/**
+ * `E2E_STATIC_PORT` / `E2E_DEV_PORT` move a server when the default port is taken by another checkout.
+ * `||`, not `??`: an empty or non-numeric value falls back to the default, never to port 0 or NaN.
+ */
+const STATIC_PORT = Number(process.env.E2E_STATIC_PORT) || 4173
+const DEV_PORT = Number(process.env.E2E_DEV_PORT) || 3111
 const STATIC_URL = `http://localhost:${STATIC_PORT}`
 const DEV_URL = `http://localhost:${DEV_PORT}`
 
