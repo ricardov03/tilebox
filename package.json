@@ -21,7 +21,8 @@
     "check:icons": "tsx scripts/check-icons.ts",
     "fetch:favicons": "tsx scripts/fetch-favicons.ts",
     "predev": "npm run presets && npm run check:profile",
-    "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast && npm run check:icons && npm run fetch:favicons"
+    "pregenerate": "npm run presets && npm run check:profile && npm run check:contrast && npm run check:icons && npm run fetch:favicons",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@nuxt/fonts": "^0.14.0",
@@ -35,9 +36,11 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@iconify-json/line-md": "^1.2.16",
     "@iconify-json/simple-icons": "^1.2.96",
     "@nuxt/eslint": "^1.17.0",
+    "@playwright/test": "^1.63.0",
     "eslint": "^10.10.0",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",

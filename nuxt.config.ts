@@ -77,7 +77,7 @@ export default defineNuxtConfig({
     strict: true,
     // scripts/ and types/ are not app code. Typecheck them with the node project.
     nodeTsConfig: {
-      include: ['../scripts/**/*', '../types/**/*'],
+      include: ['../scripts/**/*', '../types/**/*', '../tests/**/*', '../playwright.config.ts'],
     },
   },
 

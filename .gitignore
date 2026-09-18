@@ -9,3 +9,6 @@ dist
 .DS_Store
 *.log
 .claude/worktrees/
+playwright-report
+test-results
+content/profile.json.e2e-backup
