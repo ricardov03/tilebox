@@ -130,6 +130,22 @@ export async function checkLinks(targets: readonly LinkTarget[], options: Unfurl
   return results.flatMap(result => (result ? [result] : []))
 }
 
+/**
+ * The last line of `check:links -- --broken-only`. scripts/publish.mjs looks for it: no such line = the
+ * check did not run (a profile that does not parse, a crash), and that must never read as "no broken link".
+ * publish.mjs is plain node and cannot import this file: it holds the same text (a test compares the two).
+ */
+export const LINK_CHECK_DONE_PREFIX = 'links checked:'
+
+/** Pure. The whole output of `--broken-only`: one line per broken link, then the line that says the check ran. */
+export function brokenOnlyReport(results: readonly LinkCheckResult[]): string[] {
+  const broken = results.filter(result => result.status === 'broken')
+  return [
+    ...broken.map(result => `broken link: ${result.url} (${result.reason}; block ${result.blockIds.join(', ')})`),
+    `${LINK_CHECK_DONE_PREFIX} ${results.length}`,
+  ]
+}
+
 /** A plain text table for the terminal. */
 export function linkTable(results: readonly LinkCheckResult[]): string {
   const rows = results.map(result => [result.status, result.blockIds.join(','), result.url, result.reason])

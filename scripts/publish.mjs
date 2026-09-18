@@ -684,6 +684,8 @@ function build(state) {
  * Before the upload: `npm run check:links` (scripts/check-links.ts, the guarded request of the link previews).
  * Warnings only. A broken link, a timeout or a crash of the check never stops a publish.
  */
+const LINK_CHECK_DONE_PREFIX = 'links checked:'
+
 function checkLinks() {
   if (opts['skip-link-check']) {
     step('Link check (skipped by --skip-link-check)')
@@ -695,7 +697,14 @@ function checkLinks() {
     log(`    Link check did not finish${res.timedOut ? ' in time' : ''}. The publish goes on.`)
     return
   }
-  const broken = res.out.split('\n').map(line => line.trim()).filter(line => line.startsWith('broken link:'))
+  const lines = res.out.split('\n').map(line => line.trim())
+  // check:links always exits 0. Only its last line says that the check RAN (LINK_CHECK_DONE_PREFIX in content/link-check.ts).
+  if (!lines.some(line => line.startsWith(LINK_CHECK_DONE_PREFIX))) {
+    const why = lines.find(line => line.startsWith('links: check skipped'))
+    log(`    Link check did not run${why ? ` (${why})` : ''}. No link was checked. The publish goes on.`)
+    return
+  }
+  const broken = lines.filter(line => line.startsWith('broken link:'))
   if (broken.length === 0) {
     log('    No broken link found.')
     return

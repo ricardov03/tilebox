@@ -6,10 +6,11 @@
  * once (content/link-check.ts, the guarded request of the link previews) and
  * prints a table. ALWAYS exits 0: a warning list, never a build failure.
  *
- * Flags: `--broken-only` prints one line per broken link and nothing else (for scripts/publish.mjs).
+ * Flags: `--broken-only` (for scripts/publish.mjs) prints one line per broken link, then `links checked: N`.
+ * A run that was skipped prints no such line, so publish.mjs never reports it as "no broken link".
  */
 import { readFile } from 'node:fs/promises'
-import { checkLinks, linkTable, linkTargets, MAX_LINKS } from '../content/link-check'
+import { brokenOnlyReport, checkLinks, linkTable, linkTargets, MAX_LINKS } from '../content/link-check'
 import { describeProfile, profilePath } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 
@@ -24,9 +25,7 @@ try {
   const results = await checkLinks(targets)
   const count = (status: string) => results.filter(result => result.status === status).length
   if (brokenOnly) {
-    for (const result of results.filter(item => item.status === 'broken')) {
-      say(`broken link: ${result.url} (${result.reason}; block ${result.blockIds.join(', ')})`)
-    }
+    for (const line of brokenOnlyReport(results)) say(line)
   }
   else {
     if (results.length) say(linkTable(results))

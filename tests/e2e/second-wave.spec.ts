@@ -14,7 +14,7 @@ import { ENDS_AT_SCRIPT, isoToLocalInput, localInputToIso, scheduleState } from 
 import { buildHead } from '../../app/utils/site-head'
 import { withoutUtm, withUtm } from '../../app/utils/utm'
 import { buildVCard, escapeVCardText, foldVCardLine } from '../../app/utils/vcard'
-import { checkLink, checkLinks, classifyStatus, LINK_CHECK_CONCURRENCY, linkTargets, MAX_LINKS } from '../../content/link-check'
+import { brokenOnlyReport, checkLink, checkLinks, classifyStatus, LINK_CHECK_CONCURRENCY, LINK_CHECK_DONE_PREFIX, linkTargets, MAX_LINKS } from '../../content/link-check'
 import { buildSiteExtras } from '../../content/site-extras'
 import { siteAssetsIfPresent } from '../../content/site-files'
 import type { Transport, TransportResponse } from '../../content/unfurl'
@@ -448,6 +448,20 @@ test.describe('dead-link check (mocked transport, no network)', () => {
   const lookup = async () => [{ address: '93.184.216.34', family: 4 }]
   const answer = (status: number, headers: Record<string, string> = {}, body: AsyncIterable<Uint8Array> | null = null): TransportResponse =>
     ({ status, headers: { get: name => headers[name.toLowerCase()] ?? null }, body })
+
+  test('--broken-only ends with the line that says the check ran, and publish.mjs asks for that line', () => {
+    const results = [
+      { url: 'https://a.example/', blockIds: ['a'], status: 'ok' as const, reason: 'http 200' },
+      { url: 'https://b.example/', blockIds: ['b', 'c'], status: 'broken' as const, reason: 'http 404' },
+    ]
+    expect(brokenOnlyReport(results)).toEqual(['broken link: https://b.example/ (http 404; block b, c)', 'links checked: 2'])
+    // No link at all is still a check that ran. A skipped check prints neither line (scripts/check-links.ts).
+    expect(brokenOnlyReport([])).toEqual([`${LINK_CHECK_DONE_PREFIX} 0`])
+    // publish.mjs is plain node and holds its own copy of the text: the two must not drift.
+    const publish = readFileSync(join(process.cwd(), 'scripts/publish.mjs'), 'utf8')
+    expect(publish).toContain(`const LINK_CHECK_DONE_PREFIX = '${LINK_CHECK_DONE_PREFIX}'`)
+    expect(publish).toContain('lines.some(line => line.startsWith(LINK_CHECK_DONE_PREFIX))')
+  })
 
   test('classifyStatus', () => {
     for (const status of [200, 204, 304]) expect(classifyStatus(status).status).toBe('ok')
