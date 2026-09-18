@@ -22,6 +22,7 @@ import {
   isPublicAddress,
   MAX_SUB_REQUESTS,
   MAX_TOTAL_REDIRECTS,
+  networkReason,
   largestPngFromIco,
   normalizeUrl,
   oembedUrlFor,
@@ -32,6 +33,7 @@ import {
   sniffImage,
   TOTAL_TIMEOUT_MS,
   unfurl,
+  UnfurlError,
   USER_AGENT,
   type Transport,
   type UnfurlDirs,
@@ -647,6 +649,44 @@ test.describe('S2: one budget for the whole unfurl', () => {
     hits.clear()
     expect(await unfurl(`${base}/page`, { ...options, signal: controller.signal })).toEqual({ ok: false, reason: 'cancelled' })
     expect(hits.size).toBe(0)
+  })
+})
+
+test.describe('C1: the reason names the real cause', () => {
+  const wrap = (cause: unknown) => new TypeError('fetch failed', { cause })
+  const coded = (code: string, cause?: unknown) => Object.assign(new Error(code, { cause }), { code })
+
+  test('networkReason reads the whole `cause` chain', () => {
+    // TLS problems sit two levels down in a real undici error.
+    for (const code of ['ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']) {
+      expect(networkReason(wrap(coded('UND_ERR_SOCKET', coded(code)))), code).toBe('bad certificate')
+    }
+    expect(networkReason(wrap(coded('UND_ERR_CONNECT_TIMEOUT')))).toBe('timeout')
+    expect(networkReason(wrap(wrap(coded('ETIMEDOUT'))))).toBe('timeout')
+    expect(networkReason(wrap(new DOMException('The operation timed out', 'TimeoutError')))).toBe('timeout')
+    expect(networkReason(new DOMException('aborted', 'AbortError'))).toBe('timeout')
+    expect(networkReason(wrap(new UnfurlError('blocked address')))).toBe('blocked address')
+    expect(networkReason(wrap(wrap(new UnfurlError('too many redirects'))))).toBe('too many redirects')
+    expect(networkReason(wrap(coded('ENOTFOUND')))).toBe('offline or unknown host')
+    expect(networkReason(wrap(coded('ECONNREFUSED')))).toBe('offline or the site did not answer')
+    expect(networkReason('text')).toBe('offline or the site did not answer')
+    // A chain that points at itself ends.
+    const loop = coded('ECONNRESET')
+    loop.cause = loop
+    expect(networkReason(loop)).toBe('offline or the site did not answer')
+  })
+
+  test('unfurl reports each of them through the engine', async () => {
+    const lookup = () => Promise.resolve([{ address: '93.184.216.34', family: 4 }])
+    const failing = (cause: unknown): Transport => () => Promise.reject(wrap(cause))
+    const ask = (url: string, transport: Transport) => unfurl(url, { dirs, lookup, transport })
+    expect(await ask('https://cert.test/', failing(coded('UND_ERR_SOCKET', coded('ERR_TLS_CERT_ALTNAME_INVALID'))))).toEqual({ ok: false, reason: 'bad certificate' })
+    expect(await ask('https://slow.test/', failing(coded('UND_ERR_HEADERS_TIMEOUT')))).toEqual({ ok: false, reason: 'timeout' })
+    expect(await ask('https://down.test/', failing(coded('ECONNREFUSED')))).toEqual({ ok: false, reason: 'offline or the site did not answer' })
+    const toPrivate: Transport = () => Promise.resolve(new Response('', { status: 302, headers: { location: 'http://169.254.169.254/' } }))
+    expect(await ask('https://ssrf.test/', toPrivate)).toEqual({ ok: false, reason: 'blocked address' })
+    const loop: Transport = url => Promise.resolve(new Response('', { status: 302, headers: { location: `${url.origin}/again` } }))
+    expect(await ask('https://loop.test/', loop)).toEqual({ ok: false, reason: 'too many redirects' })
   })
 })
 

@@ -302,16 +302,32 @@ async function readLimited(body: AsyncIterable<Uint8Array> | null, options: Requ
   return Buffer.concat(chunks).subarray(0, options.maxBytes)
 }
 
-function networkReason(error: unknown): string {
-  if (error instanceof UnfurlError) return error.reason
-  if (error instanceof Error) {
-    if (error.name === 'TimeoutError' || error.name === 'AbortError') return 'timeout'
-    const cause: unknown = error.cause
-    const code = typeof cause === 'object' && cause !== null && 'code' in cause ? String(cause.code) : ''
-    if (code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'ETIMEDOUT') return 'timeout'
-    if (code.startsWith('ERR_TLS') || code.includes('CERT')) return 'bad certificate'
+const TIMEOUT_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'ETIMEDOUT', 'ESOCKETTIMEDOUT'])
+const UNKNOWN_HOST_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_NODATA', 'EAI_NONAME'])
+/** Node's TLS verification codes that do not say CERT or ERR_TLS in their name. */
+const CERTIFICATE_CODES = new Set(['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'HOSTNAME_MISMATCH', 'ERR_SSL_WRONG_VERSION_NUMBER'])
+
+/**
+ * A short reason for the owner. The real cause is often two or three `error.cause` levels deep
+ * (`TypeError: fetch failed` -> undici error -> the TLS or socket error), so the whole chain is read.
+ * Distinct answers: "bad certificate", "blocked address" (and every other guard reason),
+ * "timeout", "too many redirects", "offline or unknown host".
+ */
+export function networkReason(error: unknown): string {
+  const seen = new Set<unknown>()
+  let fallback: string | undefined
+  for (let current: unknown = error, depth = 0; current !== null && typeof current === 'object' && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current)
+    // A refusal of the guard, also when another error wraps it.
+    if (current instanceof UnfurlError) return current.reason
+    const name = 'name' in current ? String(current.name) : ''
+    const code = 'code' in current ? String(current.code) : ''
+    if (name === 'TimeoutError' || name === 'AbortError' || TIMEOUT_CODES.has(code)) return 'timeout'
+    if (code.startsWith('ERR_TLS') || code.includes('CERT') || CERTIFICATE_CODES.has(code)) return 'bad certificate'
+    if (UNKNOWN_HOST_CODES.has(code)) fallback ??= 'offline or unknown host'
+    current = 'cause' in current ? current.cause : undefined
   }
-  return 'offline or the site did not answer'
+  return fallback ?? 'offline or the site did not answer'
 }
 
 /** Why the budget's signal fired: the caller stopped the job, or the 20 s are over. */
