@@ -17,7 +17,7 @@ const { draft, contact, setContactKey } = useSiteDraft()
 const FIELDS: readonly { key: TextKey, label: string, type: 'text' | 'tel' | 'email' | 'url', autocomplete: string, placeholder?: string }[] = [
   { key: 'fullName', label: 'Full name', type: 'text', autocomplete: 'name' },
   { key: 'org', label: 'Company', type: 'text', autocomplete: 'organization' },
-  { key: 'title', label: 'Job title', type: 'text', autocomplete: 'organization-title' },
+  { key: 'title', label: 'Role', type: 'text', autocomplete: 'organization-title' },
   { key: 'phone', label: 'Phone', type: 'tel', autocomplete: 'tel', placeholder: '+57 300 123 4567' },
   { key: 'email', label: 'Public email', type: 'email', autocomplete: 'off', placeholder: 'hi@your-site.example' },
   { key: 'url', label: 'Website', type: 'url', autocomplete: 'url', placeholder: 'https://your-site.example' },

@@ -1,6 +1,6 @@
 <!--
   Site tab (WP11): the QR code of the page. The build draws `/site/qr.svg` from
-  the site URL (`NUXT_PUBLIC_SITE_URL`, else the "Site address" field above).
+  the site URL (`NUXT_PUBLIC_SITE_URL`, else the "Site URL" field above).
   "Make the QR code" sends the DRAFT to the dev-only route `POST /api/site/assets`
   (the same builder as the build). Downloads: the SVG file, and a 1024 px PNG from
   the dev-only route `GET /api/site/qr.png` (sharp). Nothing here reaches the public page.
@@ -73,7 +73,7 @@ const buttonClass = `flex min-h-11 items-center rounded-full border border-line 
       class="text-xs text-muted"
       data-qr-needs-url
     >
-      Set the site address above first (it must start with <code class="font-mono">https://</code>). Without it the build makes no QR code and leaves a QR tile out.
+      Set the "Site URL" field above first (it must start with <code class="font-mono">https://</code>). Without it the build makes no QR code and leaves a QR tile out.
     </p>
     <template v-else>
       <img
