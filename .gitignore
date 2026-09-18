@@ -23,6 +23,8 @@ public/icons/*
 !public/icons/.gitkeep
 public/thumbs/*
 !public/thumbs/.gitkeep
+public/site/
+public/site-uploads/
 .tilebox/
 .netlify/
 
