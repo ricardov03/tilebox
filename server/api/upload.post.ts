@@ -7,7 +7,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { extname, resolve } from 'node:path'
-import { assertDev } from '../utils/editor'
+import { assertDev, assertEditorRequest } from '../utils/editor'
 
 const MAX_BYTES = 8 * 1024 * 1024
 /** Multipart boundaries and field headers add a little on top of the file. */
@@ -30,6 +30,7 @@ function tooLarge(filename: string, bytes: number): never {
 
 export default defineEventHandler(async (event) => {
   assertDev()
+  assertEditorRequest(event, 'multipart')
 
   // Refuse a clearly oversized request before reading its body. The exact
   // check is on the file bytes below; this one allows the multipart overhead.

@@ -6,6 +6,7 @@ import { PUBLIC_PROFILE_TEMPLATE } from './modules/public-profile'
 import { parseProfile } from './types/profile'
 import { FONT_PRESETS } from './app/utils/presets'
 import { NETWORKS, UI_ICONS } from './app/utils/networks'
+import { allBrandIcons, brandIconFor } from './app/utils/brand-icons'
 
 // The profile is read here at config time (PLAN.md 5.4). content/resolve.ts
 // picks content/profile.json (yours, not tracked) or the tracked example.
@@ -15,11 +16,12 @@ import { NETWORKS, UI_ICONS } from './app/utils/networks'
 const profile = parseProfile(JSON.parse(readFileSync(profilePath(), 'utf8')))
 
 /**
- * `public/<dir>/manifest.json` is written by scripts/fetch-favicons.ts (pregenerate)
- * and is not tracked. On a fresh clone, before that script runs, the alias points
- * at an empty module so `nuxt dev` and `nuxt typecheck` still work.
+ * `public/thumbs/manifest.json` (YouTube thumbnails of video blocks) is written by
+ * scripts/fetch-links.ts (pregenerate) and is not tracked. On a fresh clone, before that
+ * script runs, the alias points at an empty module so `nuxt dev` and `nuxt typecheck` still work.
+ * Link tiles need no manifest: their local files are fields of the block (WP10a).
  */
-function manifestOrEmpty(dir: 'icons' | 'thumbs'): string {
+function manifestOrEmpty(dir: 'thumbs'): string {
   const file = resolve(ROOT, `public/${dir}/manifest.json`)
   return existsSync(file) ? file : resolve(ROOT, 'app/components/blocks/empty-manifest.ts')
 }
@@ -27,7 +29,6 @@ function manifestOrEmpty(dir: 'icons' | 'thumbs'): string {
 /** Files that may be missing in a fresh clone, resolved once at config time. The app imports them by these names. */
 const FILE_ALIASES = {
   '#profile': resolve(ROOT, '.nuxt', PUBLIC_PROFILE_TEMPLATE),
-  '#manifest/icons': manifestOrEmpty('icons'),
   '#manifest/thumbs': manifestOrEmpty('thumbs'),
 }
 
@@ -54,20 +55,46 @@ function fontsFor(presetId: typeof profile.profile.theme.fonts) {
   }))
 }
 
-/** Every icon the public page can need: profile blocks + social map + UI icons. */
-function iconsIn(data: typeof profile): string[] {
+/**
+ * Every icon the public page can need: profile blocks + social map + UI icons.
+ * A link block without `icon` gets its brand icon from the URL (app/utils/brand-icons.ts):
+ * only the brands this profile uses go in the bundle, not the whole map.
+ * Hidden blocks are skipped: the build drops them (`toPublicProfile`).
+ */
+function iconsIn(data: typeof profile, withHidden = false): string[] {
   const icons = new Set<string>()
   for (const block of data.blocks) {
+    if (block.hidden && !withHidden) continue
     if ('icon' in block && block.icon) icons.add(block.icon)
     if (block.type === 'social') icons.add(NETWORKS[block.network].icon)
+    if (block.type === 'link' && !block.icon) {
+      const brand = brandIconFor(block.url)
+      if (brand) icons.add(brand)
+    }
   }
   Object.values(NETWORKS).forEach(n => icons.add(n.icon))
   Object.values(UI_ICONS).forEach(i => icons.add(i))
   return [...icons].sort()
 }
 
+/**
+ * Folders under `public/` with files made from other people's bytes (fetched icons and images, uploads).
+ * A file there is only an `<img>` source. Opened directly it must never act as a page of this origin:
+ * no script, no network, sandboxed. `public/_headers` says the same for the static host (docs/security.md).
+ */
+const UNTRUSTED_ASSET_DIRS = ['icons', 'thumbs', 'blocks', 'site', 'site-uploads'] as const
+const UNTRUSTED_ASSET_HEADERS = {
+  'Content-Security-Policy': 'default-src \'none\'; style-src \'unsafe-inline\'; sandbox',
+  'X-Content-Type-Options': 'nosniff',
+}
+
 export default defineNuxtConfig({
   modules: ['@nuxt/fonts', '@nuxt/icon', '@nuxt/eslint'],
+  // `nuxt dev` only: the editor previews any pasted URL and hidden blocks at once, so every
+  // brand icon is bundled there. The built site gets only the icons of its own profile.
+  $development: {
+    icon: { clientBundle: { icons: [...allBrandIcons(), ...iconsIn(profile, true)] } },
+  },
   devtools: { enabled: true },
 
   app: {
@@ -81,7 +108,10 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      /** Absolute site URL for og:image and og:url. Set `NUXT_PUBLIC_SITE_URL` in the host's build env. */
+      /**
+       * Absolute site URL for the canonical link, og:url, og:image and JSON-LD.
+       * `NUXT_PUBLIC_SITE_URL` (the host's build env, `npm run publish` sets it) wins over `site.url` of the profile.
+       */
       siteUrl: '',
     },
   },
@@ -90,6 +120,8 @@ export default defineNuxtConfig({
   routeRules: {
     '/edit': { prerender: false },
     '/api/**': { prerender: false },
+    // The same headers as `public/_headers` (the static host reads that file), for `nuxt dev`.
+    ...Object.fromEntries(UNTRUSTED_ASSET_DIRS.map(dir => [`/${dir}/**`, { headers: UNTRUSTED_ASSET_HEADERS }])),
   },
 
   features: {

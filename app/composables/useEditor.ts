@@ -6,7 +6,7 @@
 import type { Block, BlockType, Profile, Theme } from '~~/types/profile'
 
 export type LayoutKey = 'desktop' | 'mobile'
-export type EditorTab = 'profile' | 'blocks' | 'theme'
+export type EditorTab = 'profile' | 'blocks' | 'theme' | 'site'
 /** Where the inline delete confirm shows: a list row, a preview tile or the block form. */
 export type DeleteSource = 'list' | 'tile' | 'form'
 
@@ -62,12 +62,16 @@ export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
   video: 'Video',
 }
 
+/** The placeholder title of a new link. The link preview may replace it: it counts as "empty". */
+export const NEW_LINK_TITLE = 'New link'
+
 /** A fresh block with sensible defaults. Id is `b<timestamp36>`. */
 export function newBlock(type: BlockType): Block {
   const id = `b${Date.now().toString(36)}`
   switch (type) {
     case 'link':
-      return { id, type, size: '1x1', title: 'New link', url: 'https://example.com' }
+      // New links start with the link preview on (WP10a). Old links have no `enrich` key, which means off.
+      return { id, type, size: '1x1', title: NEW_LINK_TITLE, url: 'https://example.com', enrich: true }
     case 'social':
       return { id, type, size: '1x1', network: 'github', url: 'https://github.com/' }
     case 'image':
@@ -81,6 +85,36 @@ export function newBlock(type: BlockType): Block {
     case 'video':
       return { id, type, size: '2x1', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', title: 'Video' }
   }
+}
+
+/** A deep copy with a fresh id (never one of `takenIds`) and " copy" on the text that names the block. */
+export function copyOf(source: Block, takenIds: readonly string[]): Block {
+  let id = `b${Date.now().toString(36)}`
+  for (let n = 1; takenIds.includes(id); n++) id = `b${Date.now().toString(36)}${n}`
+  const copy: Block = { ...clone(source), id }
+  switch (copy.type) {
+    case 'link':
+      delete copy.spotlight
+      copy.title = `${copy.title} copy`
+      break
+    case 'section':
+      copy.title = `${copy.title} copy`
+      break
+    case 'text':
+    case 'video':
+      if (copy.title) copy.title = `${copy.title} copy`
+      break
+    case 'social':
+      if (copy.label) copy.label = `${copy.label} copy`
+      break
+    case 'map':
+      copy.label = `${copy.label} copy`
+      break
+    case 'image':
+      if (copy.caption) copy.caption = `${copy.caption} copy`
+      break
+  }
+  return copy
 }
 
 /** One short line that names a block in lists and preview tiles. */
@@ -294,6 +328,46 @@ export function useEditor() {
     const index = draft.value.blocks.findIndex(b => b.id === next.id)
     if (index === -1) return
     draft.value.blocks[index] = next
+    // One spotlight per profile (the schema says so too): the new one takes it from the old one.
+    if (next.type === 'link' && next.spotlight) {
+      draft.value.blocks.forEach((block, i) => {
+        if (i === index || block.type !== 'link' || !block.spotlight) return
+        const { spotlight: _spotlight, ...rest } = block
+        draft.value!.blocks[i] = rest
+      })
+    }
+  }
+
+  /** Hide or show a block. A hidden block stays in the file and in the editor. The build drops it. */
+  function toggleHidden(id: string) {
+    if (!draft.value) return
+    const index = draft.value.blocks.findIndex(b => b.id === id)
+    const block = draft.value.blocks[index]
+    if (!block) return
+    const { hidden, ...rest } = block
+    draft.value.blocks[index] = hidden ? rest : { ...rest, hidden: true }
+  }
+
+  /**
+   * Copy a block: a fresh id, " copy" on its name, right after the original in
+   * `blocks` and in both layouts. The copy is selected. It never takes the spotlight.
+   */
+  function duplicateBlock(id: string): string | null {
+    if (!draft.value) return null
+    const index = draft.value.blocks.findIndex(b => b.id === id)
+    const source = draft.value.blocks[index]
+    if (!source) return null
+    const copy = copyOf(source, draft.value.blocks.map(b => b.id))
+    draft.value.blocks.splice(index + 1, 0, copy)
+    const insertAfter = (ids: string[]) => {
+      const at = ids.indexOf(id)
+      ids.splice(at === -1 ? ids.length : at + 1, 0, copy.id)
+    }
+    insertAfter(draft.value.layout.desktop)
+    if (draft.value.layout.mobile) insertAfter(draft.value.layout.mobile)
+    selectedId.value = copy.id
+    tab.value = 'blocks'
+    return copy.id
   }
 
   /** Open the inline confirm for a block. Nothing is deleted yet. */
@@ -399,6 +473,8 @@ export function useEditor() {
     setOrder,
     addBlock,
     updateBlock,
+    toggleHidden,
+    duplicateBlock,
     requestDelete,
     cancelDelete,
     deleteBlock,

@@ -8,6 +8,10 @@
   `data-no-drag` (the drag grid filters them out) and `data-editor-control`.
   Clicks on the tile body are caught by the preview wrapper in edit.vue, which
   selects the block and stops links from navigating.
+  A hidden block (WP10a) is dimmed and carries an eye-off badge. The Hide / Show
+  control sits next to Delete. Its name says the action ("Hide x" / "Show x"); it has
+  no `aria-pressed`, because `[data-editor-control][aria-pressed]` finds the Edit control.
+  The build leaves hidden blocks out.
 -->
 <script setup lang="ts">
 import type { Block } from '~~/types/profile'
@@ -28,6 +32,7 @@ const emit = defineEmits<{
   requestDelete: [id: string]
   confirmDelete: [id: string]
   cancelDelete: []
+  toggleHidden: [id: string]
 }>()
 
 const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
@@ -63,11 +68,25 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
     class="group relative"
   >
     <div
-      :class="selected ? 'outline-2 outline-offset-2 outline-accent' : ''"
+      :class="[selected ? 'outline-2 outline-offset-2 outline-accent' : '', block.hidden ? 'opacity-40' : '']"
       class="h-full rounded-tile"
     >
       <BlockRenderer :block="block" />
     </div>
+
+    <span
+      v-if="block.hidden"
+      data-hidden-badge
+      :class="isSection ? 'top-1/2 -translate-y-1/2' : 'bottom-2'"
+      class="pointer-events-none absolute left-2 flex items-center gap-1 rounded-full border border-line bg-tile px-2 py-1 font-mono text-xs text-ink"
+    >
+      <Icon
+        :name="UI_ICONS.hidden"
+        class="size-4"
+        :aria-hidden="true"
+      />
+      Hidden
+    </span>
 
     <!-- The inline delete confirm, over the top of the tile. -->
     <div
@@ -90,10 +109,10 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
     <div
       v-else
       :class="[
-        isSection ? 'inset-y-0 my-auto h-11' : 'top-2',
+        isSection ? 'inset-y-0 my-auto h-11' : 'top-2 flex-wrap',
         selected ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
       ]"
-      class="absolute right-2 flex items-center gap-1 transition-opacity motion-reduce:transition-none [@media(hover:none)]:opacity-100"
+      class="pointer-events-none absolute left-2 right-2 flex items-center justify-end gap-1 transition-opacity motion-reduce:transition-none [@media(hover:none)]:opacity-100 [&>button]:pointer-events-auto"
     >
       <button
         type="button"
@@ -105,6 +124,21 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
       >
         <Icon
           :name="UI_ICONS.edit"
+          class="size-5"
+          :aria-hidden="true"
+        />
+      </button>
+      <button
+        type="button"
+        data-editor-control
+        data-no-drag
+        :data-hide-tile="block.id"
+        :aria-label="`${block.hidden ? 'Show' : 'Hide'} ${blockSummary(block)}`"
+        :class="controlClass"
+        @click.stop="emit('toggleHidden', block.id)"
+      >
+        <Icon
+          :name="block.hidden ? UI_ICONS.shown : UI_ICONS.hidden"
           class="size-5"
           :aria-hidden="true"
         />

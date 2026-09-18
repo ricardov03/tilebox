@@ -5,11 +5,9 @@
 [build.environment]
   NODE_VERSION = "24"
 
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
+# Security headers (nosniff, Referrer-Policy, the CSP of /icons, /thumbs, /blocks, /site, /site-uploads)
+# live in public/_headers: Netlify and Cloudflare Pages both read that file. Only cache headers here,
+# so no header has two sources.
 
 [[headers]]
   for = "/_nuxt/*"

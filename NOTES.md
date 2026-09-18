@@ -837,3 +837,309 @@ $ E2E_STATIC_PORT=4392 E2E_DEV_PORT=3392 npx playwright test      (both projects
 43 passed, 1 skipped      (38 + the 5 new gravatar tests; the skip is the known "example email" guard)
 $ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks      -> exit 0
 ```
+
+## WP10a
+
+Branch: `wp/10a-smart-links` (from `origin/main`). Date: 2026-09-18. Node used: 22.23.1. Worked in a separate git worktree; the main checkout was not touched. Runs in parallel with WP10b (`site` object + "Site" tab): this WP adds no site-level metadata, and its edits in `types/profile.ts` and `edit.vue` are small and local (edit.vue: 5 event lines).
+
+Goal (decided by Ricardo): smart links (brand icon from the URL, link previews fetched on the owner's machine) and three quick wins (hide, duplicate, spotlight).
+
+### What was built
+- Contract change (`types/profile.ts`, frozen after WP0, so noted here). Every block type: `hidden?: boolean`. Link blocks: `enrich?`, `showImage?`, `favicon?` (regex: `/icons/<a-z0-9>.<png|jpg|webp|gif|svg>` only), `image?` (`/thumbs/<a-z0-9>.webp` only), `imageAlt?`, `meta?` (`LinkMetaSchema`, strict), `spotlight?: 'pop' | 'wobble' | 'buzz'`. `superRefine`: a second spotlight is an issue at `blocks.<i>.spotlight`. New exports: `SPOTLIGHTS`, `Spotlight`, `LinkMetaSchema`, `LinkMeta`, `toPublicBlock()`. `toPublicProfile()` now removes hidden blocks and their ids from both layouts, and drops `enrich` and `meta` always, `image` / `imageAlt` when `showImage` is off. Old profiles stay valid (all keys optional).
+- A. `app/utils/brand-icons.ts`: `BRAND_ICONS` (65 hosts -> 48 icons, 16 from `line-md`, 32 from `simple-icons`, plus `line-md:email` for `mailto:` and `line-md:phone` for `tel:`), `brandIconFor(url)`, `allBrandIcons()`. Pure, no imports. Every name was checked against `node_modules/@iconify-json/<prefix>/icons.json`. `scripts/check-icons.ts` now also checks the map and fails on `hidden: true` (63 icons checked).
+- Icon resolution: `resolveLinkIcon()` in `app/components/blocks/media.ts`: `icon` > brand > `favicon` (only a local `/icons/` path) > `line-md:link`. `LinkBlock.vue` uses it. `isSafeHref()` now accepts `tel:` (the brand map has a phone icon, so a `tel:` tile must be a real link).
+- Bundle list (`nuxt.config.ts`): `iconsIn(profile)` adds `brandIconFor(block.url)` for each visible link block without `icon`. Hidden blocks add nothing. So the built site has only the brands its profile uses (the example build: 33 icons, 27.61 KB, the whole map is not in it). `$development.icon.clientBundle.icons` adds the whole map + the icons of hidden blocks for `nuxt dev` only. Measured: `nuxt dev` 65 icons, 57.62 KB; the build 33 icons, 27.61 KB.
+- B. Engine: `content/unfurl.ts` (network, htmlparser2, ipaddr.js, undici, sharp by dynamic import) and `content/unfurl-cache.ts` (node built-ins only: dirs from `ROOT`, `normalizeUrl`, cache file, `localFileExists`, `linkNeedsFetch`, `withLocalLinkFiles`). Split on purpose: `modules/public-profile.ts` loads the cache half at config time and must not pull the network half. Exports used by the tests: `safeRequest`, `checkTarget`, `isPublicAddress`, `parseHead`, `decodeHtml`, `sniffImage`, `largestPngFromIco`, `pickBySize`, `oembedUrlFor`, `githubAvatarFor`, `USER_AGENT`.
+- Dev route `server/api/unfurl.post.ts`: `import.meta.dev ? await import('~~/content/unfurl') : null`, so the production server bundle has no engine (checked with `npx nuxt build`: no `tilebox-unfurl` / `htmlparser2` string in `.output/server`, no `sharp` / `undici` in its `node_modules`). Host check, Origin check, a per-target-host promise queue, zod body.
+- Build: `scripts/fetch-links.ts` (git mv from `fetch-favicons.ts`). npm scripts: `fetch:links`, `fetch:favicons` = `npm run fetch:links --` (alias), `pregenerate` ends with `fetch:links`. Debug mode: `-- --url <link> [--image] [--force]`.
+- `modules/public-profile.ts`: `toPublicProfile(withLocalLinkFiles(profile), gravatar)`.
+- Editor: `LinkEnrich.vue` (two switches, the one-line note, preview card, Refresh = `force`, reason text, "Use fetched title / description", 600 ms debounce, AbortController + request id against stale answers), `LinkIconField.vue` ("auto" label, "Choose another", "Back to auto"), Spotlight select + live sample in `BlockForm.vue`, Hide / Show + Duplicate buttons in `BlockForm.vue` and as a second line under each `BlockList.vue` row, Hide / Show control + "Hidden" badge + dimming in `PreviewTile.vue`. `useEditor.ts`: `toggleHidden`, `duplicateBlock`, `copyOf`, `NEW_LINK_TITLE`, new links get `enrich: true`, `updateBlock` moves the spotlight. UI icons: `line-md:watch`, `line-md:watch-off`, `line-md:text-box-multiple`.
+- Example: `b10` (github.com link without `icon`, `spotlight: pop`) and `b11` (hidden link "Hidden draft tile"). No `enrich` and no image in the example, so CI makes no link request (`OK  link previews 0/0`).
+
+### SSRF guard (one function for every request: page, oEmbed, manifest, icon, image)
+`safeRequest()` -> `checkTarget()` per hop: http/https only; port `''`, 80 or 443; `dns.lookup(host, { all: true })`; EVERY answer must have `ipaddr.parse(ip).range() === 'unicast'` (so loopback, private, linkLocal, carrierGradeNat, uniqueLocal, ipv4Mapped, 6to4, teredo, reserved... are refused, and one bad answer among good ones refuses the host); an IP literal is checked the same way without DNS; the first checked address is pinned with `new Agent({ connect: { lookup } })` (handles `options.all`), one Agent per hop, destroyed after the body; `redirect: 'manual'`, 5 redirects, `Location` resolved against the current URL; `AbortSignal.timeout(8000)` per hop; body read as a stream with a byte limit (`cut` for HTML at 512 KB or at `</head>` / `<body`, `fail` for JSON 256 KB, icons 1 MB, images 5 MB). `allowHosts`, `lookup`, `transport`, `dirs`, `now` are test-only options.
+
+### Deviations and why
+1. **No favicon download when the URL has a brand icon (or the owner's `icon`).** The brand icon wins on the tile, so the file would never show. It saves 1 to 6 requests per link. `linkNeedsFetch()` follows the same rule. Smoke results below: GitHub and YouTube have no `favicon`, nuxt.com has one.
+2. **The `#manifest/icons` alias and `public/icons/manifest.json` are gone** (the brief allowed it). Link files are block fields. `#manifest/thumbs` stays for video tiles. Removed in `nuxt.config.ts`, `LinkBlock.vue`, `media.ts` (`faviconPath`), `empty-manifest.ts` docs, README, PLAN. Effect for old profiles: a link without `enrich` no longer gets a Google favicon at build; it gets the brand icon or `line-md:link`. That is the owner's rule ("with `enrich` off the tile uses only what the owner typed").
+3. **The build never writes `profile.json`.** A path in the block counts only when its file is on disk; else the path from `.tilebox/unfurl-cache.json` is used; else the key is dropped. So a profile written by hand with only `"enrich": true` works, a fresh machine works, and the page never points at a 404.
+4. **SVG icons: a small extra check.** Besides "< 100 KB, `<img>` only", an SVG with `<script`, `<foreignObject`, an `on*=` attribute or `javascript:` is refused (the next candidate is tried). Reason: the file is served from the site's own origin, and someone can open it directly.
+5. **A site that blocks the request but has a brand icon answers `ok: true, source: 'brand'`** with a `note` ("The website gave no data (http 403). The brand icon still works."). It is not cached. Without a brand icon the answer is `{ ok: false, reason }`.
+6. **`force` still sends `If-None-Match`** when the cached entry is complete. A `304` means "nothing changed", so the data is kept and `fetchedAt` moves.
+7. **`nuxt dev` bundles the whole brand map** (`$development`). The brief said "only when used by the current profile": that holds for the built site. In dev the editor must show the icon of a URL pasted a second ago, without a restart.
+8. **The tile's Hide control has no `aria-pressed`.** `[data-editor-control][aria-pressed]` is how `edit.vue` and the tests find the Edit control. Its name says the action ("Hide x" / "Show x"). The list row toggle and the form toggle have `aria-pressed`.
+9. **List rows have a second line** (Hide / Show, Duplicate). Five 44 px buttons do not fit next to the title in the 400 px panel.
+10. **Existing test fixed (`Delete on a selected tile...`).** It failed on `origin/main` too on this Mac (checked in a throwaway worktree): the Home and End keys do not move the caret in Chromium on macOS, so Backspace deleted the last letter and the expected label was wrong. The test now sets the caret with `setSelectionRange` and asserts the value did not change. Same intent.
+11. **Every editor test mocks `POST /api/unfurl`** (`openEditor` answers `{ ok: false }`), because new link blocks have `enrich: true` and the first, older test fills a real URL. No test reads a real website.
+12. The PLAN.md status line was not edited (WP10b edits the same line). Text for the architect: "WP10a smart links + quick wins on `wp/10a-smart-links`."
+
+### Requests to other WPs
+- WP10b / architect: on merge, `types/profile.ts` (WP10a touches the block schemas, `superRefine` and `toPublicProfile`), `edit.vue` (5 added event lines on existing components), `nuxt.config.ts` (`iconsIn`, `$development`, the removed `#manifest/icons` alias) and `README.md` may need a manual merge. `toPublicProfile()` builds a new `layout` object now: a `site` key must be passed through there.
+- A Grok / OCR review of `content/unfurl.ts` is worth the cost: it is the only code in the repo that fetches URLs chosen by user input.
+
+### Verified by hand
+- Featured look on real files (nuxt.com, `--image`): 2x1 (image on the right third), 2x2 and 1x2 (image on top), 1x1 (no image), accent variant, 1280 and 390, screenshots checked. Hidden tile absent on the public page, dimmed with a badge in the editor.
+- Real route in `nuxt dev`: `POST /api/unfurl` with nuxt.com -> `ok: true`; with `Origin: https://evil.example` -> 403; with `Host: evil.example` -> 403; `http://127.0.0.1:3401/api/profile` -> `blocked port`; `http://localhost/` -> `blocked address`. The engine loads inside Nitro dev (the WP7 lesson: paths from `ROOT`).
+
+### Smoke test (real network, from the command line, files removed afterwards)
+```
+$ npx tsx scripts/fetch-links.ts --url https://github.com/nuxt --image
+{ "ok": true, "cached": false, "url": "https://github.com/nuxt", "finalUrl": "https://github.com/nuxt", "title": "Nuxt",
+  "description": "The Intuitive Vue Framework. Nuxt has 65 repositories available. Follow their code on GitHub.",
+  "siteName": "GitHub", "themeColor": "#1e2327", "source": "html", "image": "/thumbs/40da6c047f241180.webp" }
+$ npx tsx scripts/fetch-links.ts --url "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --image
+{ "ok": true, "cached": false, "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  "description": "By Rick Astley", "siteName": "YouTube", "source": "oembed", "image": "/thumbs/24ca0ed0e641e75c.webp" }
+$ npx tsx scripts/fetch-links.ts --url https://nuxt.com --image
+{ "ok": true, "cached": false, "url": "https://nuxt.com/", "title": "Nuxt: The Full-Stack Vue Framework",
+  "description": "Build fast, production-ready web apps with Vue. File-based routing, auto-imports, and server-side rendering — all configured out of the box.",
+  "siteName": "Nuxt", "themeColor": "#020420", "favicon": "/icons/fb6ffcbd70de0858.png", "source": "html", "image": "/thumbs/3da768251b881db0.webp" }
+```
+GitHub: the image is the 200 px avatar shortcut. YouTube: oEmbed, the page was never loaded. No `favicon` on the first two: deviation 1.
+
+### Tests
+- `static` project: 33 -> 81. New files: `links.spec.ts` (17: brand map against the packs, icon order, featured look rule, schema, local files for the build), `unfurl.spec.ts` (24: pure helpers, the guard without `allowHosts`, a local `node:http` server with `allowHosts: ['127.0.0.1']`, a mocked connection for oEmbed and the brand answer; `lookup` throws in the server tests, so no fallback can reach the internet). `privacy.spec.ts` +3 (hidden block in no file of `dist/`, sanitizer: hidden blocks and layouts, editor-only link fields). `public.spec.ts` +4 (brand icon as inline SVG with no `<img>`, hidden block absent, spotlight `animation-name` / `infinite` / `6s` with an unchanged layout box, `animation-name: none` with reduced motion). axe: 0 violations, 4 runs.
+- `dev` project: 11 -> 16 (link preview with a mocked route, failed fetch + preview off, Hide / Show + the public page follows, Duplicate in both layouts, one spotlight).
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+Nuxt Icon client bundle consist of 33 icons with 27.61KB(uncompressed) in size
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ grep -rl "Hidden draft tile" dist | wc -l     -> 0
+$ npx nuxt build && grep -rl "tilebox-unfurl\|htmlparser2" .output/server      -> no file
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4401 E2E_DEV_PORT=3401 npx playwright test --project=static
+81 passed
+$ E2E_STATIC_PORT=4401 E2E_DEV_PORT=3401 npx playwright test      (both projects)
+96 passed, 1 skipped      (the skip is the known "example email" guard, see WP9 deviations)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+```
+
+### Open
+- Code review (Grok / OCR) not run yet.
+- Safari and Firefox: the featured look and the spotlight were checked in headless Chromium only.
+- The preview card shows no color from `themeColor` yet. The value is stored in `meta`.
+- A very long description on a featured 2x1 tile on phones is clamped to 2 lines; the editor preview (lower rows) clips a little more than the real page.
+
+## WP10b
+
+Branch: `wp/10b-site-meta` (from `origin/main`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. WP10a (link blocks) runs in parallel on `wp/10a-smart-links`.
+
+Goal (asked by Ricardo): "a section in the editor for the basic metadata: OG, favicon and metadata". Decision: the social image is generated from the profile at build time, and an optional upload wins.
+
+### What was built
+- A. Schema. New file `types/site.ts` (its own file, so the merge with WP10a's edits of `types/profile.ts` stays small): `SiteSchema` (zod strict, every key optional), `SiteAssetsSchema`, `PublicSiteSchema`, `toPublicSite()`, `isSiteUrl()`, the limits. `types/profile.ts` (frozen contract, so noted here): `site: SiteSchema.optional()` in `ProfileSchema`, `site: PublicSiteSchema.optional()` in `PublicProfileSchema`, and `toPublicProfile(profile, gravatarPath?, siteExtras?)`. The public `site` has no `favicon` / `ogImage` upload paths; it gets `assets` (the generated files that exist) and `builtAt`. No migration: an old profile is valid. `lang` and `noindex` have NO zod default (a default would write `lang: "en"` into every saved file); the defaults are applied when the head is built. `content/profile.example.json` has a small `site` (lang, jobTitle, location, no URL).
+- B. Site URL precedence: `NUXT_PUBLIC_SITE_URL` > `site.url` > '' (`resolveSiteUrl()` in `app/utils/site-head.ts`). Unknown = no canonical, no `og:url`, relative `og:image`. The asset script uses the same function for the host line of the card.
+- C + D. `content/site-assets.ts` `buildSiteAssets()` (shared by `scripts/build-site-assets.ts` through tsx and by `POST /api/site/assets` through Nitro; every path from `ROOT`, the WP7 lesson) and `content/site-files.ts` (node built-ins only: names, paths, `siteAssetsIfPresent()`; `modules/public-profile.ts` loads it at config time without loading sharp). Output `public/site/`: `favicon.ico`, `icon.svg` (initials or SVG upload only; removed when the source changes to a raster), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `icon-mask.png`, `manifest.webmanifest`, `og.png`.
+  - Favicon source: `site.favicon` > avatar (`profile.avatar`, else `public/avatar.gravatar.jpg`; cover 512, circle mask with `dest-in`) > initials. Each source is tried in a `try`; a failure adds one line to `messages` and the next source runs. A remote `profile.avatar` (http URL) is skipped: no network in this script.
+  - Initials tile: satori renders the letters with Geist SemiBold and returns SVG outlines (`<path d>`). The script lifts the path data and writes its own SVG: a rounded `rect` (rx 22%) in `accent`, the glyphs in `accent-soft`, and for `icon.svg` a `<style>` with a `prefers-color-scheme: dark` block (the preset's dark values). Outlines, so no renderer needs the font. The PNG master uses inline fills (librsvg ignores media queries anyway).
+  - Apple icon and maskable icon: for initials, a full-bleed square (the system cuts the corners), with smaller letters inside the 80% safe zone for the maskable one. For an avatar or an upload: the art on the preset's light `ground`, at 70% (circle) or 56% (square) for the maskable icon. Both files have no alpha channel. sharp gotcha: inside one pipeline `flatten()` / `removeAlpha()` run BEFORE `composite()`, so the composite is written to a buffer first.
+  - ICO: written by hand, `icoFromPng()`: ICONDIR 6 bytes + one ICONDIRENTRY 16 bytes (32x32, 1 plane, 32 bpp, size, offset 22) + the PNG bytes.
+  - `og.png`: upload -> `resize(1200, 630, cover)`; when the PNG is over 1 MB it is written again with a 256-color palette. Generated -> satori element tree of plain objects (no React, no JSX), `sharp(svg).png()`. Layout: ground background, a large rounded tile, avatar circle (embedded as a data URI) or initials circle, name (SemiBold 76, `lineClamp: 2`), bio (`lineClamp: 3`), an accent bar, `@handle · host`. Example result: 37 550 bytes.
+  - The card ALWAYS uses Geist and the LIGHT colors. "Mono" line: only Geist Regular and SemiBold ship (as asked), so the line is Geist with wide tracking, not Geist Mono.
+- E. `app/utils/site-head.ts`: pure `buildHead(publicProfile, envSiteUrl)` -> `{ htmlAttrs, title, meta, link, script }`, plus `resolveSiteUrl`, `siteTitle`, `siteDescription`, `splitName`, `initialsOf`, `ogLocale`, `sameAsOf`, `buildJsonLd`, `jsonForScript` (`<` becomes `\u003c`). `app/composables/useSiteHead.ts` hands it to `useHead`. `app/pages/index.vue` calls it. Favicon links: ico (32), `icon.svg` when it exists, `icon-192.png`, apple-touch-icon = 4 for the example, plus the manifest. `og:locale` comes from `lang` (`pt-BR` -> `pt_BR`, `en` -> `en_US`, unknown language without a region -> no tag). `sameAs` = the http(s) URLs of the social blocks of the PUBLIC profile (a `mailto:` social tile is left out; a block with `hidden: true` is left out too, ready for WP10a). `dateModified` = `builtAt`, one ISO date per config load, written into the public profile, so the server HTML and the client agree. `Tile.vue` has a `rel` prop; `SocialBlock.vue` passes `rel="me"` -> `rel="me noopener noreferrer"`.
+- F. Editor. `app/components/editor/SitePanel.vue` + the 4th tab in `edit.vue` (same ARIA model: the `tabs` array drives arrows, Home, End). Text fields keep what you type; the draft only gets a value the schema accepts (URL, lang, X handle show an inline `role="alert"`). An emptied field removes its key; no keys left removes `site`. Counters `n/70` and `n/160`. Favicon block: source label, 32 and 180 previews, upload, Remove upload. Social image block: preview with `?v=<version>`, Regenerate, upload, remove. Search result and social card previews from the draft. Routes: `POST /api/site/upload?kind=favicon|og` -> `public/site-uploads/<kind>-<6 hex>.<ext>`; `POST /api/site/assets` with the DRAFT profile -> `buildSiteAssets()` -> `{ files, faviconSource, ogSource, messages, version }`. Both start with the inline `if (!import.meta.dev) throw createError({ statusCode: 404 })`, and the builder is a dynamic import behind it, so a production build drops the branch. `nuxt generate` keeps no `.output/server` at all, and its log never names `sharp` or `satori`.
+- G. `.gitignore` "Personal data": `public/site/`, `public/site-uploads/`. `tests/e2e/repo.spec.ts` asserts both with `git check-ignore`. `scripts/release.mjs` preflight lists the two folders too. CI builds the sample: `site: favicon from initials, social image generated (8 files in public/site/)`.
+
+### Font source, license, checksums
+- Source: the official `geist` npm package by Vercel, version 1.7.2, `https://registry.npmjs.org/geist/-/geist-1.7.2.tgz` (sha256 `88cbfaca51646078f3172802643691bb8fe2df15ca4c455b1b101e49b7d469a6`). Files `package/dist/fonts/geist-sans/Geist-Regular.ttf` and `Geist-SemiBold.ttf` (static instances; satori reads them as they are), and `package/LICENSE.txt` copied as `assets/fonts/OFL.txt`.
+- License: SIL Open Font License 1.1, Copyright (c) 2023 Vercel, in collaboration with basement.studio.
+- sha256: `Geist-Regular.ttf` `5c8968eafb98a4c4f47033daf29e38e284a6f2a82eb017d171ab040fe7c4b615` (126 048 bytes), `Geist-SemiBold.ttf` `612ec98df33935354f39e81e54101656961ab6e5549f64b63eb57868ba7bab8d` (127 872 bytes), `OFL.txt` `930853ee1daa68554d9e35c8a9175affb74f699fad9a5da6ee5ebe76379d9137`.
+- New dev dependencies: `sharp` 0.35.4 (was in the tree through wrangler), `satori` 0.33.4.
+
+### Deviations and why
+- `public/site/` has no `.gitkeep`: the script creates the folder, nothing watches it, and a `.gitkeep` would land in `dist/site/`.
+- `public/site/` is NOT watched by `modules/public-profile.ts`. A refresh of `#profile` remounts the app (the known save behavior), and "Regenerate" with an unsaved draft would lose the draft. Which files exist is read at config time and on the next profile change. The file names are stable, so this only matters when `icon.svg` appears or goes away: restart `npm run dev`.
+- "Remove upload" clears the field. The file stays in `public/site-uploads/` (ignored). No delete route.
+- Upload and Remove run "Regenerate" right away with the draft, so the previews show the result. It writes `public/site/` before a save; `predev` and every build write it again from the saved profile.
+- The default title is now `Name (@handle)`. `tests/e2e/public.spec.ts` (WP5's file) had `toHaveTitle(name)`: one line changed to `siteTitle(...)`.
+- `buildHead()` returns plain `string` names. unhead types every meta name as a literal union, so `useSiteHead` has one cast: `head as Parameters<typeof useHead>[0]`. No `any`.
+- The editor preview of the host shows `site.url` only: the client does not know `NUXT_PUBLIC_SITE_URL`.
+- PLAN.md status line not edited (WP10a edits it too); section 6 and section 8 are.
+
+### Requests to other WPs
+- WP1 (`useTheme.ts`), older than this WP: after hydration the DOM has the two `theme-color` metas twice. unhead's dedupe key for a meta with a `key` is `meta:theme-color:key:<key>`, the server HTML has no key, so the client appends a second identical pair. Harmless (same values). Checked by building with `useSiteHead()` commented out: same 4 tags. `site.spec.ts` therefore counts them in the raw HTML (2). Fix idea: drop the `key`s and let unhead match by `name` + `media`, then test the toggle again.
+- WP10a: `sameAsOf()` already skips a social block with `hidden: true`. If hidden blocks are removed in `toPublicProfile()` instead, nothing changes here.
+
+### Verified
+- `public/site/og.png` looked at by eye (example): ground, tile, initials circle, name, 2-line bio, accent bar, `@ricardov03`. `icon-mask.png`: full-bleed accent, letters inside the safe zone. Site tab looked at in a screenshot at 1400 px.
+- `git check-ignore -v public/site/og.png public/site-uploads/x.png` -> the two new rules.
+- `npm run generate`: the log has 0 lines with `sharp` or `satori`, and `.output/` holds `public/` and `nitro.json` only.
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+avatar: placeholder email, gravatar skipped
+site: favicon from initials, social image generated (8 files in public/site/)
+OK  27 icons found in installed Iconify packs
+Prerendered 4 routes
+$ ls dist/site
+apple-touch-icon.png favicon.ico icon-192.png icon-512.png icon-mask.png icon.svg manifest.webmanifest og.png
+$ grep -r "hello@example.com" dist | wc -l
+0
+$ E2E_STATIC_PORT=4402 E2E_DEV_PORT=3402 npx playwright test --project=static
+60 passed      (26 new in site.spec.ts, 1 new in repo.spec.ts)
+$ E2E_STATIC_PORT=4402 E2E_DEV_PORT=3402 npx playwright test      (both projects)
+75 passed, 1 skipped      (dev: 16, 5 new in site-editor.spec.ts; the skip is the known "example email" guard)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+personal data: not tracked
+would commit "chore(release): v0.1.1" and tag v0.1.1
+working tree: still clean
+$ sharp metadata of public/site/*
+og.png 1200x630 png 37550 bytes
+apple-touch-icon.png 180x180 png 5221 bytes
+icon-192.png 192x192 png 7997 bytes
+icon-512.png 512x512 png 16092 bytes
+icon-mask.png 512x512 png 9023 bytes
+```
+
+## WP10 integration
+
+Branch: `wp/10-final` = `origin/wp/10a-smart-links` + merge of `origin/wp/10b-site-meta`. Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. Not merged into `main`, no tag.
+
+### Conflict files and how each was resolved
+- `types/profile.ts`: ONE `toPublicProfile(profile, gravatarPath?, siteExtras?)`. Body of WP10a (hidden blocks and their ids out of both layouts, `toPublicBlock()`, a new `layout` object) plus `site: toPublicSite(profile.site, siteExtras)` of WP10b in the same return object. Both schemas stay strict; an old profile is valid (new unit test).
+- `modules/public-profile.ts`: both imports. One call: `toPublicProfile(withLocalLinkFiles(profile), gravatarPathIfPresent(), siteExtras)`.
+- `package.json`: union. `predev`: ensure:profile, presets, check:profile, fetch:avatar, build:site-assets. `pregenerate`: presets, check:profile, check:contrast, check:icons, fetch:avatar, fetch:links, build:site-assets. `fetch:favicons` stays the alias. `satori` added next to `sharp`.
+- `package-lock.json`: the WP10a side, then `npm install` (200 added lines, `satori` and its tree). `npm ci` passes.
+- `playwright.config.ts`: `static` runs `links.spec.ts`, `unfurl.spec.ts` AND `site.spec.ts`; `dev` runs `editor.spec.ts` and `site-editor.spec.ts`.
+- `content/profile.example.json`: the 11 blocks and both layouts of WP10a, plus the `site` object of WP10b.
+- `README.md`: Contents has "Link previews" then "Site metadata"; both sections kept in that order; one personal-data list; the Scripts table has `fetch:links`, `fetch:favicons` (alias) and `build:site-assets` once each; the `predev` / `pregenerate` sentence follows `package.json`; the Tests table rows and the Project layout carry both sides.
+- `content/README.md`: one ignored-files list (link tile wording of WP10a, the two `public/site*` lines of WP10b).
+- `PLAN.md`: section 6 example = WP10a layouts + the `site` object; section 8 has "WP10a" then "WP10b"; the status line names the merge.
+- `NOTES.md`: the merge mixed the two sections line by line. Rebuilt: the common part, then `## WP10a` and `## WP10b` whole, from each branch.
+- Merged with no conflict, read and checked: `nuxt.config.ts` (`iconsIn()`, `$development`, `runtimeConfig.public.siteUrl`), `app/pages/edit.vue` (hide / duplicate events + the 4th tab; the `tabs` array drives the keyboard model, so 4 tabs are covered, `site-editor.spec.ts` tests it), `app/composables/useEditor.ts`, `.gitignore` (no duplicate line), `scripts/release.mjs` (the `public/site*` refusal next to the personal-data checks), `tests/e2e/public.spec.ts`.
+
+### One real integration bug (found by the `dev` project)
+`editor.spec.ts` "Hide dims the block..." (WP10a) hides the map block and waited until the page had no "Bogota". The sample `site.location` (WP10b) is "Bogota" too and is public (JSON-LD `address`). The test now checks `block.url`. No privacy problem: the hidden block itself is gone.
+
+### theme-color fix (`app/composables/useTheme.ts`)
+- Cause: a meta with a `key` has the unhead dedupe key `meta:<name>:key:<key>`. The server HTML carries no key, so the client could not match its tags and appended new ones: 4 `theme-color` and 2 `color-scheme` metas after hydration.
+- Dropping the keys is not enough for `theme-color`: two metas with the same `name` then dedupe to ONE.
+- Fix: the server renders the two `theme-color` metas (`useServerHead`, keyed, one per `prefers-color-scheme`). The client never gives them to unhead; `syncThemeColorMeta()` updates the two DOM nodes (and makes them on a page with no server HTML, the SPA fallback). There are ALWAYS two metas now: a fixed mode puts the same color in both. `color-scheme` lost its key, so unhead matches the server tag by name.
+- Test: `public.spec.ts` "hydration and the toggle keep exactly 2 theme-color metas, 1 color-scheme meta, 1 inline script" (after load, after one toggle click, plus the contents). It failed before the fix with `{ themeColor: 4, colorScheme: 2 }`.
+
+### Tests added
+- `privacy.spec.ts` +2: one `toPublicProfile()` call with a hidden email, a hidden link, a hidden social block and a `site` with upload paths (none of the secrets in the JSON, layouts cleaned, `site` = public keys + extras, `PublicProfileSchema` strict parse); an old profile stays valid. The `dist/` checks (hidden email, hidden block title) were there already and run on the merged build.
+- `site.spec.ts` +1: JSON-LD `sameAs` leaves out a hidden social block, because `buildHead()` gets the sanitized profile. `sameAsOf()` keeps its own `hidden` check as a second guard.
+- `public.spec.ts` +1: the theme-color test above.
+
+### Skipped on purpose
+- `meta.themeColor` on the preview card: not used. The note in `## WP10a` > Open stays.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0 (2003 packages)
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+avatar: placeholder email, gravatar skipped
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Nuxt Icon client bundle consist of 33 icons with 27.61KB(uncompressed) in size
+Prerendered 4 routes
+$ ls dist/site | wc -l                          -> 8      (no `edit` in dist/)
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ grep -rl "Hidden draft tile" dist | wc -l     -> 0
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4403 E2E_DEV_PORT=3403 npx playwright test --project=static
+112 passed      (81 of WP10a + 27 of WP10b + 4 new)
+$ E2E_STATIC_PORT=4403 E2E_DEV_PORT=3403 npx playwright test --project=dev
+21 passed       (16 of WP10a + 5 of WP10b)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ npm run dev -- --port 3404      GET / 200, /edit 200, /api/profile 200, 2 theme-color metas, no ERROR line
+```
+
+### Open
+- Code review (Grok / OCR) of the merged branch not run yet. `content/unfurl.ts` is still the file that most needs it.
+- Safari and Firefox: not checked (headless Chromium only).
+- `public/site/` is not watched in dev (WP10b deviation): when `icon.svg` appears or goes away, restart `npm run dev`.
+
+## WP10 security round
+
+Branch: `wp/10-secure` (from `origin/wp/10-final`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. Not merged into `main`, no tag.
+
+Input: an adversarial security review with working reproductions (S1 to S6) and a code review (C1 to C5). Every security fix has a regression test that fails before the fix. One fix per commit. Threat model: `docs/security.md`.
+
+### Findings, fixes, regression tests
+| Id | What was wrong | Fix | Regression test |
+|---|---|---|---|
+| S1 (high) | `isPlainSvg` was a regex on raw text. Six payloads passed it and were stored as `/icons/<hash>.svg`: opened directly they run script on the site's own origin (on localhost that script passes the Host / Origin checks of the dev routes) | `rasterizeIcon()` in `content/unfurl.ts`: EVERY fetched icon is decoded by sharp and drawn again as a PNG inside 128x128 (`limitInputPixels` 4096x4096, `failOn: 'error'`, SVG input 100 KB at most, SVG density set from the SVG's own size so the render is about 128 px, clamped 1 to 2400). Only `/icons/<hash of the OUTPUT>.png` is stored. ICO: the PNG entry goes through the same step. A file sharp cannot decode = "no icon", next source. `isPlainSvg` and `ICON_EXT` are gone. New `types/local-paths.ts`: ONE pair of patterns (`/icons/<hash>.png`, `/thumbs/<hash>.webp`) for `types/profile.ts`, `app/components/blocks/media.ts` and `content/unfurl-cache.ts` | `unfurl.spec.ts` > "S1: a remote SVG is never stored": `svg favicon "<name>": only PNG files land in the icons folder` for `prefixed-script`, `dtd-entity`, `entity-href`, `data-href-script`, `external-use`, `large-96kb`, `huge-viewbox`, `over-100kb`, `plain`; "a plain valid SVG becomes a PNG of 128 px at most, named after the OUTPUT bytes"; "icon bytes are never stored as they came"; "an SVG over 100 KB is not decoded at all"; "an icon sharp cannot decode is \"no icon\"". `links.spec.ts` "favicon and image must be local files..." (svg, jpg, gif, html paths refused). `security.spec.ts` "dist/icons holds no .svg file..." |
+| S1b | No second layer when a bad file lands in `public/` | Tracked `public/_headers` (Cloudflare Pages and Netlify): `/icons/*`, `/thumbs/*`, `/blocks/*`, `/site/*`, `/site-uploads/*` get `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` + `nosniff`; `/*` gets `nosniff` + `Referrer-Policy`. `netlify.toml` lost its `/*` block (one source per header), the cache headers stay. Dev: the same headers through `routeRules` in `nuxt.config.ts` (prerender still 4 routes), plus `server/middleware/asset-headers.ts` (dev only): for a MISSING file Nitro's dev error handler wrote its own CSP over the route rule, so a missing file in those folders gets a plain 404 with the same two headers | `security.spec.ts` > "S1b: response headers for the static host" (4 tests: tracked + in `dist/`, the rules, netlify.toml, nuxt.config). `security-dev.spec.ts` > "S1b: the dev server sends the asset headers too" (7 tests, one for a missing file with four `Accept` values) |
+| S1c | `content/site-assets.ts` wrote an uploaded SVG as it came to `public/site/icon.svg`; the upload route stored the raw SVG in `public/site-uploads/` | New `content/site-upload.ts` `storeSiteUpload()`: an SVG is drawn as a 512x512 PNG and ONLY the PNG is written (the route answers the `.png` path); a raster must decode with sharp as the format its extension names (a text file called `icon.png` = 415). `uploadArt()` never sets `svg`: `icon.svg` is the initials tile only. `site.favicon` no longer accepts `.svg` (`types/site.ts`) | `security.spec.ts` > "S1c: an uploaded SVG is never written to disk" (4 tests). `security-dev.spec.ts` > "S1c: the upload route never stores an SVG" (2 tests, the real route). `site.spec.ts` "uploads win..." now asserts no `icon.svg` |
+| S2 | No total deadline: 6 icon sources x 8 s, redirects and requests per sub-request only, `dns.lookup` without a timeout, a closed editor request kept running, a dead link cost every build again | One `RequestBudget` per `unfurl()`: `AbortSignal.timeout(20000)` joined with the 8 s hop signal (`AbortSignal.any`), 8 requests, 8 redirects in total (5 per request stays), `lookupInTime()` 3 s. `UnfurlOptions.signal`: the route aborts it when the response closes before it ended; the job answers `cancelled` and caches nothing. Negative cache: `failures` in `.tilebox/unfurl-cache.json` (reason + time, 10 minutes, 200 at most, `force` skips it, guard refusals that cost no network are not stored, a good read forgets the failure) | `unfurl.spec.ts` > "S2: one budget for the whole unfurl": "a slow website ends after 20 s in total, and the failure is remembered: the second call is instant" (real 20 s, 3 hops of 7 s), "a failure is remembered for 10 minutes, `force` asks again...", "redirects are counted over ALL requests of one unfurl: 8 in total", "one unfurl makes 8 requests at most", "a DNS lookup that never answers ends after 3 s", "the caller can stop the job..." |
+| S3 | `public/icons` and `public/thumbs` only grew and orphans shipped; the cache had no size limit; the editor unfurled every half-typed URL | `pruneLinkFiles()` (`content/unfurl-cache.ts`), last step of `scripts/fetch-links.ts`: removes files that no string of the current profile and no fresh cache entry names; keeps `.gitkeep`, `manifest.json`, dot files and the YouTube thumbnails of the video tiles; plain files directly inside the two folders only (a folder that is a symlink is skipped, symlinks and sub-folders inside are never followed or removed, real paths are compared). `MAX_CACHE_ENTRIES` 500, oldest `fetchedAt` first. `LinkEnrich.vue`: asks on paste and on blur (through `defineExpose`, `BlockForm.vue` reports both events); while typing only after 1200 ms AND for a whole http(s) URL with a dot in the host | `security.spec.ts` > "S3: unused fetched files are removed" (3 tests, temp dirs, symlinks) and "S3: the cache file has a size limit". `editor.spec.ts` "S3: a half-typed URL asks nothing; a whole URL asks after 1.2 s, a paste and a blur ask at once" |
+| S4 | The cache was trusted: `favicon: "/icons/evil.html"`, `image: "/thumbs/manifest.json"`, `imageAlt: {}` reached the public profile | `CacheEntrySchema` / `UnfurlDataSchema` (zod, strict) on every read, paths with the SAME `localIconPath` / `localThumbPath` as `types/profile.ts` (exported), `imageAlt` a string of 200 at most; a bad entry is dropped silently. `localFileOf()` uses the same patterns | `security.spec.ts` > "S4: the cache file is checked like any other input" (poisoned file with the three values of the review + svg path, long alt, unknown key; the result passes `ProfileSchema`) |
+| S5 | `[::127.0.0.1]` / `[::7f00:1]` counted as unicast | `isPublicAddress()` refuses IPv6 with 96 zero bits (`::/96`, so `::` too) and `::ffff:0:0/96` by its parts, on top of the ipaddr range check | `unfurl.spec.ts` address table (+13 forms) in "private, loopback..." and "an IP literal in the URL is refused before any connection" |
+| S6 | `/api/unfurl` took any content type (an HTML form on another site could start a fetch: the first, unfixed test run really fetched example.com); the other write routes had no Host / Origin check at all | ONE helper `assertEditorRequest(event, 'json' | 'multipart' | 'none')` in `server/utils/editor.ts`: Host localhost -> else 403, Origin same -> else 403, `Sec-Fetch-Site: cross-site | same-site` -> 403, content type -> else 415. Used by `unfurl.post`, `save.post`, `upload.post`, `avatar/gravatar.post`, `site/assets.post`, `site/upload.post`, and (extra) by the three GET routes, because `/api/profile` holds the hidden email and DNS rebinding could read it | `security-dev.spec.ts` > "S6: the dev write routes take only what the editor sends" (14 tests: 415 per JSON route, 415 per multipart route, 403 per route for cross-site / same-site / Origin / Host, "what the editor sends still works", the read routes) |
+| C1 | `networkReason` read one `cause` level | It walks the chain (8 levels, loop-safe): `bad certificate`, a guard reason such as `blocked address` / `too many redirects`, `timeout`, `offline or unknown host` | `unfurl.spec.ts` > "C1: the reason names the real cause" (2 tests) |
+| C2 | The YouTube thumbnail used raw `fetch`, `redirect: 'follow'`, whole body before the size check | `fetchPicture()` in the engine: the guarded request, 5 MB while reading, written again as JPEG. The `--url` help now says that it writes the cache and the files | `unfurl.spec.ts` > "C2: build-time pictures use the guarded request" (2 tests) |
+| C3 | Refresh sent `If-None-Match`, so a 304 kept the old data | No conditional headers with `force` | `unfurl.spec.ts` "the cache is fresh for 30 days..." (new assertions on the forced request) |
+| C4 | Fetched text kept control and bidi characters | `cleanText()` strips C0 / C1 and U+202A-202E, U+2066-2069 | `unfurl.spec.ts` "C4: cleanText drops control characters and bidi controls..." |
+| C5 | A failed favicon or social image left the files of an older build, so the head never fell back | `buildSiteAssets()` removes the favicon set or `og.png` of a kind that failed | `site.spec.ts` "C5: when a kind fails, its files of an older build are removed..." |
+| D1 | Docs | README "Link previews" (PNG only, no stored SVG, `_headers`, 20 s budget, pruning, the honest Google s2 line and how to avoid it), README "Site metadata" (SVG uploads become PNG), `docs/security.md`, `docs/review-tools.md` "Large or security-critical files", PLAN status line | none |
+
+### Contract changes (frozen files, so noted here)
+- `types/profile.ts`: `favicon` is `/icons/<a-z0-9>.png` only (was png, jpg, webp, gif, svg). `localIconPath` and `localThumbPath` are exported. WP10 was never merged into `main`, so no saved profile has another extension; one that does fails `check:profile` with the path message. Fix: "Refresh" the link, or remove the `favicon` key.
+- `types/site.ts`: `site.favicon` takes png, jpg, jpeg, webp (no svg). Upload the SVG again in the editor: it is stored as a PNG.
+- This supersedes `## WP10a` deviation 4 (the SVG regex check) and deviation 6 (`force` sent `If-None-Match`).
+
+### Deviations and why
+- The 8-request limit counts a request that fails its DNS lookup too. With four dead icon links and a manifest, the image step can run out of budget. Real sites give an icon on the first or second try.
+- A deadline that ends during the icon or image step still answers `ok: true` with what was read (and caches it, as a failed icon always did). Only a failed PAGE read is a negative result.
+- Raster uploads are stored as they came (after the decode check): re-encoding would cost quality for the social image, and the folder has the sandbox CSP.
+- `assertEditorRequest()` also guards the GET routes. The brief listed the write routes only.
+- The route-level abort (`res.once('close')`) has no automated test: through the route no slow target is reachable without the network. The engine half is tested ("the caller can stop the job...").
+- The editor resets the URL field when the typed text is not a valid URL yet (older behavior, seen while writing the S3 test). Not changed here.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Prerendered 4 routes
+$ ls dist                                       -> _headers, site/ (8 files), no `edit`
+$ find dist -name '*.svg' -path '*icons*'       -> nothing
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4405 E2E_DEV_PORT=3405 npx playwright test --project=static
+152 passed      (was 112: +40)
+$ E2E_STATIC_PORT=4405 E2E_DEV_PORT=3405 npx playwright test --project=dev
+45 passed       (was 21: +24)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ npm run dev -- --port 3406      GET / 200, /edit 200, /api/profile 200, no ERROR line
+$ curl -sI http://localhost:3406/icons/x.png
+content-security-policy: default-src 'none'; style-src 'unsafe-inline'; sandbox
+x-content-type-options: nosniff
+```
+
+### Real smoke (network, files removed afterwards)
+```
+$ npx tsx scripts/fetch-links.ts --url https://nuxt.com --force
+"favicon": "/icons/4adfe95e015260f9.png"      PNG 64x64 RGBA, 778 bytes (the site's icon.png is 1250 bytes: decoded and written again)
+$ npx tsx scripts/fetch-links.ts --url https://vite.dev --force
+"favicon": "/icons/66b9886f7b02200d.png"      PNG 128x123 RGBA, from the site's /logo.svg
+$ find public/icons -name '*.svg' | wc -l     -> 0
+```
+nuxt.com served only a PNG icon link on that day, so vite.dev (an SVG favicon) was read too.
+
+### Open
+- Safari and Firefox: not checked (headless Chromium only).
+- A host other than Cloudflare Pages or Netlify needs the `_headers` rules in its own format.

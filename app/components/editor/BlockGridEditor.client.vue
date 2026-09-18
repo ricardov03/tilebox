@@ -25,6 +25,7 @@ const emit = defineEmits<{
   requestDelete: [id: string]
   confirmDelete: [id: string]
   cancelDelete: []
+  toggleHidden: [id: string]
 }>()
 
 /** `null` until the dynamic import resolves, or when it fails. The static grid renders then. */
@@ -107,6 +108,7 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
       @request-delete="emit('requestDelete', $event)"
       @confirm-delete="emit('confirmDelete', $event)"
       @cancel-delete="emit('cancelDelete')"
+      @toggle-hidden="emit('toggleHidden', $event)"
     />
   </component>
   <EditorPreviewGrid
@@ -120,5 +122,6 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
     @request-delete="emit('requestDelete', $event)"
     @confirm-delete="emit('confirmDelete', $event)"
     @cancel-delete="emit('cancelDelete')"
+    @toggle-hidden="emit('toggleHidden', $event)"
   />
 </template>

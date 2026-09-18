@@ -11,7 +11,7 @@
 import { rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { ProfileSchema, type Profile } from '~~/types/profile'
-import { assertDev, checkIcons, iconsOf, PROFILE_WRITE_PATH, readProfileFile } from '../utils/editor'
+import { assertDev, assertEditorRequest, checkIcons, iconsOf, PROFILE_WRITE_PATH, readProfileFile } from '../utils/editor'
 
 function invalid(errors: string[]): never {
   throw createError({
@@ -37,6 +37,7 @@ async function writeAtomic(path: string, content: string): Promise<void> {
 
 export default defineEventHandler(async (event) => {
   assertDev()
+  assertEditorRequest(event, 'json')
   const body = await readBody<unknown>(event)
   const result = ProfileSchema.safeParse(body)
   if (!result.success) {

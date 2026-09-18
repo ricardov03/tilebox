@@ -4,7 +4,7 @@
  * with `line-md:` names first, at most 48.
  */
 import { z } from 'zod'
-import { assertDev } from '../../utils/editor'
+import { assertDev, assertEditorRequest } from '../../utils/editor'
 
 const MAX_QUERY = 64
 const LIMIT = 48
@@ -16,6 +16,7 @@ const IconifySearchSchema = z.object({
 
 export default defineEventHandler(async (event) => {
   assertDev()
+  assertEditorRequest(event, 'none')
   const q = String(getQuery(event).q ?? '').trim().slice(0, MAX_QUERY)
   if (!q) return { icons: [] as string[] }
 

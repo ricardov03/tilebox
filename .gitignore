@@ -12,6 +12,7 @@ dist
 playwright-report
 test-results
 content/profile.json.e2e-backup
+content/profile.json.e2e-site-backup
 .wrangler/
 
 # Personal data. Never committed. See content/README.md
@@ -23,6 +24,8 @@ public/icons/*
 !public/icons/.gitkeep
 public/thumbs/*
 !public/thumbs/.gitkeep
+public/site/
+public/site-uploads/
 .tilebox/
 .netlify/
 

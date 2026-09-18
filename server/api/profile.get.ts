@@ -4,10 +4,12 @@
  * issue when the file is not valid.
  */
 import { ProfileSchema } from '~~/types/profile'
-import { assertDev, profileReadPath, readProfileFile } from '../utils/editor'
+import { assertDev, assertEditorRequest, profileReadPath, readProfileFile } from '../utils/editor'
 
-export default defineEventHandler(async () => {
+export default defineEventHandler(async (event) => {
   assertDev()
+  // The file has your hidden email: a DNS-rebinding page (another `Host`) must not read it.
+  assertEditorRequest(event, 'none')
   const result = ProfileSchema.safeParse(await readProfileFile())
   if (!result.success) {
     const errors = result.error.issues.map(issue => `${issue.path.join('.') || 'root'}: ${issue.message}`)

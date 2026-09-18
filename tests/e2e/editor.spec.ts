@@ -32,7 +32,48 @@ test.afterAll(() => {
   }
 })
 
+/** What the mocked POST /api/unfurl saw. */
+interface UnfurlCall {
+  url: string
+  showImage: boolean
+  force: boolean
+}
+
+/**
+ * The link form calls POST /api/unfurl, which reads a real website. No test may do that:
+ * `openEditor` answers every call with a failure. A test that needs an answer calls
+ * `mockUnfurl` AFTER `openEditor` (the route added last wins).
+ */
+async function mockUnfurl(page: Page, answer: Record<string, unknown>): Promise<UnfurlCall[]> {
+  const calls: UnfurlCall[] = []
+  await page.route('**/api/unfurl', async (route) => {
+    calls.push(route.request().postDataJSON() as UnfurlCall)
+    await route.fulfill({ json: answer })
+  })
+  return calls
+}
+
+const FETCHED = {
+  ok: true,
+  cached: false,
+  url: 'https://unfurl.test/page',
+  finalUrl: 'https://unfurl.test/page',
+  title: 'Fetched title',
+  description: 'Fetched description',
+  siteName: 'Unfurl Test Site',
+  source: 'html',
+  fetchedAt: '2026-09-18T00:00:00.000Z',
+}
+
+/** Open a block's form from the list. The editor may come back from a reload with a form open: close it first. */
+async function selectFromList(page: Page, id: string): Promise<void> {
+  const back = page.getByRole('button', { name: 'All blocks' })
+  if (await back.isVisible()) await back.click()
+  await page.locator(`[data-select-block="${id}"]`).click()
+}
+
 async function openEditor(page: Page): Promise<void> {
+  await mockUnfurl(page, { ok: false, reason: 'mocked in tests' })
   await page.goto('/edit')
   await page.locator('li[data-id]').first().waitFor({ timeout: 60_000 })
 }
@@ -265,10 +306,18 @@ test('Delete on a selected tile opens the confirm, the tile button deletes, Undo
   await editButton.click()
   const field = page.locator('form input[type="text"], form input[type="url"]').first()
   await field.focus()
-  await page.keyboard.press('End')
+  // The caret is set by hand: on macOS the Home and End keys do not move it, and Backspace then eats a letter.
+  const caretTo = (edge: 'start' | 'end') => field.evaluate((el, where) => {
+    if (!(el instanceof HTMLInputElement)) return
+    const at = where === 'start' ? 0 : el.value.length
+    el.setSelectionRange(at, at)
+  }, edge)
+  const valueBefore = await field.inputValue()
+  await caretTo('end')
   await page.keyboard.press('Delete')
-  await page.keyboard.press('Home')
+  await caretTo('start')
   await page.keyboard.press('Backspace')
+  await expect(field).toHaveValue(valueBefore)
   await expect(page.locator('[data-delete-confirm]')).toHaveCount(0)
 
   // Focus on a button: Delete opens the confirm on the tile. Nothing is deleted yet.
@@ -333,4 +382,242 @@ test('deletes a block from its list row, and the save removes it from the file',
   expect(saved.layout.desktop).not.toContain(block.id)
   expect(saved.layout.mobile ?? []).not.toContain(block.id)
   expect(saved.blocks).toHaveLength(profile.blocks.length - 1)
+})
+
+test('S3: a half-typed URL asks nothing; a whole URL asks after 1.2 s, a paste and a blur ask at once', async ({ page }) => {
+  await openEditor(page)
+  const calls = await mockUnfurl(page, FETCHED)
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Link', exact: true }).click()
+  const url = page.locator('form input[id$="-url"]')
+  await expect(page.locator('form input[id$="-preview-enrich"]')).toBeChecked()
+
+  // Typing. No dot in the host yet: nothing is asked, however long the pause is.
+  await url.fill('https://unfurl')
+  await page.waitForTimeout(1600)
+  expect(calls).toHaveLength(0)
+  // The rest of the URL, key by key: every key starts the 1.2 s again, so no partial URL is asked.
+  await url.pressSequentially('.test/typed', { delay: 60 })
+  await page.waitForTimeout(700)
+  expect(calls).toHaveLength(0)
+  await expect.poll(() => calls.length, { timeout: 3000 }).toBe(1)
+  expect(calls[0]?.url).toBe('https://unfurl.test/typed')
+
+  // Blur: no wait.
+  await url.pressSequentially('/more', { delay: 20 })
+  const beforeBlur = Date.now()
+  await url.blur()
+  await expect.poll(() => calls.length, { timeout: 1000 }).toBe(2)
+  expect(Date.now() - beforeBlur).toBeLessThan(1000)
+  expect(calls[1]?.url).toBe('https://unfurl.test/typed/more')
+  // A second blur with the same URL asks nothing.
+  await url.focus()
+  await url.blur()
+  await page.waitForTimeout(300)
+  expect(calls).toHaveLength(2)
+
+  // Paste: no wait.
+  await url.focus()
+  const beforePaste = Date.now()
+  await url.evaluate((element) => {
+    const input = element as HTMLInputElement
+    input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true }))
+    input.value = 'https://unfurl.test/pasted'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect.poll(() => calls.length, { timeout: 1000 }).toBe(3)
+  expect(Date.now() - beforePaste).toBeLessThan(1000)
+  expect(calls[2]?.url).toBe('https://unfurl.test/pasted')
+})
+
+test('a pasted URL loads the link preview, fetched text fills empty fields only, the switches are saved', async ({ page }) => {
+  await openEditor(page)
+  const calls = await mockUnfurl(page, FETCHED)
+
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Link', exact: true }).click()
+  const form = page.locator('form')
+  const title = form.locator('input[id$="-title"]')
+  const description = form.locator('input[id$="-description"]')
+  const enrich = form.locator('input[id$="-preview-enrich"]')
+  const showImage = form.locator('input[id$="-preview-show-image"]')
+  const id = (await page.locator('li[data-id]').last().getAttribute('data-id')) ?? ''
+
+  // A new link starts with the preview on and the image off.
+  await expect(enrich).toBeChecked()
+  await expect(showImage).not.toBeChecked()
+  await expect(form.locator('[data-icon-auto]')).toHaveText('auto')
+
+  await form.locator('input[id$="-url"]').fill('https://unfurl.test/page')
+  const card = form.locator('[data-link-card]')
+  await expect(card).toContainText('Fetched title')
+  await expect(card).toContainText('Unfurl Test Site')
+  await expect(card).toContainText('Fetched description')
+  expect(calls).toEqual([{ url: 'https://unfurl.test/page', showImage: false, force: false }])
+
+  // The placeholder title and the empty description were filled. The tile shows them.
+  await expect(title).toHaveValue('Fetched title')
+  await expect(description).toHaveValue('Fetched description')
+  await expect(page.locator(`li[data-id="${id}"] a`)).toContainText('Fetched title')
+  await expect(form.getByRole('button', { name: 'Use fetched title' })).toHaveCount(0)
+
+  // Your own text wins. The fetched one comes back only on request.
+  await title.fill('My own title')
+  await form.getByRole('button', { name: 'Refresh' }).click()
+  await expect.poll(() => calls.length).toBe(2)
+  expect(calls[1]).toEqual({ url: 'https://unfurl.test/page', showImage: false, force: true })
+  await expect(title).toHaveValue('My own title')
+  await form.getByRole('button', { name: 'Use fetched title' }).click()
+  await expect(title).toHaveValue('Fetched title')
+
+  // The second switch asks again, now with the image.
+  await showImage.check()
+  await expect.poll(() => calls.length).toBe(3)
+  expect(calls[2]).toEqual({ url: 'https://unfurl.test/page', showImage: true, force: false })
+
+  await save(page)
+  const saved = readProfile().blocks.find(b => b.id === id)
+  expect(saved).toMatchObject({
+    type: 'link',
+    title: 'Fetched title',
+    description: 'Fetched description',
+    url: 'https://unfurl.test/page',
+    enrich: true,
+    showImage: true,
+    meta: { title: 'Fetched title', siteName: 'Unfurl Test Site', source: 'html', fetchedAt: FETCHED.fetchedAt },
+  })
+
+  // The switches are still on after a reload.
+  await openEditor(page)
+  await selectFromList(page, id)
+  await expect(page.locator('form input[id$="-preview-enrich"]')).toBeChecked()
+  await expect(page.locator('form input[id$="-preview-show-image"]')).toBeChecked()
+  await expect(page.locator('form [data-link-card]')).toContainText('Fetched title')
+})
+
+test('a failed fetch shows the reason, and turning the preview off keeps your text', async ({ page }) => {
+  const block = readProfile().blocks.find(b => b.type === 'link' && b.enrich)
+  if (!block || block.type !== 'link') throw new Error('the test before this one saves a link with the preview on')
+  await openEditor(page)
+  const calls = await mockUnfurl(page, { ok: false, reason: 'http 403' })
+  await selectFromList(page, block.id)
+  const form = page.locator('form')
+
+  await form.locator('input[id$="-url"]').fill('https://unfurl.test/blocked')
+  await expect(form.locator('[data-link-reason]')).toContainText('http 403')
+  expect(calls).toHaveLength(1)
+  await expect(form.locator('input[id$="-title"]')).toHaveValue(block.title)
+
+  await form.locator('input[id$="-preview-enrich"]').uncheck()
+  await expect(form.locator('[data-link-card]')).toHaveCount(0)
+  await expect(form.locator('[data-link-reason]')).toHaveCount(0)
+  await expect(form.locator('input[id$="-preview-show-image"]')).toBeDisabled()
+
+  await save(page)
+  const saved = readProfile().blocks.find(b => b.id === block.id)
+  expect(saved).toMatchObject({ title: block.title, url: 'https://unfurl.test/blocked' })
+  expect(saved?.type === 'link' ? saved.description : null).toBe(block.description)
+  expect(saved && 'enrich' in saved).toBe(false)
+  expect(saved && 'meta' in saved).toBe(false)
+  expect(saved && 'favicon' in saved).toBe(false)
+  expect(saved && 'image' in saved).toBe(false)
+})
+
+test('Hide dims the block, the save keeps it in the file and drops it from the page, Show brings it back', async ({ page }) => {
+  const block = readProfile().blocks.find(b => b.type === 'map' && !b.hidden)
+  if (!block || block.type !== 'map') throw new Error('the sample has a map block')
+  await openEditor(page)
+  const tile = page.locator(`li[data-id="${block.id}"]`)
+  const rowToggle = page.locator(`[data-hide-block="${block.id}"]`)
+
+  await expect(rowToggle).toHaveAttribute('aria-pressed', 'false')
+  await rowToggle.click()
+  await expect(rowToggle).toHaveAttribute('aria-pressed', 'true')
+  await expect(rowToggle).toHaveText('Show')
+  await expect(tile.locator('[data-hidden-badge]')).toHaveText('Hidden')
+  await expect(page.locator(`[data-hidden-row="${block.id}"]`)).toHaveCount(1)
+  await expect(page.getByText('Unsaved changes')).toBeVisible()
+
+  await save(page)
+  expect(readProfile().blocks.find(b => b.id === block.id)).toMatchObject({ hidden: true, label: block.label })
+  // The dev server rewrites the sanitized profile a moment after the save.
+  // The URL, not the label: the sample's `site.location` (WP10b, public JSON-LD) is the same city as the map label.
+  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).not.toContain(block.url)
+
+  // Back, this time with the control on the tile (next to Delete).
+  await openEditor(page)
+  await tile.hover()
+  await tile.locator(`[data-hide-tile="${block.id}"]`).click()
+  await expect(tile.locator('[data-hidden-badge]')).toHaveCount(0)
+  await save(page)
+  const shown = readProfile().blocks.find(b => b.id === block.id)
+  expect(shown && 'hidden' in shown).toBe(false)
+  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).toContain(block.url)
+})
+
+test('Duplicate puts a selected copy right after the original in both layouts', async ({ page }) => {
+  const before = readProfile()
+  const block = before.blocks.find(b => b.type === 'text')
+  if (!block || block.type !== 'text' || !block.title) throw new Error('the sample has a text block with a title')
+  await openEditor(page)
+
+  await page.locator(`[data-duplicate-block="${block.id}"]`).click()
+  // The copy is selected: its form is open, with " copy" on the title. The draft is dirty.
+  const form = page.locator('form')
+  await expect(form.locator('input[id$="-title"]')).toHaveValue(`${block.title} copy`)
+  await expect(page.getByText('Unsaved changes')).toBeVisible()
+  const desktop = await previewIds(page)
+  const copyId = desktop[desktop.indexOf(block.id) + 1] ?? ''
+  expect(before.blocks.some(b => b.id === copyId)).toBe(false)
+  await expect(page.locator(`li[data-id="${copyId}"] button[data-editor-control][aria-pressed="true"]`)).toHaveCount(1)
+
+  await page.getByRole('radio', { name: 'Mobile' }).click()
+  const mobile = await previewIds(page)
+  expect(mobile[mobile.indexOf(block.id) + 1]).toBe(copyId)
+  await page.getByRole('radio', { name: 'Desktop' }).click()
+
+  // The same action in the block form: a copy of the copy.
+  await form.locator('[data-form-duplicate]').click()
+  await expect(form.locator('input[id$="-title"]')).toHaveValue(`${block.title} copy copy`)
+  const after = await previewIds(page)
+  expect(after.indexOf(copyId)).toBe(after.indexOf(block.id) + 1)
+  const secondId = after[after.indexOf(copyId) + 1] ?? ''
+
+  await save(page)
+  const saved = readProfile()
+  expect(saved.blocks.find(b => b.id === copyId)).toMatchObject({ ...block, id: copyId, title: `${block.title} copy` })
+  for (const layout of [saved.layout.desktop, saved.layout.mobile ?? []]) {
+    const at = layout.indexOf(block.id)
+    expect(layout.slice(at, at + 3)).toEqual([block.id, copyId, secondId])
+  }
+  expect(saved.blocks).toHaveLength(before.blocks.length + 2)
+})
+
+test('the spotlight has one owner: a new one takes it from the old one', async ({ page }) => {
+  const links = readProfile().blocks.filter(b => b.type === 'link' && !b.hidden)
+  const [first, second] = links
+  if (!first || !second) throw new Error('the profile has two visible link blocks at this point')
+  await openEditor(page)
+  const form = page.locator('form')
+  const pick = async (id: string, value: string) => {
+    await selectFromList(page, id)
+    await form.locator('select[id$="-spotlight"]').selectOption(value)
+  }
+
+  await pick(first.id, 'wobble')
+  await expect(page.locator(`li[data-id="${first.id}"] [data-spotlight]`)).toHaveAttribute('data-spotlight', 'wobble')
+  await expect(form.locator('[data-spotlight-sample]')).toHaveClass(/spotlight-wobble/)
+  await expect(page.locator('li[data-id] [data-spotlight]')).toHaveCount(1)
+
+  await pick(second.id, 'buzz')
+  await expect(page.locator(`li[data-id="${second.id}"] [data-spotlight]`)).toHaveAttribute('data-spotlight', 'buzz')
+  await expect(page.locator(`li[data-id="${first.id}"] [data-spotlight]`)).toHaveCount(0)
+  await expect(page.locator('li[data-id] [data-spotlight]')).toHaveCount(1)
+
+  await save(page)
+  const spotlights = readProfile().blocks.flatMap(b => (b.type === 'link' && b.spotlight ? [[b.id, b.spotlight]] : []))
+  expect(spotlights).toEqual([[second.id, 'buzz']])
+
+  await pick(second.id, '')
+  await expect(page.locator('li[data-id] [data-spotlight]')).toHaveCount(0)
 })

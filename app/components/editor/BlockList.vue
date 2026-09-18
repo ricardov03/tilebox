@@ -3,6 +3,8 @@
   Up/down buttons reorder without a mouse. Click a row to edit it.
   Every row ends with a delete button. It swaps the row's right side for the
   inline confirm. After a cancel the focus goes back to that delete button.
+  Under the row: Hide / Show (a hidden block is dimmed and carries an eye-off
+  badge; the build leaves it out) and Duplicate (WP10a).
 -->
 <script setup lang="ts">
 import type { Block, BlockType } from '~~/types/profile'
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   requestDelete: [id: string]
   confirmDelete: [id: string]
   cancelDelete: []
+  toggleHidden: [id: string]
+  duplicate: [id: string]
 }>()
 
 const rows = useTemplateRef<HTMLOListElement>('rows')
@@ -63,6 +67,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 const rowClass = `flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 text-left ${FOCUS_RING}`
 const deleteClass = `flex size-11 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-ground hover:text-pop ${FOCUS_RING}`
+const actionClass = `flex min-h-9 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-muted hover:bg-ground hover:text-ink ${FOCUS_RING}`
 const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30 ${FOCUS_RING}`
 </script>
 
@@ -119,59 +124,108 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
       <li
         v-for="(block, index) in blocks"
         :key="block.id"
-        class="flex items-center gap-1"
+        :data-hidden-row="block.hidden ? block.id : undefined"
+        class="flex flex-col"
       >
-        <button
-          type="button"
-          :data-select-block="block.id"
-          :aria-pressed="block.id === selectedId"
-          :class="[rowClass, block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground']"
-          @click="emit('select', block.id)"
-        >
-          <span class="w-14 shrink-0 font-mono text-xs text-muted">{{ block.type }}</span>
-          <span class="min-w-0 flex-1 truncate text-sm text-ink">{{ blockSummary(block) }}</span>
-          <span class="shrink-0 font-mono text-xs text-muted">{{ block.type === 'section' ? 'row' : block.size }}</span>
-        </button>
-        <EditorDeleteConfirm
-          v-if="block.id === confirmingId"
-          :label="blockSummary(block)"
-          class="shrink-0"
-          @confirm="emit('confirmDelete', block.id)"
-          @cancel="cancelDelete(block.id)"
-        />
-        <template v-else>
+        <div class="flex items-center gap-1">
           <button
             type="button"
-            :disabled="index === 0"
-            :aria-label="`Move ${blockSummary(block)} up`"
-            :class="arrowClass"
-            @click="emit('move', block.id, -1)"
+            :data-select-block="block.id"
+            :aria-pressed="block.id === selectedId"
+            :class="[rowClass, block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground']"
+            @click="emit('select', block.id)"
           >
-            <span aria-hidden="true">↑</span>
-          </button>
-          <button
-            type="button"
-            :disabled="index === blocks.length - 1"
-            :aria-label="`Move ${blockSummary(block)} down`"
-            :class="arrowClass"
-            @click="emit('move', block.id, 1)"
-          >
-            <span aria-hidden="true">↓</span>
-          </button>
-          <button
-            type="button"
-            :data-delete-block="block.id"
-            :aria-label="`Delete ${blockSummary(block)}`"
-            :class="deleteClass"
-            @click="emit('requestDelete', block.id)"
-          >
+            <span
+              class="w-14 shrink-0 font-mono text-xs text-muted"
+              :class="block.hidden ? 'opacity-50' : ''"
+            >{{ block.type }}</span>
             <Icon
-              :name="UI_ICONS.trash"
-              class="size-5"
+              v-if="block.hidden"
+              :name="UI_ICONS.hidden"
+              class="size-4 shrink-0 text-muted"
               :aria-hidden="true"
             />
+            <span
+              class="min-w-0 flex-1 truncate text-sm text-ink"
+              :class="block.hidden ? 'opacity-50' : ''"
+            >{{ blockSummary(block) }}<span
+              v-if="block.hidden"
+              class="sr-only"
+            > (hidden)</span></span>
+            <span class="shrink-0 font-mono text-xs text-muted">{{ block.type === 'section' ? 'row' : block.size }}</span>
           </button>
-        </template>
+          <EditorDeleteConfirm
+            v-if="block.id === confirmingId"
+            :label="blockSummary(block)"
+            class="shrink-0"
+            @confirm="emit('confirmDelete', block.id)"
+            @cancel="cancelDelete(block.id)"
+          />
+          <template v-else>
+            <button
+              type="button"
+              :disabled="index === 0"
+              :aria-label="`Move ${blockSummary(block)} up`"
+              :class="arrowClass"
+              @click="emit('move', block.id, -1)"
+            >
+              <span aria-hidden="true">↑</span>
+            </button>
+            <button
+              type="button"
+              :disabled="index === blocks.length - 1"
+              :aria-label="`Move ${blockSummary(block)} down`"
+              :class="arrowClass"
+              @click="emit('move', block.id, 1)"
+            >
+              <span aria-hidden="true">↓</span>
+            </button>
+            <button
+              type="button"
+              :data-delete-block="block.id"
+              :aria-label="`Delete ${blockSummary(block)}`"
+              :class="deleteClass"
+              @click="emit('requestDelete', block.id)"
+            >
+              <Icon
+                :name="UI_ICONS.trash"
+                class="size-5"
+                :aria-hidden="true"
+              />
+            </button>
+          </template>
+        </div>
+        <div class="flex justify-end gap-1">
+          <button
+            type="button"
+            :data-hide-block="block.id"
+            :aria-pressed="block.hidden ?? false"
+            :aria-label="`${block.hidden ? 'Show' : 'Hide'} ${blockSummary(block)}`"
+            :class="actionClass"
+            @click="emit('toggleHidden', block.id)"
+          >
+            <Icon
+              :name="block.hidden ? UI_ICONS.shown : UI_ICONS.hidden"
+              class="size-4"
+              :aria-hidden="true"
+            />
+            {{ block.hidden ? 'Show' : 'Hide' }}
+          </button>
+          <button
+            type="button"
+            :data-duplicate-block="block.id"
+            :aria-label="`Duplicate ${blockSummary(block)}`"
+            :class="actionClass"
+            @click="emit('duplicate', block.id)"
+          >
+            <Icon
+              :name="UI_ICONS.duplicate"
+              class="size-4"
+              :aria-hidden="true"
+            />
+            Duplicate
+          </button>
+        </div>
       </li>
     </ol>
   </div>

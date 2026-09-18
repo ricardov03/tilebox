@@ -6,12 +6,33 @@ import { z } from 'zod'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
 import { SIZES } from '../app/utils/sizes'
+import { LOCAL_ICON_PATH, LOCAL_THUMB_PATH } from './local-paths'
+import { PublicSiteSchema, SiteSchema, toPublicSite, type PublicSiteExtras } from './site'
 
 const id = z.string().min(1)
 const url = z.url()
 const size = z.enum(SIZES)
 /** Full Iconify name like `line-md:github`. */
 const iconName = z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Icon must be a full Iconify name like line-md:github')
+
+/** Optional on every block (WP10a). `true` = the build drops the block: it is in no file of `dist/`. */
+const hidden = z.boolean().optional()
+/** Local files the unfurl engine wrote (content/unfurl.ts). Never a remote URL. Icons are PNG only (./local-paths.ts). */
+export const localIconPath = z.string().regex(LOCAL_ICON_PATH, 'favicon must be a local path like /icons/<hash>.png')
+export const localThumbPath = z.string().regex(LOCAL_THUMB_PATH, 'image must be a local path like /thumbs/<hash>.webp')
+
+export const SPOTLIGHTS = ['pop', 'wobble', 'buzz'] as const
+export type Spotlight = (typeof SPOTLIGHTS)[number]
+
+/** What the website said about itself. Kept for the editor ("Use fetched title"). Never shipped to the public page. */
+export const LinkMetaSchema = z.object({
+  title: z.string().optional(),
+  description: z.string().optional(),
+  siteName: z.string().optional(),
+  themeColor: z.string().optional(),
+  source: z.enum(['oembed', 'html', 'brand']),
+  fetchedAt: z.string().min(1),
+}).strict()
 
 export const ImageSourceSchema = z.object({
   provider: z.enum(['pexels', 'unsplash', 'r2']),
@@ -31,6 +52,17 @@ export const LinkBlockSchema = z.object({
   icon: iconName.optional(),
   accent: z.boolean().optional(),
   pop: z.boolean().optional(),
+  hidden,
+  /** Link preview (WP10a). Absent = false. `true`: icon and text may come from the website (fetched on your machine). */
+  enrich: z.boolean().optional(),
+  /** The second switch. Absent = false. `true`: the website's image shows on 2x1, 1x2 and 2x2 tiles. */
+  showImage: z.boolean().optional(),
+  favicon: localIconPath.optional(),
+  image: localThumbPath.optional(),
+  imageAlt: z.string().optional(),
+  meta: LinkMetaSchema.optional(),
+  /** A gentle attention animation. At most one block of the profile may have it. */
+  spotlight: z.enum(SPOTLIGHTS).optional(),
 }).strict()
 
 export const SocialBlockSchema = z.object({
@@ -40,6 +72,7 @@ export const SocialBlockSchema = z.object({
   network: z.enum(NETWORK_IDS),
   url,
   label: z.string().optional(),
+  hidden,
 }).strict()
 
 export const ImageBlockSchema = z.object({
@@ -50,6 +83,7 @@ export const ImageBlockSchema = z.object({
   alt: z.string().min(1),
   caption: z.string().optional(),
   source: ImageSourceSchema.nullable(),
+  hidden,
 }).strict()
 
 export const TextBlockSchema = z.object({
@@ -59,12 +93,14 @@ export const TextBlockSchema = z.object({
   title: z.string().optional(),
   body: z.string(),
   footnote: z.string().optional(),
+  hidden,
 }).strict()
 
 export const SectionBlockSchema = z.object({
   id,
   type: z.literal('section'),
   title: z.string().min(1),
+  hidden,
 }).strict()
 
 export const MapBlockSchema = z.object({
@@ -74,6 +110,7 @@ export const MapBlockSchema = z.object({
   label: z.string().min(1),
   sublabel: z.string().optional(),
   url,
+  hidden,
 }).strict()
 
 export const VideoBlockSchema = z.object({
@@ -83,6 +120,7 @@ export const VideoBlockSchema = z.object({
   url,
   title: z.string().optional(),
   thumbnail: z.string().optional(),
+  hidden,
 }).strict()
 
 export const BlockSchema = z.discriminatedUnion('type', [
@@ -128,6 +166,8 @@ export const ProfileSchema = z
     profile: ProfileInfoSchema,
     blocks: z.array(BlockSchema),
     layout: LayoutSchema,
+    /** Site metadata (WP10b, ./site.ts). Optional: a profile without it uses the defaults. */
+    site: SiteSchema.optional(),
   })
   .superRefine((data, ctx) => {
     const ids = new Set<string>()
@@ -153,6 +193,11 @@ export const ProfileSchema = z
     }
     checkLayout('desktop', data.layout.desktop)
     checkLayout('mobile', data.layout.mobile)
+
+    const spotlights = data.blocks.flatMap((block, index) => (block.type === 'link' && block.spotlight ? [index] : []))
+    spotlights.slice(1).forEach((index) => {
+      ctx.addIssue({ code: 'custom', path: ['blocks', index, 'spotlight'], message: 'Only one block may have a spotlight' })
+    })
 
     const desktop = new Set(data.layout.desktop)
     data.blocks.forEach((block, index) => {
@@ -180,6 +225,7 @@ export const PublicProfileSchema = z.object({
   profile: PublicProfileInfoSchema,
   blocks: z.array(BlockSchema),
   layout: LayoutSchema,
+  site: PublicSiteSchema.optional(),
 }).strict()
 
 export type PublicProfile = z.infer<typeof PublicProfileSchema>
@@ -195,6 +241,7 @@ export type SectionBlock = z.infer<typeof SectionBlockSchema>
 export type MapBlock = z.infer<typeof MapBlockSchema>
 export type VideoBlock = z.infer<typeof VideoBlockSchema>
 export type ImageSource = z.infer<typeof ImageSourceSchema>
+export type LinkMeta = z.infer<typeof LinkMetaSchema>
 
 export class ProfileValidationError extends Error {
   constructor(message: string) {
@@ -221,6 +268,8 @@ export function isPlaceholderEmail(email: string): boolean {
  * The sanitizer. Full profile in, public profile out.
  * - `email` is kept only when `showEmail` is true.
  * - `avatar`: `profile.avatar` when set, else `gravatarPath` (pass it only when the file exists), else no key.
+ * - `site` (WP10b) is public by nature: passed through without the upload paths,
+ *   plus the generated asset paths and the build date (`siteExtras`).
  * Pure: no file access. nuxt.config.ts, the editor preview and the tests call it.
  */
 export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): PublicProfileInfo {
@@ -233,11 +282,33 @@ export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): P
   }
 }
 
-export function toPublicProfile(profile: Profile, gravatarPath?: string): PublicProfile {
+/**
+ * One block for the public page. Editor-only link fields are dropped:
+ * `enrich` and `meta` always, `image` and `imageAlt` when `showImage` is off.
+ */
+export function toPublicBlock(block: Block): Block {
+  if (block.type !== 'link') return block
+  const { enrich: _enrich, meta: _meta, image, imageAlt, ...rest } = block
+  return block.showImage && image ? { ...rest, image, ...(imageAlt ? { imageAlt } : {}) } : rest
+}
+
+/**
+ * Hidden blocks (`hidden: true`) are removed here, with their ids in both
+ * layouts, so they are in no HTML, payload or JS file of the built site (WP10a).
+ * `site` (WP10b) goes through `toPublicSite()`. Everything that reads the public
+ * profile (the head, JSON-LD `sameAs`) therefore sees visible blocks only.
+ */
+export function toPublicProfile(profile: Profile, gravatarPath?: string, siteExtras?: PublicSiteExtras): PublicProfile {
+  const hiddenIds = new Set(profile.blocks.filter(block => block.hidden).map(block => block.id))
+  const visible = (ids: string[]) => ids.filter(blockId => !hiddenIds.has(blockId))
   return {
     profile: toPublicProfileInfo(profile.profile, gravatarPath),
-    blocks: profile.blocks,
-    layout: profile.layout,
+    blocks: profile.blocks.filter(block => !block.hidden).map(toPublicBlock),
+    layout: {
+      desktop: visible(profile.layout.desktop),
+      ...(profile.layout.mobile ? { mobile: visible(profile.layout.mobile) } : {}),
+    },
+    site: toPublicSite(profile.site, siteExtras),
   }
 }
 

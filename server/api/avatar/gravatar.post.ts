@@ -9,7 +9,7 @@
 import { z } from 'zod'
 import { fetchGravatar, gravatarFileExists } from '~~/content/gravatar'
 import { isPlaceholderEmail } from '~~/types/profile'
-import { assertDev, readProfileFile } from '../../utils/editor'
+import { assertDev, assertEditorRequest, readProfileFile } from '../../utils/editor'
 
 const BodySchema = z.object({ email: z.email() })
 const SavedEmailSchema = z.object({ profile: z.object({ email: z.string() }) })
@@ -29,6 +29,7 @@ async function isSavedEmail(email: string): Promise<boolean> {
 
 export default defineEventHandler(async (event) => {
   assertDev()
+  assertEditorRequest(event, 'json')
   const body = BodySchema.safeParse(await readBody<unknown>(event))
   if (!body.success) {
     throw createError({ statusCode: 400, statusMessage: 'Set a valid email first.' })

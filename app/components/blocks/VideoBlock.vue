@@ -11,7 +11,7 @@ import Tile from './Tile.vue'
 
 const props = defineProps<{ block: VideoBlock }>()
 
-/** `public/thumbs/manifest.json` (written by `scripts/fetch-favicons.ts`), or an empty map when the file is missing. */
+/** `public/thumbs/manifest.json` (written by `scripts/fetch-links.ts`), or an empty map when the file is missing. */
 const THUMBS: Readonly<Record<string, string>> = thumbManifest
 
 const title = computed(() => props.block.title ?? 'Video')
