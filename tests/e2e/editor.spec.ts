@@ -428,6 +428,17 @@ test('no axe violation in the block list and the form footer, delete confirm ope
   for (const theme of ['light', 'dark'] as const) {
     await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme)
 
+    // The list, with the confirm open in one row (the other rows show the trash button). The sample has a
+    // hidden block: its dimmed row must keep 4.5:1 too.
+    const back = page.getByRole('button', { name: 'All blocks' })
+    if (await back.isVisible()) await back.click()
+    await expect(page.locator('ol [data-hidden-row]').first()).toBeVisible()
+    await page.locator(`[data-delete-block="${block.id}"]`).click()
+    await expect(page.locator('ol [data-delete-confirm]')).toHaveCount(1)
+    const list = await new AxeBuilder({ page }).include('ol:has([data-select-block])').analyze()
+    expect(list.violations.map(v => `${theme} list: ${v.id} ${v.nodes.map(n => n.target.join(' ')).join(', ')}`)).toEqual([])
+    await page.keyboard.press('Escape')
+
     // The form footer: first with the trash button, then with the confirm.
     await selectFromList(page, block.id)
     const footerButton = await new AxeBuilder({ page }).include('[data-form-delete]').analyze()

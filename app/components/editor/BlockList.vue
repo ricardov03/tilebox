@@ -136,19 +136,17 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
             :class="[rowClass, block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground']"
             @click="emit('select', block.id)"
           >
-            <span
-              class="w-14 shrink-0 font-mono text-xs text-muted"
-              :class="block.hidden ? 'opacity-50' : ''"
-            >{{ block.type }}</span>
+            <span class="w-14 shrink-0 font-mono text-xs text-muted">{{ block.type }}</span>
             <Icon
               v-if="block.hidden"
               :name="UI_ICONS.hidden"
               class="size-4 shrink-0 text-muted"
               :aria-hidden="true"
             />
+            <!-- A hidden row is dimmed with the `muted` token, never with opacity: half-opaque text fails 4.5:1 (axe, WP16). -->
             <span
-              class="min-w-0 flex-1 truncate text-sm text-ink"
-              :class="block.hidden ? 'opacity-50' : ''"
+              class="min-w-0 flex-1 truncate text-sm"
+              :class="block.hidden ? 'text-muted' : 'text-ink'"
             >{{ blockSummary(block) }}<span
               v-if="block.hidden"
               class="sr-only"
