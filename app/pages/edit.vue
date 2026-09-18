@@ -102,6 +102,9 @@ onMounted(() => {
   media = window.matchMedia('(prefers-color-scheme: dark)')
   systemDark.value = media.matches
   media.addEventListener('change', onMedia)
+  // Outside `nuxt dev` the page shows one message. Nothing fetches, no
+  // save shortcut, no unload guard.
+  if (!isDev) return
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('beforeunload', onBeforeUnload)
   void editor.load()
@@ -109,6 +112,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   media?.removeEventListener('change', onMedia)
+  if (!isDev) return
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('beforeunload', onBeforeUnload)
 })
