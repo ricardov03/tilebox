@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: v1 done. WP6 release tooling in progress. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
+Status: v1 done. WP6 release tooling merged. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -396,6 +396,11 @@ Done when: Lighthouse mobile 94+ performance and 100 on the other three; the pag
 Owns: `scripts/release.mjs`, `.versionrc.json`, `commitlint.config.mjs`, `releases/`, `.github/workflows/release.yml`, `package.json` scripts (`release`, `deploy`, `deploy:preview`, `prepare`, `simple-git-hooks`).
 Design (decided by Ricardo): releases start locally with `npm run release`. No bot, no PAT, no API keys. The pipeline only validates a pushed tag and publishes the GitHub Release with `GITHUB_TOKEN`. Deploy to Cloudflare Pages is a manual local wrangler command. Commit messages are checked by a local git hook (commitlint), not in CI. The plain-words release summary is drafted by a local AI CLI (`claude`, fallback `grok`), shown in the terminal, and accepted, edited or replaced by the user.
 Done when: `git commit -m "bad message"` is rejected by the hook and `chore: x` passes. `node scripts/release.mjs --dry-run --no-ai --skip-tests` prints the next version and the release file preview and leaves the tree clean. `node scripts/release.mjs --dry-run --skip-tests --yes` shows a draft from `claude -p`. `.github/workflows/release.yml` is valid YAML and fails when the tag differs from `package.json`. `releases/v0.1.0.md` exists. README has "Commit messages", "Release" and "Deploy" sections. `npm run lint`, `npm run typecheck`, `npm run generate` green.
+
+### WP8. Publish command
+Owns: `scripts/publish.mjs`, `package.json` scripts (`publish`, `site:publish`, `deploy`, `deploy:preview`) and the `netlify-cli` dev dependency, README "Publish" section, `.tilebox/` and `.netlify/` lines in `.gitignore`.
+Design (decided by Ricardo): `npm run publish` publishes from the user's machine, like `netlify init` + `netlify deploy --prod`. First run: pick a provider (Cloudflare Pages or Netlify), log in with the browser, pick a site name, check the free subdomain is available (Cloudflare: DNS lookup of `<name>.pages.dev`; Netlify: HTTPS HEAD of `<name>.netlify.app`, 404 = free), create the project, build with `NUXT_PUBLIC_SITE_URL` = the live URL, upload, print the live URL, save the choices in `.tilebox/publish.json`. Later runs: build + upload + print. No API key or token in the repo, ever; the CLIs (`wrangler`, `netlify-cli`, both dev dependencies) keep the login in the home folder. The old `deploy` and `deploy:preview` scripts are thin aliases of `publish`. Node built-ins only, same style as `scripts/release.mjs`.
+Done when: `npm run publish -- --help` prints the usage. With fake `wrangler` and `netlify` shims first on `PATH`, `--provider cloudflare --name <free> --yes --no-build` and the Netlify equivalent create the project, write `.tilebox/publish.json` (provider, name, accountId or accountSlug, siteId, url, createdAt, lastPublishedAt) and print `Live: <url>`; the Netlify auto-suffix case stores the real name. A taken name (real DNS: `hono.pages.dev`; real HTTPS: `hono.netlify.app`) is refused before create. Invalid names, `--reset`, provider conflicts and a logged-out CLI fail with a clear message and exit 1 or 2. README "Publish" section, CLAUDE.md command, NOTES.md `## WP8`. `npm run lint` (covers `scripts/*.mjs`), `npm run typecheck`, `npm run generate` green. A real login and a real upload are verified by Ricardo.
 
 ## 9. Code review with Grok
 
