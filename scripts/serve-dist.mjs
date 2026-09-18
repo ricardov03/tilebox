@@ -27,11 +27,21 @@ const TYPES = {
   '.woff': 'font/woff',
 }
 
+const NOT_FOUND = { file: join(ROOT, '404.html'), status: 404 }
+
 /** First existing file among `path`, `path/index.html`, `path.html`, else `404.html`. */
 function fileFor(pathname) {
-  const clean = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '')
+  let decoded
+  try {
+    decoded = decodeURIComponent(pathname)
+  }
+  catch {
+    // Malformed percent-encoding (for example `/%E0%A4%A`) is a 404, not a crash.
+    return NOT_FOUND
+  }
+  const clean = normalize(decoded).replace(/^(\.\.[/\\])+/, '')
   const base = join(ROOT, clean)
-  if (!base.startsWith(ROOT)) return { file: join(ROOT, '404.html'), status: 404 }
+  if (!base.startsWith(ROOT)) return NOT_FOUND
   for (const candidate of [base, join(base, 'index.html'), `${base}.html`]) {
     try {
       if (statSync(candidate).isFile()) return { file: candidate, status: 200 }
@@ -40,7 +50,7 @@ function fileFor(pathname) {
       // try the next candidate
     }
   }
-  return { file: join(ROOT, '404.html'), status: 404 }
+  return NOT_FOUND
 }
 
 createServer((req, res) => {
