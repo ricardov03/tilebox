@@ -13,6 +13,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
+    "prepare": "simple-git-hooks",
     "lint": "eslint .",
     "typecheck": "nuxt typecheck",
     "presets": "tsx scripts/build-presets.ts",
@@ -37,13 +38,21 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@iconify-json/line-md": "^1.2.16",
     "@iconify-json/simple-icons": "^1.2.96",
     "@nuxt/eslint": "^1.17.0",
     "@playwright/test": "^1.63.0",
+    "commit-and-tag-version": "^12.7.3",
     "eslint": "^10.10.0",
+    "simple-git-hooks": "^2.14.0",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
-    "vue-tsc": "^3.3.11"
+    "vue-tsc": "^3.3.11",
+    "wrangler": "^4.134.0"
+  },
+  "simple-git-hooks": {
+    "commit-msg": "npx --no -- commitlint --edit $1"
   }
 }
