@@ -343,3 +343,95 @@ OK  favicons 0/1, thumbnails 1/1
 ```
 `dist/`: `icons/manifest.json`, `thumbs/dQw4w9WgXcQ.jpg`, `thumbs/manifest.json`.
 `dist/` checks: `dist/` = `200.html 404.html _fonts _nuxt _payload.json favicon.ico index.html robots.txt`. No `dist/edit`, no `dist/api`. `grep -rl "readMultipartFormData\|iconify.design/search\|node:fs" dist` = 0 files. The edit page and the Sortable library are separate lazy chunks that `index.html` does not preload. `npm run check:profile` = `OK content/profile.json (9 blocks, theme condomera/geist)`.
+
+## WP5
+
+Branch: `wp/5-integration`. Date: 2026-09-17. Node used: 22.23.1. Works directly on `main` (all WPs merged). No merge done.
+
+### Review findings, one by one
+
+WP1
+1. Applied. `useTheme.ts` reads localStorage and `matchMedia` during client setup, applies `data-theme` with `watch(..., { immediate: true })`, gives the `color-scheme` and the two `theme-color` metas keys (`theme-color-light`, `theme-color-dark`, or `theme-color`), removes the media listener with `onScopeDispose`, and `isMode` uses three literal checks. Exports `THEME_MODES` and a `nextMode` computed.
+2. Applied. The three icons were already in `dist/_nuxt/*.js` (`scan: true` found them). They are now also in `UI_ICONS` (`themeSystem`, `themeLight`, `themeDark`) so `check:icons` covers them. `title` dropped. Label is derived from `nextMode`. Token focus ring. Extra: the whole button is inside `<ClientOnly>` (fallback = same box, `aria-label="Theme"`, disabled) because the label now depends on the stored mode and Vue does not patch a mismatched attribute on hydration. `:aria-hidden="true"` (boolean) on `<Icon>` stops a dev warning.
+3. Applied. `focus:outline-none` removed from `<main>`. Footer is `text-sm`.
+4. Applied. `max-lg:[order:var(--order-m)]`. Hover lift removed from the `<li>` (Tile.vue lifts links only and zeroes it under `motion-reduce`). `mobileOrder` computed once. Extra: below `lg` the stagger delay uses the phone order (`--order-m`) so tiles enter in the order they are seen.
+5. Applied. `runtimeConfig.public.siteUrl` (`NUXT_PUBLIC_SITE_URL`, default `''`). With it: absolute `ogImage` and `ogUrl`. Without: `/og.png`. Added `ogImageWidth`/`ogImageHeight`. Documented in README (Cloudflare and Netlify) and `.env.example`.
+
+WP2
+6. Applied. `Tile.vue` links only for http(s) and `mailto:` (`isSafeHref` in `media.ts`), `rel="noopener noreferrer"`, `role="group"` on a labelled non-link tile.
+7. Applied. Credit link only when `isHttpUrl(authorUrl)`, `rel="noopener noreferrer"`.
+8. Applied. `(?:[/?#]|$)` after the 11-char id.
+9. Applied. Explicit `v-else-if` for video; unknown type renders nothing. Extra: `priority` prop (see Lighthouse).
+10. Applied. `Object.hasOwn`, `isIconPack` shape check, hint uses the icon's own prefix, `COMPONENT_ICONS` removed. Output: `OK  26 icons found in installed Iconify packs`.
+11. Applied. `Promise.all` over both job maps, 5 MB cap (content-length and body), `FAVICON_URL(host)` and `THUMB_URL(id)`.
+
+WP3
+12. Applied. Failed pack loads are not cached. `IconifyJsonSchema` (zod). `readProfileFile` wraps `JSON.parse` in a 500 `createError` with the path.
+13. Applied. Zod-parsed response, `line-md:` first then slice 48 (asks Iconify for 96), `q` capped at 64.
+14. Applied. Extension decides; MIME must be an image type, `image/jpg`, or generic/empty; `content-length` > 8 MB is refused before the body is read; only the part named `file` is used.
+15. Applied. `writeAtomic` (temp file in `content/` + `rename`, temp removed on failure). `profile.get` safeParses and answers 400 with `data.errors`.
+16. Applied. Local `list` ref synced from the prop; `onReorder` emits ids. `loadFailed` removed.
+17. Applied. Grip is `<button type="button" data-drag-handle aria-label="Drag to reorder">`, token focus ring, one position class. Selected tile: `outline-2 outline-offset-2 outline-accent` on the wrapper. Both controls show on hover, focus-within or selection (the tiles are the real ones now, so the controls hide otherwise).
+18. Applied. `BlockSchema.safeParse` before emit, inline `role="alert"` list, no emit when invalid. `formControl()` and `instanceof` narrowing. Empty image `src`/`alt` ignored. A new local file sets `source: null`.
+19. Applied. Add menu: `aria-haspopup="true"`, Escape closes and refocuses the button, outside click closes. `LayoutSwitch`: `radiogroup`/`radio`/`aria-checked`, roving tabindex, arrow keys.
+20. Applied. Request id drops stale responses, empty query clears at once, `instanceof`, `alt=""`, `encodeURIComponent`, names without `:` skipped, sr-only "(opens in a new tab)". ImagePicker: `instanceof`, `aria-busy`, `isFetchErrorLike` type guard.
+21. Applied, one part differently. Dev-only message is the whole page. Loading state until the first fetch resolves. Tablist: ArrowLeft/ArrowRight/Home/End. `FOCUS_RING` on inputs, selects, textareas, tabs, buttons, links. `formControl()` narrowing. Mode select removed from Profile; ThemePanel owns it as a radio group. Restart note names color preset, fonts and icons. Avatar `alt`: the editor no longer has its own avatar markup (the preview renders the real `ProfileHeader`), and there the avatar keeps `alt=""` because the `<h1>` with the name sits next to it; `alt="<name>"` would make screen readers read the name twice. axe passes.
+
+### Integration
+22. Done. `PreviewTile` renders `<BlockRenderer :block>` inside `<li data-id data-full>`. The real `<ProfileHeader :profile>` is the first `<li>` of both preview grids (`data-profile`, no `data-id`; Sortable's `draggable: 'li[data-id]'` ignores it). Both grids use the BentoGrid row model (`--row`, `--gap`, `auto-rows-auto`, tiles carry their height) so a section row is short. `edit.vue` has a capture-phase click handler: it selects the block of the clicked tile, opens the Profile tab on a profile click, and `preventDefault` + `stopPropagation` for any link or button that is not an editor control (`[data-editor-control]`), so links never navigate and the video never starts. Verified headless: link click stays on `/edit` and selects; drag with the grip reorders (`b2` after `b6`).
+23. Done. `public/blocks/sample.jpg`, 1200x1200 JPEG (35 KB), `#C7DEEC` with "sample" in `#0C4A6E`, drawn with a one-off AppKit script (not committed). `b4` and the new-image default point at it.
+24. Done in PLAN.md, CLAUDE.md. NOTES.md and README.md had no such wording. Note: commits already on `main` from WP0-WP4 carry a `Co-Authored-By` trailer; the WP5 commits do not. Rewriting `main` history is out of scope for this branch.
+25. Done. `public/thumbs/` and `package.json` script edits under WP2; `server/utils/*`, `useEditor.ts` and dependency edits under WP3. Status line updated.
+
+### Tests (26)
+- `@playwright/test` 1.63.0, `@axe-core/playwright`. Chromium via `npx playwright install chromium`.
+- `scripts/serve-dist.mjs`: 50-line `node:http` static server for `dist/` on :4173.
+- `playwright.config.ts`: projects `static` (public.spec, a11y.spec) and `dev` (editor.spec, `npm run dev -- --port 3111`, `reuseExistingServer: false`, 120 s). Only the servers of the selected projects start (argv `--project`). Tests and config are type-checked by the node tsconfig.
+- CI: job `e2e` (needs `build`) downloads the `dist` artifact, `npx playwright install --with-deps chromium`, `npm run test:e2e -- --project=static`.
+- Results (local, headless Chromium):
+  - `static`: 11 passed (7 public + 4 axe).
+  - `dev`: 4 passed (add/edit/mobile/keyboard-move/Cmd+S and file check, invalid URL, empty name -> 400, png upload into `public/blocks` and cleanup). `content/profile.json` restored, tree clean.
+- axe (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `best-practice`) at 1280 and 390, light and dark: **0 violations of any impact**. The test waits for the tile stagger to finish first; while tiles fade in axe reads blended colors and reports false contrast failures.
+
+### Lighthouse (27), mobile preset, Lighthouse 13.4.1, `--chrome-flags="--headless=new"`, static server on :4173
+| Run | Performance | Accessibility | Best practices | SEO |
+|---|---|---|---|---|
+| Before fixes | 93 | 100 | 100 | 100 |
+| After fixes (final) | **94** | **100** | **100** | **100** |
+
+Final metrics: FCP 2.2 s, LCP 2.8 s, TBT 10 ms, CLS 0, Speed Index 2.2 s.
+Fixes made: LCP element was the lazy-loaded image tile -> tiles at phone positions 1 to 3 pass `priority` and the image uses `loading="eager"` + `fetchpriority="high"`; `features.inlineStyles: true` removes the render-blocking CSS request (one page, one file); social and map tiles lost aria-labels that did not contain the visible text (label mismatch audit); stagger runs in visual order on phones.
+Why 94, not 95: the LCP breakdown shows `elementRenderDelay` 438 ms. That is the page-load stagger (PLAN.md 5.6: opacity + 8 px, 300 ms, 40 ms apart). With the stagger disabled the same build scores **95** (LCP 2.6 s, render delay 59 ms). Kept the design rule. Options for the architect: (a) accept 94, (b) animate only `translate` (no opacity) on the first-screen tiles, which would give 95. Remaining audits are not cheap: 29 KiB unused JS in the Vue runtime chunk, bf-cache "internal error" (not actionable), cache headers (the test server sets none; Cloudflare and `netlify.toml` do).
+
+### Real content check (28)
+`content/profile.json` keeps placeholder links (`example.com`, `linkedin.com/in/example`, `mailto:hello@example.com`). `npm run check:profile`: `OK content/profile.json (9 blocks, theme condomera/geist)`. All 9 blocks (7 types) render in `dist/index.html` and in the editor preview (screenshots checked at 1400 px, desktop and mobile layout). Still needed from Ricardo: real links, city, avatar, a photo.
+
+### Verification output (last lines)
+
+`npm run lint`
+```
+> tilebox@0.1.0 lint
+> eslint .
+(no output, exit 0)
+```
+
+`npm run typecheck`
+```
+> nuxt typecheck
+ℹ Nuxt Icon server bundle mode is set to local
+ℹ Nuxt Icon client bundle consist of 26 icons with 22.33KB(uncompressed) in size
+(exit 0)
+```
+
+`npm run generate`
+```
+[nitro]   ├─ /_payload.json (2ms)
+[nitro] ℹ Prerendered 4 routes in 1.046 seconds
+[nitro] ✔ Generated public .output/public
+[nitro] ✔ You can preview this build using npx serve .output/public
+│
+└  ✨ You can now deploy .output/public to any static hosting!
+(exit 0)
+```
+
+`dist/`: `200.html 404.html _fonts _nuxt _payload.json blocks favicon.ico icons index.html og.png robots.txt thumbs`. No `dist/edit`, no `dist/api`.

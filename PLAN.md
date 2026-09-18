@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: WP5 in progress (WP0-WP4 merged 2026-09-17).
+Status: v1 done, awaiting final review (WP5 on branch `wp/5-integration`, 2026-09-17).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)

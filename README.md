@@ -70,7 +70,7 @@ Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/coll
 Brand icons that `line-md` lacks come from `simple-icons`.
 Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
-Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`. Avatar goes in `public/`.
+Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/`.
 
 ## Scripts
 
@@ -84,9 +84,30 @@ Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`.
 | `npm run check:contrast` | WCAG contrast check for every preset |
 | `npm run check:profile` | Validates `content/profile.json` |
 | `npm run check:icons` | Fails on an unknown icon name |
-| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` |
+| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 
-`predev` runs presets and check:profile. `pregenerate` also runs check:contrast and check:icons.
+| `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
+
+`predev` runs presets and check:profile. `pregenerate` also runs check:contrast, check:icons and fetch:favicons.
+
+## Tests
+
+End-to-end tests run in headless Chromium with Playwright. Two projects:
+
+| Project | What it tests | Server | Runs in CI |
+|---|---|---|---|
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 serious or critical issues at 1280 and 390, light and dark) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+
+```sh
+npx playwright install chromium   # once
+npm run generate                  # the static project reads dist/
+npm run test:e2e                  # both projects
+npm run test:e2e -- --project=static
+npm run test:e2e -- --project=dev
+```
+
+Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` then `npx --yes lighthouse http://localhost:4173/ --chrome-flags="--headless=new"`. Scores are recorded in `NOTES.md` (WP5).
 
 ## Deploy
 
