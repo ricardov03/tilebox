@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import type { ProfileInfo } from '~~/types/profile'
+import type { PublicProfileInfo } from '~~/types/profile'
+import { UI_ICONS } from '~/utils/networks'
 
-const props = defineProps<{ profile: ProfileInfo }>()
+/** The public shape: `email` is set only when the owner chose to show it. */
+const props = defineProps<{ profile: PublicProfileInfo }>()
 
 /** "Ricardo Vargas" -> "RV". One letter for a single word. */
 const initials = computed(() =>
@@ -39,12 +41,41 @@ const initials = computed(() =>
       <p class="max-w-[34ch] text-base leading-[1.45] text-muted md:text-[19px]">
         {{ profile.bio }}
       </p>
+      <ul
+        v-if="profile.highlights.length"
+        class="flex list-none flex-col gap-1 p-0 md:gap-1.5"
+        aria-label="Highlights"
+      >
+        <li
+          v-for="(highlight, i) in profile.highlights"
+          :key="i"
+          class="flex items-baseline gap-2 text-sm leading-[1.4] text-ink md:gap-2.5 md:text-[15px]"
+        >
+          <span
+            class="size-1.5 shrink-0 -translate-y-0.5 rounded-full bg-accent"
+            aria-hidden="true"
+          />
+          <span>{{ highlight }}</span>
+        </li>
+      </ul>
+      <a
+        v-if="profile.email"
+        :href="`mailto:${profile.email}`"
+        class="flex items-center gap-2 self-start rounded-sm font-mono text-sm text-muted hover:text-hover"
+      >
+        <Icon
+          :name="UI_ICONS.email"
+          class="size-4 shrink-0"
+          :aria-hidden="true"
+        />
+        <span class="break-all">{{ profile.email }}</span>
+      </a>
       <p
         v-if="profile.status"
         class="flex items-center gap-2 text-sm font-medium md:mt-1.5 md:gap-2.5 md:text-[15px]"
       >
         <span
-          class="size-2.5 shrink-0 rounded-full bg-dot"
+          class="size-2.5 shrink-0 animate-pulse rounded-full bg-dot motion-reduce:animate-none"
           aria-hidden="true"
         />
         <span>{{ profile.status }}</span>
