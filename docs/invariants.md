@@ -18,7 +18,7 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 9. **Writes are atomic** (temp file in the same folder, then rename) and only to the personal files, never to the example.
 
 ## Bytes from somewhere else
-10. **Never store remote bytes as they came.** Icons are decoded by sharp and drawn again as PNG; images are written again as WebP or JPEG; the file name is the hash of the OUTPUT. Names and paths never come from remote data.
+10. **Never store remote bytes as they came.** Icons are decoded by sharp and drawn again as PNG; images are written again as WebP or JPEG; the Gravatar avatar is written again as WebP (`content/gravatar-fetch.ts`); the file name is the hash of the OUTPUT, or a fixed name. Names and paths never come from remote data.
 11. **Never store a remote or uploaded SVG.** An SVG is drawn as a PNG and only the PNG is kept. `public/_headers` sandboxes the asset folders as the second layer.
 12. **Every outbound request goes through the guarded request in `content/unfurl.ts`** (public unicast addresses only, pinned address, every redirect hop checked, byte limit while reading, one 20 s budget). No raw `fetch` of a URL that came from a profile, a web page or a cache file.
 13. **Files on disk are input too.** `.tilebox/unfurl-cache.json` and the profile are parsed with strict zod schemas on every read; local paths use the ONE pattern pair of `types/local-paths.ts`.

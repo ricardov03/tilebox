@@ -24,9 +24,9 @@ test.describe('personal data stays out of git', () => {
   })
 
   test('the downloaded Gravatar picture is never tracked', () => {
-    expect(tracked).not.toContain('public/avatar.gravatar.jpg')
+    expect(tracked).not.toContain('public/avatar.gravatar.webp')
     // `git check-ignore` exits 0 only when a .gitignore rule covers the path.
-    const rule = execFileSync('git', ['check-ignore', '-v', 'public/avatar.gravatar.jpg'], { cwd: ROOT, encoding: 'utf8' })
+    const rule = execFileSync('git', ['check-ignore', '-v', 'public/avatar.gravatar.webp'], { cwd: ROOT, encoding: 'utf8' })
     expect(rule).toContain('public/avatar.*')
   })
 

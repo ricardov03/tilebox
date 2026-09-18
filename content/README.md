@@ -14,7 +14,7 @@ It also upgrades an older file: it adds `email` (`you@example.com`), `showEmail`
 ## Your email
 
 `profile.email` is required. With `showEmail: false` (the default) the build removes it: the page imports a sanitized copy of your profile, so the email is in no file of `dist/`.
-It is still used on your machine, at build time, to download your Gravatar picture to `public/avatar.gravatar.jpg` (ignored by git). The published page never calls gravatar.com.
+It is still used on your machine, at build time, to download your Gravatar picture to `public/avatar.gravatar.webp` (ignored by git). The published page never calls gravatar.com.
 A `git pull`, a release or a fresh clone never touches it, because git does not know it exists.
 
 ## Site metadata

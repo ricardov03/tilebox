@@ -259,7 +259,7 @@ function setHighlights(value: string[]) {
   draft.value.profile.highlights = value
 }
 
-/** Is public/avatar.gravatar.jpg on disk? `version` busts the image cache after a new download. */
+/** Is public/avatar.gravatar.webp on disk? `version` busts the image cache after a new download. */
 const gravatar = ref({ exists: false, version: 0 })
 
 async function loadGravatarState() {
