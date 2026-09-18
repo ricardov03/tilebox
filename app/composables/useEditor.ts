@@ -7,6 +7,26 @@ import type { Block, BlockType, Profile, Theme } from '~~/types/profile'
 
 export type LayoutKey = 'desktop' | 'mobile'
 export type EditorTab = 'profile' | 'blocks' | 'theme'
+/** Where the inline delete confirm shows: a list row, a preview tile or the block form. */
+export type DeleteSource = 'list' | 'tile' | 'form'
+
+export interface DeleteTarget {
+  id: string
+  where: DeleteSource
+}
+
+/** How long "Block deleted. Undo" stays in the save bar. */
+export const UNDO_MS = 8000
+
+/** The last deleted block and where it was. Memory only: a reload or a save remount forgets it. */
+interface DeletedBlock {
+  block: Block
+  blockIndex: number
+  desktopIndex: number
+  /** `null` when there is no mobile layout, -1 when the id was not in it. */
+  mobileIndex: number | null
+  wasSelected: boolean
+}
 
 export const BLOCK_TYPES: readonly BlockType[] = ['link', 'social', 'image', 'text', 'section', 'map', 'video'] as const
 
@@ -163,7 +183,38 @@ export function useEditor() {
     })
   })
 
-  const dirty = computed(() => draft.value !== null && JSON.stringify(draft.value) !== saved.value)
+  /** The draft as text. Drives `dirty` and tells the undo notice when the draft changed. */
+  const serialized = computed(() => (draft.value === null ? '' : JSON.stringify(draft.value)))
+  const dirty = computed(() => draft.value !== null && serialized.value !== saved.value)
+
+  /** The block whose inline "Delete? Yes / No" is open, and where it shows. One at a time. */
+  const deleteTarget = ref<DeleteTarget | null>(null)
+  const lastDeleted = shallowRef<DeletedBlock | null>(null)
+  /** Text for the polite live region in the save bar: "Block deleted." or "Block restored." */
+  const notice = ref<string | null>(null)
+  /** The draft right after the delete or the undo. Any other draft means "the next change". */
+  let noticeDraft = ''
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  const canUndo = computed(() => lastDeleted.value !== null)
+
+  function clearNotice() {
+    if (noticeTimer) clearTimeout(noticeTimer)
+    noticeTimer = undefined
+    lastDeleted.value = null
+    notice.value = null
+  }
+
+  function showNotice(text: string) {
+    if (noticeTimer) clearTimeout(noticeTimer)
+    notice.value = text
+    noticeDraft = draft.value === null ? '' : JSON.stringify(draft.value)
+    noticeTimer = setTimeout(clearNotice, UNDO_MS)
+  }
+
+  watch(serialized, (value) => {
+    if (notice.value !== null && value !== noticeDraft) clearNotice()
+  })
+  onScopeDispose(clearNotice)
 
   /** Ids in the current layout. Mobile falls back to desktop (PLAN.md 6). */
   const currentIds = computed<string[]>(() => {
@@ -191,6 +242,8 @@ export function useEditor() {
     loadError.value = null
     try {
       const data = await $fetch<Profile>('/api/profile')
+      clearNotice()
+      deleteTarget.value = null
       draft.value = clone(data)
       saved.value = JSON.stringify(draft.value)
     }
@@ -243,14 +296,63 @@ export function useEditor() {
     draft.value.blocks[index] = next
   }
 
+  /** Open the inline confirm for a block. Nothing is deleted yet. */
+  function requestDelete(id: string, where: DeleteSource) {
+    if (!draft.value?.blocks.some(b => b.id === id)) return
+    deleteTarget.value = { id, where }
+  }
+
+  function cancelDelete() {
+    deleteTarget.value = null
+  }
+
+  /** The one delete action. Removes the block and its id from both layouts, and keeps what Undo needs. */
   function deleteBlock(id: string) {
     if (!draft.value) return
+    deleteTarget.value = null
+    const blockIndex = draft.value.blocks.findIndex(b => b.id === id)
+    const block = draft.value.blocks[blockIndex]
+    if (!block) return
+    const deleted: DeletedBlock = {
+      block: clone(block),
+      blockIndex,
+      desktopIndex: draft.value.layout.desktop.indexOf(id),
+      mobileIndex: draft.value.layout.mobile ? draft.value.layout.mobile.indexOf(id) : null,
+      wasSelected: selectedId.value === id,
+    }
     draft.value.blocks = draft.value.blocks.filter(b => b.id !== id)
     draft.value.layout.desktop = draft.value.layout.desktop.filter(x => x !== id)
     if (draft.value.layout.mobile) {
       draft.value.layout.mobile = draft.value.layout.mobile.filter(x => x !== id)
     }
     if (selectedId.value === id) selectedId.value = null
+    lastDeleted.value = deleted
+    showNotice('Block deleted.')
+  }
+
+  /** Put the last deleted block back at its old index in `blocks` and in both layouts. Returns its id. */
+  function undoDelete(): string | null {
+    const deleted = lastDeleted.value
+    if (!draft.value || !deleted) return null
+    const { block, blockIndex, desktopIndex, mobileIndex, wasSelected } = deleted
+    if (draft.value.blocks.some(b => b.id === block.id)) {
+      clearNotice()
+      return null
+    }
+    const at = (index: number, length: number) => (index < 0 ? length : Math.min(index, length))
+    draft.value.blocks.splice(at(blockIndex, draft.value.blocks.length), 0, block)
+    if (desktopIndex !== -1) {
+      const desktop = draft.value.layout.desktop
+      desktop.splice(at(desktopIndex, desktop.length), 0, block.id)
+    }
+    const mobile = draft.value.layout.mobile
+    if (mobile && mobileIndex !== null && mobileIndex !== -1) {
+      mobile.splice(at(mobileIndex, mobile.length), 0, block.id)
+    }
+    if (wasSelected) selectedId.value = block.id
+    lastDeleted.value = null
+    showNotice('Block restored.')
+    return block.id
   }
 
   /** Move a block one step in the current layout. `delta` is -1 or 1. */
@@ -289,12 +391,18 @@ export function useEditor() {
     currentIds,
     orderedBlocks,
     selectedBlock,
+    deleteTarget,
+    notice,
+    canUndo,
     load,
     save,
     setOrder,
     addBlock,
     updateBlock,
+    requestDelete,
+    cancelDelete,
     deleteBlock,
+    undoDelete,
     moveBlock,
     setTheme,
     select,

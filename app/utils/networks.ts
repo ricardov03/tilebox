@@ -62,6 +62,8 @@ export const UI_ICONS = {
   email: 'line-md:email',
   /** Editor: the Edit control on a preview tile. */
   edit: 'line-md:edit',
+  /** Editor: the delete control on a list row and on a preview tile. */
+  trash: 'line-md:trash',
   /** ThemeToggle: system, light, dark. */
   themeSystem: 'line-md:monitor',
   themeLight: 'line-md:sunny',
