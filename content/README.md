@@ -25,11 +25,23 @@ From `.gitignore`, block "Personal data":
 content/profile.json
 public/avatar.*
 public/blocks/*        (except public/blocks/sample.jpg)
-public/icons/*         (favicons fetched at build)
-public/thumbs/*        (YouTube thumbnails fetched at build)
-.tilebox/
+public/icons/*         (website icons of your link tiles)
+public/thumbs/*        (website images of your link tiles, YouTube thumbnails)
+.tilebox/              (publish state, link preview cache)
 .netlify/
 ```
+
+## Files fetched for your links
+
+Link previews (README, "Link previews") save what a website says about itself as local files: `public/icons/<hash>.<ext>`, `public/thumbs/<hash>.webp` and the cache `.tilebox/unfurl-cache.json`.
+They are personal: they show which sites you link to. So they are ignored by git, like your profile.
+They are fetched by your machine only, in the editor or at build time. A visitor of your page never fetches anything from another host.
+Safe to delete: `npm run generate` fetches them again for every link with `"enrich": true`.
+Moving to another machine: copy `content/profile.json`. The files come back with the next build.
+
+## Hidden blocks
+
+A block with `"hidden": true` stays in `content/profile.json` and in the editor. The build removes it, with its id in both layouts, before the page sees the profile. So its text is in no file of `dist/`. `tests/e2e/privacy.spec.ts` checks that.
 
 ## Back it up
 

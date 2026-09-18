@@ -13,6 +13,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Quick start](#quick-start)
 - [Your personal data](#your-personal-data)
 - [Editing by hand](#editing-by-hand)
+- [Link previews](#link-previews)
 - [Scripts](#scripts)
 - [Tests](#tests)
 - [CI](#ci)
@@ -33,6 +34,10 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Seven tile types: link, social, image, text, section, map, video.
 - Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
+- Smart links: paste a URL and the tile finds its brand icon (about 60 sites, no network). With link previews on, your machine reads the title, the description, the icon and, only if you switch it on, the image of the website. Everything is saved as local files. Visitors never call another host.
+- Featured look: a 2x1, 1x2 or 2x2 link tile can show the website's image next to its text.
+- Hide a block without deleting it: a hidden block stays in the editor and is in no file of the built site.
+- Duplicate a block with one click. Spotlight: one tile can ask for attention with a gentle move every 6 seconds (off with reduced motion).
 - Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
 - Remove a block from the list, from the tile, or with the Delete key. Every delete asks first, and Undo stays for 8 seconds.
 - Static output. No backend, no database, no runtime network calls on the public page.
@@ -76,9 +81,9 @@ Ignored by git (`.gitignore`, block "Personal data"):
 content/profile.json
 public/avatar.*
 public/blocks/*          except public/blocks/sample.jpg
-public/icons/*           favicons fetched at build
-public/thumbs/*          YouTube thumbnails fetched at build
-.tilebox/
+public/icons/*           website icons of your link tiles (link previews)
+public/thumbs/*          website images of your link tiles, YouTube thumbnails
+.tilebox/                publish state, link preview cache
 .netlify/
 ```
 
@@ -140,10 +145,11 @@ An older `profile.json` without `email`, `showEmail` and `highlights` is upgrade
 
 Rules: every block `id` is unique. `layout.desktop` lists every block id. `layout.mobile` is optional.
 `size` is one of `1x1`, `2x1`, `1x2`, `2x2`. Section blocks have no `size`.
+Every block type takes `"hidden": true`: the block stays in your file and in the editor, and the build leaves it out (no HTML, no payload, no JS).
 
 | Type | Required fields | Optional fields |
 |---|---|---|
-| `link` | `title`, `url` | `description`, `icon`, `accent`, `pop` |
+| `link` | `title`, `url` | `description`, `icon`, `accent`, `pop`, `spotlight`, `enrich`, `showImage`, `favicon`, `image`, `imageAlt`, `meta` |
 | `social` | `network`, `url` | `label` |
 | `image` | `src`, `alt`, `source` (or `null`) | `caption` |
 | `text` | `body` | `title`, `footnote` |
@@ -151,12 +157,60 @@ Rules: every block `id` is unique. `layout.desktop` lists every block id. `layou
 | `map` | `label`, `url` | `sublabel` |
 | `video` | `url` | `title`, `thumbnail` |
 
+Link fields (all optional, an old file stays valid):
+
+| Field | What it is |
+|---|---|
+| `icon` | Your own icon. Without it the tile picks one: the brand icon from the URL, else `favicon`, else `line-md:link`. `mailto:` and `tel:` links get an email and a phone icon |
+| `spotlight` | `pop`, `wobble` or `buzz`. A gentle move every 6 seconds. Only ONE block of the profile may have it. Off for visitors with reduced motion |
+| `enrich` | `true` = link previews on for this link (see [Link previews](#link-previews)). Missing = off. The editor sets it on new links |
+| `showImage` | `true` = show the website's image on a 2x1, 1x2 or 2x2 tile. Missing = off. A 1x1 tile never shows it |
+| `favicon` | A local file, `/icons/<hash>.png` (also jpg, webp, gif, svg). Written by the editor. A remote URL is refused |
+| `image`, `imageAlt` | A local file, `/thumbs/<hash>.webp`, and its alt text. Written by the editor |
+| `meta` | What the website said: `title`, `description`, `siteName`, `themeColor`, `source` (`oembed`, `html` or `brand`), `fetchedAt`. For the editor only. Never shipped |
+
+By hand, `"enrich": true` (and `"showImage": true`) is enough: `npm run generate` fetches the files and the build takes their paths from the cache. `title` stays yours.
+
 Presets: colors `condomera`, `lunchbox`, `night`. Fonts `geist`, `lunchbox`, `night`.
 Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/collection/line-md.
-Brand icons that `line-md` lacks come from `simple-icons`.
+Brand icons that `line-md` lacks come from `simple-icons`. Icons that simple-icons marks as hidden (LinkedIn, Twitter, Amazon, Slack: removed brands) fail `npm run check:icons`.
 Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
 Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/` as `avatar.<ext>`. Both are ignored by git (see "Your personal data").
+
+## Link previews
+
+A link tile can read its icon, title, description and image from the website it points to. It is off for old links and on for new ones. You turn it on or off per link.
+
+**Who fetches, and when.** Only your machine. Never a visitor.
+
+| When | What runs | What it does |
+|---|---|---|
+| You paste a URL in the editor (`/edit`) | The dev-only route `POST /api/unfurl` | Reads the page once, saves the files, fills the form |
+| `npm run generate` (and `npm run publish`) | `npm run fetch:links`, part of `pregenerate` | Only for links with `enrich: true` whose local files are missing. Never fails the build |
+| A visitor opens your page | Nothing | The page is static. It loads local files only. `tests/e2e/public.spec.ts` fails on any request to another host |
+
+**What is fetched.**
+
+1. The brand icon needs no network. `app/utils/brand-icons.ts` maps about 60 hosts (github.com, x.com, youtu.be, t.me, wa.me...) to an Iconify icon. It works with link previews off too.
+2. For some sites a keyless oEmbed endpoint answers with the title and a thumbnail: YouTube, Vimeo, Spotify, SoundCloud, TikTok, X posts, Bluesky posts, Reddit posts, Flickr, Mixcloud, Apple Music, Giphy, Pinterest.
+3. For every other site: the first 512 KB of the page, or less when `</head>` comes first. From the head: `og:title`, `twitter:title`, `<title>`, `og:description`, `<meta name="description">`, `og:site_name`, `og:image`, `twitter:image`, `theme-color`, the icon links and the web manifest.
+4. The icon of the site, when the tile has no brand icon: SVG icon, apple-touch-icon, PNG icon, manifest icon, `/favicon.ico` (its largest PNG entry), and as the last try Google's favicon service (`https://www.google.com/s2/favicons`).
+5. The image, **only** when "Show the website's image" is on: at most 5 MB, PNG, JPEG, WebP, GIF or AVIF by its real bytes, at least 200x200. It is resized to 1200 px wide and saved as WebP, which removes EXIF data. The image belongs to that website. You decide to show it.
+
+**The user agent.** Every request says who it is: `tilebox-unfurl/<version> (+https://github.com/ricardov03/tilebox)`. It never pretends to be a browser or another company's bot. A site that blocks unknown clients gives no data, and that is fine.
+
+**Where the files land.** `public/icons/<hash>.<ext>`, `public/thumbs/<hash>.webp` and the cache `.tilebox/unfurl-cache.json`. All three are ignored by git. The cache is fresh for 30 days. After that the engine asks with `If-None-Match` / `If-Modified-Since`, and a `304` keeps the data. "Refresh" in the editor asks again at once.
+
+**Safety (SSRF).** The engine (`content/unfurl.ts`) takes `http` and `https` on ports 80 and 443 only. It resolves the host first and refuses every address that is not public: loopback, private ranges, link-local (cloud metadata), CGNAT, unique-local, IPv4-mapped. It connects to the address it checked, so a second DNS answer cannot redirect the connection. It follows at most 5 redirects and checks every hop. 8 seconds per request. The route answers only on `localhost` and refuses another `Origin`.
+
+**Your text wins.** The fetched title and description fill the fields only when they are empty. When they differ from yours, the form shows "Use fetched title" and "Use fetched description". The fetched copy (`meta`) stays in your `profile.json` for the editor and is never shipped to the page.
+
+**Turn it off.** Per link: switch off "Load info from the website" in the link form, or remove `"enrich": true` by hand. Your typed text stays. `meta`, `favicon` and `image` are cleared. The files stay on disk and are not used. A link with previews off makes no request, ever.
+
+**Sites that give no data.** X profiles, Medium, and sometimes LinkedIn block unknown clients or need a login. The tile still gets its brand icon, and you type the title yourself. The editor shows the reason (`http 403`, `timeout`, `not html`, `blocked address`...).
+
+Debug one link: `npm run fetch:links -- --url https://nuxt.com --image` prints the answer as JSON.
 
 ## Scripts
 
@@ -170,9 +224,10 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run check:contrast` | WCAG contrast check for every preset |
 | `npm run ensure:profile` | Creates `content/profile.json` from the example when it is missing |
 | `npm run check:profile` | Validates the profile and prints which file is used (personal or example) |
-| `npm run check:icons` | Fails on an unknown icon name |
+| `npm run check:icons` | Fails on an unknown or hidden icon name: your profile, the social map, the UI icons and the brand map |
 | `npm run fetch:avatar` | Downloads your Gravatar picture (from `profile.email`) to `public/avatar.gravatar.jpg`. Skipped when `profile.avatar` is set or the email is a placeholder. Never fails the build |
-| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
+| `npm run fetch:links` | Link previews for links with `enrich: true` whose files are missing (`public/icons/`, `public/thumbs/`), and YouTube thumbnails for video tiles. Never fails the build. `-- --url <link> [--image] [--force]` prints one answer as JSON |
+| `npm run fetch:favicons` | Old name. Alias of `npm run fetch:links` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag. Then offers to push and make the GitHub Release (see Release) |
 | `npm run release:publish -- vX.Y.Z` | Push and make the GitHub Release for a tag that exists. No version bump (see Repair a release) |
@@ -180,7 +235,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run deploy` | Alias of `npm run publish -- --provider cloudflare` |
 | `npm run deploy:preview` | Alias of `npm run publish -- --provider cloudflare --preview` |
 
-`predev` runs ensure:profile, presets, check:profile and fetch:avatar. `pregenerate` runs presets, check:profile, fetch:avatar, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
+`predev` runs ensure:profile, presets, check:profile and fetch:avatar. `pregenerate` runs presets, check:profile, fetch:avatar, check:contrast, check:icons and fetch:links. It never creates `profile.json`: a build without it is the sample site.
 
 ## Tests
 
@@ -188,8 +243,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -440,6 +495,8 @@ content/
   profile.json           yours. Ignored by git
   resolve.ts             picks profile.json, else the example. Used by every entry point
   gravatar.ts            the Gravatar download, shared by fetch-avatar.ts and the editor route
+  unfurl.ts              the link preview engine (SSRF-safe fetch, head parser, icons, images), shared by fetch-links.ts and the editor route
+  unfurl-cache.ts        its paths, its cache file and the local files a build may use. Node built-ins only
   migrate.ts             adds the new profile keys to an older profile.json
   README.md              the personal data rules
 app/
@@ -449,18 +506,18 @@ app/
   components/blocks/     the 7 tile types, Tile, BlockRenderer
   components/editor/     forms, pickers, theme panel, drag grid
   composables/           useProfile, useTheme, useEditor
-  utils/                 presets, networks, sizes
+  utils/                 presets, networks, sizes, brand-icons (host -> icon)
   assets/css/            main.css, presets.css (generated)
-modules/public-profile.ts  writes the sanitized `#profile` copy the page imports (no hidden email)
-server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar
+modules/public-profile.ts  writes the sanitized `#profile` copy the page imports (no hidden email, no hidden block)
+server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar, unfurl
 types/profile.ts         the zod schema, the types, the public shape and the sanitizer
 scripts/
   release.mjs            npm run release
   publish.mjs            npm run publish
-  build-presets.ts  check-contrast.ts  check-icons.ts  fetch-favicons.ts  fetch-avatar.ts
+  build-presets.ts  check-contrast.ts  check-icons.ts  fetch-links.ts  fetch-avatar.ts
   validate-profile.ts  ensure-profile.ts  serve-dist.mjs
 releases/                one notes file per version, used as the GitHub Release body
-tests/e2e/               public, a11y, repo, privacy, editor specs
+tests/e2e/               public, a11y, repo, privacy, gravatar, links, unfurl, editor specs
 public/                  og.png, blocks/sample.jpg. Your images land here and are ignored
 design/canvas/           the design boards (light and dark)
 docs/review-tools.md     notes on the two code review tools used on this project
@@ -478,7 +535,12 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | `git commit` is rejected with a commitlint error | Use `type(scope): subject`, lower case, max 72 characters. See [Commit messages](#commit-messages) |
 | The hook does not run | `npx simple-git-hooks` |
 | `npm run generate` says `(example)` but you expected your profile | `content/profile.json` is missing. Run `npm run dev` once or `npm run ensure:profile`, then edit |
-| `npm run check:icons` fails | The icon name is not in an installed pack. Pick one at https://icones.js.org or install `@iconify-json/<prefix>` |
+| `npm run check:icons` fails | The icon name is not in an installed pack, or the pack marks it hidden. Pick one at https://icones.js.org or install `@iconify-json/<prefix>` |
+| A link tile shows the plain link icon | The host is not in `app/utils/brand-icons.ts` and the link has no fetched icon. Turn on "Load info from the website", or pick an icon |
+| The link preview says `http 403`, `timeout` or `not html` | The website refuses unknown clients or is not a web page (X profiles, Medium, sometimes LinkedIn). Type the title yourself. The brand icon still works |
+| The link preview says `blocked address` or `blocked port` | The URL points at your own network (localhost, 192.168.x.x, a port other than 80 and 443). The engine never reads those |
+| The website's image does not show | "Show the website's image" is off, the tile is 1x1, or the image was smaller than 200x200. Click Refresh in the link form |
+| A new brand icon shows only after a restart | It should not: `nuxt dev` bundles the whole brand map. For your own `icon` names the old rule stays: restart `npm run dev` |
 | `npm run publish` says the name is taken | Pick another name. `<name>.pages.dev` and `<name>.netlify.app` are shared by everyone |
 | `npm run publish` stops with a broken state message | Fix `.tilebox/publish.json` or run `npm run publish -- --reset` |
 | `npm run release` says `pull or push first` | `git pull` or `git push` so `main` equals `origin/main` |
@@ -503,6 +565,7 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 - Left-rail layout preset.
 - Import a Bento.me export zip.
 - Open Graph image built from the profile at generate time.
+- A second wave of link page ideas, all static: scheduled tiles, a vCard download, a QR code, a share / copy button, UTM tags added at build, a dead-link check (`PLAN.md` 13.5).
 
 Full plan and decisions: `PLAN.md`.
 
