@@ -4,6 +4,9 @@
   favicon file, `line-md:link` (`resolveLinkIcon` in ./media.ts).
   Plain tile: top row icon + domain + arrow, bottom title + description.
   No `title` (WP17: every text is optional) = the host of the URL is the title.
+  A MAIL tile (the build turned a `mailto:` url into a token): the whole tile is a
+  `ProtectedEmail` control, and the small line shows the human form of the address
+  ("hello at example dot com"), never the address itself.
   Featured look (`linkImageLayout`): the website's image, a local file, fills the
   top (2x2, 1x2) or the right third (2x1). Text and image never overlap, so the
   text stays on token colors. 1x1 never shows the image.
@@ -11,6 +14,7 @@
 -->
 <script setup lang="ts">
 import type { LinkBlock } from '~~/types/profile'
+import { humanEmail } from '~/utils/mail-shield'
 import { UI_ICONS } from '~/utils/networks'
 import { sizeToSpan } from '~/utils/sizes'
 import { domainLabel, linkImageLayout, resolveLinkIcon, type TileVariant } from './media'
@@ -28,7 +32,7 @@ const variant = computed<TileVariant>(() => {
   return 'tile'
 })
 
-const domain = computed(() => domainLabel(props.block.url))
+const domain = computed(() => (props.block.mail ? humanEmail(props.block.mail) : domainLabel(props.block.url)))
 const icon = computed(() => resolveLinkIcon(props.block))
 const wide = computed(() => sizeToSpan(props.block.size).cols === 2)
 const imageLayout = computed(() => linkImageLayout(props.block))
@@ -55,6 +59,7 @@ const spotlightClass = computed(() =>
 <template>
   <Tile
     :href="block.url"
+    :mail="block.mail"
     :variant="variant"
     :padded="imageLayout === null"
     :clip="imageLayout !== null"

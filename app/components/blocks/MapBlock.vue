@@ -11,7 +11,10 @@ defineProps<{ block: MapBlock }>()
 </script>
 
 <template>
-  <Tile :href="block.url">
+  <Tile
+    :href="block.url"
+    :mail="block.mail"
+  >
     <Icon
       :name="UI_ICONS.map"
       class="size-[34px] text-accent md:size-10"

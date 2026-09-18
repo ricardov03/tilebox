@@ -5,6 +5,7 @@
 import { z } from 'zod'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
+import { encodeEmail, encodeMailto, isMailtoUrl, MAILTO_PREFIX, RAW_EMAIL_PATTERN, type MailToken } from '../app/utils/mail-shield'
 import { endsBeforeStart, isOnPage } from '../app/utils/schedule'
 import { resolveSiteUrl } from '../app/utils/site-head'
 import { SIZES } from '../app/utils/sizes'
@@ -17,6 +18,18 @@ const url = z.url()
 const size = z.enum(SIZES)
 /** Full Iconify name like `line-md:github`. */
 const iconName = z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Icon must be a full Iconify name like line-md:github')
+
+/**
+ * PUBLIC ONLY (WP17, app/utils/mail-shield.ts). The build replaces a `mailto:` url with this token,
+ * so no file of `dist/` holds an address or the mail scheme. The SAVED file never has it:
+ * `ProfileSchema` refuses it, and the editor keeps editing the real mail URL.
+ */
+export const MailTokenSchema = z.object({
+  u: z.string().min(1),
+  d: z.string().min(1),
+  q: z.string().min(1).optional(),
+}).strict()
+const mail = MailTokenSchema.optional()
 
 /** Optional on every block (WP10a). `true` = the build drops the block: it is in no file of `dist/`. */
 const hidden = z.boolean().optional()
@@ -62,6 +75,7 @@ export const LinkBlockSchema = z.object({
   title: z.string().min(1).optional(),
   /** Optional (WP17). No URL = the block is INCOMPLETE: it saves, and the build leaves it out (`blockDropReason`). */
   url: url.optional(),
+  mail,
   description: z.string().optional(),
   icon: iconName.optional(),
   accent: z.boolean().optional(),
@@ -87,6 +101,7 @@ export const SocialBlockSchema = z.object({
   size,
   network: z.enum(NETWORK_IDS),
   url: url.optional(),
+  mail,
   label: z.string().optional(),
   hidden,
   ...schedule,
@@ -135,6 +150,7 @@ export const MapBlockSchema = z.object({
   label: z.string().min(1).optional(),
   sublabel: z.string().optional(),
   url: url.optional(),
+  mail,
   hidden,
   ...schedule,
   noUtm,
@@ -145,6 +161,7 @@ export const VideoBlockSchema = z.object({
   type: z.literal('video'),
   size,
   url: url.optional(),
+  mail,
   title: z.string().optional(),
   thumbnail: z.string().optional(),
   hidden,
@@ -206,6 +223,12 @@ export const CONTACT_NOTE_MAX = 500
  */
 export const ContactSchema = z.object({
   enabled: z.boolean().optional(),
+  /**
+   * WP17, opt-in. The card is a PUBLIC file (`/site/contact.vcf`) and the vCard format needs a raw
+   * address, so a bot that downloads the file can read it. Absent or `false` = no `EMAIL` line,
+   * whatever `contact.email` says. The editor asks with a checkbox that names the risk.
+   */
+  shareEmail: z.boolean().optional(),
   /** Default: `profile.name`. */
   fullName: z.string().min(1).max(CONTACT_TEXT_MAX).optional(),
   org: z.string().min(1).max(CONTACT_TEXT_MAX).optional(),
@@ -291,6 +314,10 @@ export const ProfileSchema = z
       if (!desktop.has(block.id)) {
         ctx.addIssue({ code: 'custom', path: ['blocks', index, 'id'], message: `Block "${block.id}" is missing from layout.desktop` })
       }
+      // WP17: `mail` belongs to the PUBLIC copy only. The file the editor writes keeps the real `mailto:` url.
+      if ('mail' in block && block.mail !== undefined) {
+        ctx.addIssue({ code: 'custom', path: ['blocks', index, 'mail'], message: '`mail` is built by the build: write the mail URL instead' })
+      }
     })
   })
 
@@ -299,14 +326,19 @@ export type ProfileInfo = z.infer<typeof ProfileInfoSchema>
 
 /**
  * What the public page gets (the `#profile` alias). Never the raw file.
- * `email` is there only when `showEmail` is true. `showEmail` itself is dropped:
- * an email in the public profile means "show it". `avatar` is already resolved
- * (the uploaded one, else the Gravatar file, else missing = initials).
+ * `email` is GONE (WP17): a shown email ships as `emailToken`, the shield token of
+ * app/utils/mail-shield.ts, so no address is in any file of `dist/`. `showEmail`
+ * itself is dropped: a token in the public profile means "show it". `avatar` is
+ * already resolved (the uploaded one, else the Gravatar file, else missing = initials).
  */
 export const PublicProfileInfoSchema = ProfileInfoSchema
   .omit({ email: true, showEmail: true, avatar: true })
-  .extend({ email: z.email().optional(), avatar: z.string().optional() })
+  .extend({ emailToken: MailTokenSchema.optional(), avatar: z.string().optional() })
   .strict()
+
+/** Why the guard below refuses a public profile. */
+export const PUBLIC_MAIL_GUARD_MESSAGE
+  = 'the public profile must carry no email address and no mail scheme: the build turns an address into a mail token (WP17, app/utils/mail-shield.ts)'
 
 export const PublicProfileSchema = z.object({
   profile: PublicProfileInfoSchema,
@@ -315,7 +347,13 @@ export const PublicProfileSchema = z.object({
   site: PublicSiteSchema.optional(),
   /** Only the `download` name of `/site/contact.vcf`. The vCard fields live in that file alone. */
   contact: z.object({ fileName: z.string().min(1) }).strict().optional(),
-}).strict()
+}).strict().superRefine((data, ctx) => {
+  // The guard of the mail shield. It reads the profile and the blocks, the two places an owner types an address.
+  const text = JSON.stringify({ profile: data.profile, blocks: data.blocks })
+  if (text.toLowerCase().includes(MAILTO_PREFIX) || RAW_EMAIL_PATTERN.test(text)) {
+    ctx.addIssue({ code: 'custom', path: ['profile'], message: PUBLIC_MAIL_GUARD_MESSAGE })
+  }
+})
 
 export type PublicProfile = z.infer<typeof PublicProfileSchema>
 export type PublicProfileInfo = z.infer<typeof PublicProfileInfoSchema>
@@ -368,9 +406,10 @@ export function isPlaceholderEmail(email: string | undefined): boolean {
 export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): PublicProfileInfo {
   const { email, showEmail, avatar, ...rest } = info
   const resolvedAvatar = avatar || gravatarPath
+  // WP17: a shown email ships as a token. `encodeEmail` cannot fail here: the schema already ran `z.email()`.
   return {
     ...rest,
-    ...(showEmail && email ? { email } : {}),
+    ...(showEmail && email ? { emailToken: encodeEmail(email) } : {}),
     ...(resolvedAvatar ? { avatar: resolvedAvatar } : {}),
   }
 }
@@ -401,18 +440,17 @@ export function contactFileName(name: string): string {
  * With `context.utm`, the URL of a link, social, map or video block gets the UTM tags (app/utils/utm.ts).
  */
 export function toPublicBlock(block: Block, context: PublicBlockContext = {}): Block {
-  const tagged = (link: string, skip: boolean | undefined) => (skip ? link : withUtm(link, context.utm, context.siteUrl))
   switch (block.type) {
     case 'link': {
-      const { startsAt: _startsAt, noUtm: skip, enrich: _enrich, meta: _meta, image, imageAlt, ...rest } = block
-      const next = { ...rest, ...(rest.url === undefined ? {} : { url: tagged(rest.url, skip) }) }
+      const { startsAt: _startsAt, noUtm: skip, enrich: _enrich, meta: _meta, image, imageAlt, url: _url, mail: _mail, ...rest } = block
+      const next = { ...rest, ...publicTarget(block.url, skip, context) }
       return block.showImage && image ? { ...next, image, ...(imageAlt ? { imageAlt } : {}) } : next
     }
     case 'social':
     case 'map':
     case 'video': {
-      const { startsAt: _startsAt, noUtm: skip, ...rest } = block
-      return { ...rest, ...(rest.url === undefined ? {} : { url: tagged(rest.url, skip) }) }
+      const { startsAt: _startsAt, noUtm: skip, url: _url, mail: _mail, ...rest } = block
+      return { ...rest, ...publicTarget(block.url, skip, context) }
     }
     default: {
       const { startsAt: _startsAt, ...rest } = block
@@ -421,24 +459,48 @@ export function toPublicBlock(block: Block, context: PublicBlockContext = {}): B
   }
 }
 
+/**
+ * Where a tile points on the PUBLIC page.
+ * - No url: no key at all (the block is incomplete and the build drops it anyway).
+ * - A `mailto:` url: a `mail` TOKEN and NO url, so no file of `dist/` holds the address or the
+ *   string `mailto:` (WP17, app/utils/mail-shield.ts). UTM tags never touch it: there is no URL to tag.
+ * - Anything else: the url, with the UTM tags of `site.utm` unless the block opted out.
+ */
+function publicTarget(url: string | undefined, skip: boolean | undefined, context: PublicBlockContext): { url?: string, mail?: MailToken } {
+  if (url === undefined) return {}
+  if (isMailtoUrl(url)) {
+    const token = encodeMailto(url)
+    return token ? { mail: token } : {}
+  }
+  return { url: skip ? url : withUtm(url, context.utm, context.siteUrl) }
+}
+
+/** A tile can point somewhere: a URL, a mail token, or a `mailto:` url the shield can read (WP17). */
+function hasTarget(block: { url?: string, mail?: MailToken }): boolean {
+  if (block.mail !== undefined) return true
+  if (block.url === undefined) return false
+  return !isMailtoUrl(block.url) || encodeMailto(block.url) !== null
+}
+
 /** Why the build leaves a block out. `null` = the block is on the page. */
 export type BlockDropReason = 'hidden' | 'incomplete' | 'scheduled' | 'expired' | 'no-contact-file' | 'no-qr-file'
 
 /**
  * What an INCOMPLETE block still needs (WP17), as the end of "Incomplete: ...". `null` = it has its essential value.
  * Every text of a block is optional in the file, so an emptied field never blocks a save. The ESSENTIAL one decides
- * if the tile can exist: a link, social, map or video block needs a URL, an image a file, a text block a body,
- * a section a title. One rule for the build, `check:profile`, the editor badges and the tests.
+ * if the tile can exist: a link, social, map or video block needs a URL (or the mail token the build made from a
+ * `mailto:` url), an image a file, a text block a body, a section a title. One rule for the build,
+ * `check:profile`, the editor badges and the tests.
  */
 export function incompleteReason(block: Block): string | null {
   switch (block.type) {
     case 'link':
     case 'social':
-      return block.url ? null : 'add a URL'
+      return hasTarget(block) ? null : 'add a URL'
     case 'map':
-      return block.url ? null : 'add a map URL'
+      return hasTarget(block) ? null : 'add a map URL'
     case 'video':
-      return block.url ? null : 'add a video URL'
+      return hasTarget(block) ? null : 'add a video URL'
     case 'image':
       return block.src ? null : 'add an image'
     case 'text':

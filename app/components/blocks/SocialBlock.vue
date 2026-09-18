@@ -2,6 +2,8 @@
   Social tile. Brand icon from the NETWORKS map. The whole tile is the link.
   No aria-label: the visible text (network name + handle) is the accessible name.
   `rel="me"`: the link says "this profile is mine" (identity check on Mastodon and others).
+  The `email` network holds a `mailto:` url, which the build turns into a shield token
+  (WP17): the tile is then a `ProtectedEmail` control and carries no address.
 -->
 <script setup lang="ts">
 import type { SocialBlock } from '~~/types/profile'
@@ -16,6 +18,7 @@ const network = computed(() => NETWORKS[props.block.network])
 <template>
   <Tile
     :href="block.url"
+    :mail="block.mail"
     rel="me"
   >
     <Icon
