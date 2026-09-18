@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { allBrandIcons } from '../../app/utils/brand-icons'
-import { ICON_NAME_RE, ICON_SETS, iconSetOf, isAllowedIconName } from '../../app/utils/icon-sets'
+import { ICON_NAME_RE, ICON_SETS, ICON_SETS_MESSAGE, iconSetOf, isAllowedIconName } from '../../app/utils/icon-sets'
 import { NETWORKS, UI_ICONS } from '../../app/utils/networks'
 import {
   buildIconSvg,
@@ -21,7 +21,7 @@ import {
   searchIcons,
 } from '../../content/icon-index'
 import { foreignIconAdvice, foreignIcons, migrateIconsText, removedIconLine } from '../../content/migrate'
-import { LinkBlockSchema } from '../../types/profile'
+import { BlockSchema, LinkBlockSchema, ProfileSchema } from '../../types/profile'
 import { ROOT } from './helpers'
 
 const prefixOf = (name: string) => name.slice(0, name.indexOf(':'))
@@ -308,5 +308,56 @@ test.describe('the profile migration', () => {
     expect(migrateIconsText('not json')).toBeNull()
     expect(migrateIconsText('[]')).toBeNull()
     expect(foreignIconAdvice({ id: 'b1', icon: 'lucide:mail' })).toContain('npm run ensure:profile')
+  })
+})
+
+/**
+ * WP19: WP17 (every field optional, the `incomplete` drop reason) and WP18 (icons
+ * from the two sets only) met for the first time on this branch. These tests hold
+ * the two seams that meeting created.
+ */
+test.describe('WP19: the relaxed schema keeps the icon rule', () => {
+  /** Every block schema of the union that HAS an `icon` field. A new block type is covered by itself. */
+  const iconBlocks = BlockSchema.options.filter(option => 'icon' in option.shape)
+  const sizeFor = (type: string) => (type === 'qr' ? '2x2' : '1x1')
+
+  test('every block type with an icon refuses another set, whatever WP17 made optional', () => {
+    expect(iconBlocks.length).toBeGreaterThan(0)
+    for (const option of iconBlocks) {
+      const type = option.shape.type.value
+      for (const bad of ['lucide:mail', 'mdi:home', 'github', 'line-md', '', ' line-md:github']) {
+        const parsed = option.safeParse({ id: 'b1', type, size: sizeFor(type), icon: bad })
+        expect(parsed.success, `${type} + ${JSON.stringify(bad)}`).toBe(false)
+        const issue = parsed.error?.issues.find(item => item.path[0] === 'icon')
+        expect(issue?.message, `${type} + ${JSON.stringify(bad)}`).toBe(ICON_SETS_MESSAGE)
+      }
+      // The same block WITH an allowed icon and NOTHING else is valid: WP17's relaxation is real.
+      expect(option.safeParse({ id: 'b1', type, size: sizeFor(type), icon: 'line-md:github' }).success, type).toBe(true)
+    }
+  })
+
+  test('an emptied icon is never accepted as "": the key has to be absent', () => {
+    // WP17 removes a key instead of writing "". The schema is the second layer.
+    expect(LinkBlockSchema.safeParse({ id: 'b1', type: 'link', size: '1x1', icon: '' }).success).toBe(false)
+    expect(LinkBlockSchema.safeParse({ id: 'b1', type: 'link', size: '1x1' }).success).toBe(true)
+  })
+
+  test('a whole saved profile with nothing but a name still refuses a foreign icon', () => {
+    // The most relaxed file WP17 allows: no handle, no bio, no email, a link with no title and no url.
+    const minimal = {
+      profile: { name: 'Ada', theme: { colors: 'condomera', fonts: 'geist', mode: 'system' } },
+      blocks: [{ id: 'b1', type: 'link', size: '1x1' } as Record<string, unknown>],
+      layout: { desktop: ['b1'], mobile: ['b1'] },
+    }
+    expect(ProfileSchema.safeParse(minimal).success).toBe(true)
+
+    minimal.blocks[0]!.icon = 'lucide:mail'
+    const parsed = ProfileSchema.safeParse(minimal)
+    expect(parsed.success).toBe(false)
+    expect(parsed.error?.issues.some(issue => issue.message === ICON_SETS_MESSAGE)).toBe(true)
+
+    // The allowed one passes in the same minimal file: only the icon rule refused it.
+    minimal.blocks[0]!.icon = 'simple-icons:github'
+    expect(ProfileSchema.safeParse(minimal).success).toBe(true)
   })
 })
