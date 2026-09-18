@@ -9,7 +9,9 @@
   Clicks on the tile body are caught by the preview wrapper in edit.vue, which
   selects the block and stops links from navigating.
   A hidden block (WP10a) is dimmed and carries an eye-off badge. The Hide / Show
-  control sits next to Delete. The build leaves hidden blocks out.
+  control sits next to Delete. Its name says the action ("Hide x" / "Show x"); it has
+  no `aria-pressed`, because `[data-editor-control][aria-pressed]` finds the Edit control.
+  The build leaves hidden blocks out.
 -->
 <script setup lang="ts">
 import type { Block } from '~~/types/profile'
@@ -131,7 +133,6 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
         data-editor-control
         data-no-drag
         :data-hide-tile="block.id"
-        :aria-pressed="block.hidden ?? false"
         :aria-label="`${block.hidden ? 'Show' : 'Hide'} ${blockSummary(block)}`"
         :class="controlClass"
         @click.stop="emit('toggleHidden', block.id)"
