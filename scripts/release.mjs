@@ -64,7 +64,10 @@ function fail(message) {
   process.exit(1)
 }
 
-/** Run a command, capture output. Returns { ok, out }. */
+/**
+ * Run a command, capture output. Returns { ok, out, err, timedOut }.
+ * `out` is stdout only (safe to parse). `err` is stderr only (for error messages).
+ */
 function run(cmd, args, { timeout, input } = {}) {
   const res = spawnSync(cmd, args, {
     encoding: 'utf8',
@@ -74,13 +77,19 @@ function run(cmd, args, { timeout, input } = {}) {
     maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0' },
   })
-  const out = `${res.stdout ?? ''}${res.stderr ?? ''}`
-  return { ok: res.status === 0 && !res.error, out, timedOut: res.error?.code === 'ETIMEDOUT' }
+  const out = res.stdout ?? ''
+  const err = res.error && !res.stderr ? `${res.error.message}\n` : (res.stderr ?? '')
+  return { ok: res.status === 0 && !res.error, out, err, timedOut: res.error?.code === 'ETIMEDOUT' }
+}
+
+/** stderr first, then stdout. For error messages only. */
+function errorText(res) {
+  return [res.err, res.out].map(t => t.trim()).filter(Boolean).join('\n')
 }
 
 function git(...args) {
   const res = run('git', args)
-  return { ok: res.ok, out: res.out.trim() }
+  return { ok: res.ok, out: res.out.trim(), err: res.err.trim() }
 }
 
 /** Run a check command. Print its tail and exit 1 on failure. */
@@ -91,7 +100,7 @@ function check(label, cmd, args) {
   const secs = ((Date.now() - started) / 1000).toFixed(0)
   if (!res.ok) {
     log(`FAILED (${secs} s)`)
-    log(res.out.split('\n').slice(-40).join('\n'))
+    log(errorText(res).split('\n').slice(-40).join('\n'))
     fail(`${label} failed`)
   }
   log(`ok (${secs} s)`)
@@ -185,7 +194,7 @@ else {
   const fetch = git('fetch', 'origin')
   if (!fetch.ok) {
     log('FAILED')
-    fail(`git fetch origin failed:\n${fetch.out}`)
+    fail(`git fetch origin failed:\n${errorText(fetch)}`)
   }
   log('ok')
   const local = git('rev-parse', 'HEAD').out
@@ -221,7 +230,7 @@ else if (opts['release-as']) catvArgs.push('--release-as', opts['release-as'])
 
 const preview = run('npx', ['commit-and-tag-version', '--dry-run', ...catvArgs])
 if (!preview.ok) {
-  log(preview.out)
+  log(errorText(preview))
   fail('commit-and-tag-version --dry-run failed')
 }
 
@@ -239,7 +248,7 @@ else {
   nextVersion = tagMatch?.[1] ?? headMatch?.[1] ?? null
 }
 if (!nextVersion) {
-  log(preview.out)
+  log(errorText(preview))
   fail('could not read the next version from commit-and-tag-version')
 }
 
@@ -341,7 +350,7 @@ function aiDraft() {
   }
   if (!res.ok) {
     log('failed')
-    log(res.out.split('\n').slice(-5).map(l => `      ${l}`).join('\n'))
+    log(errorText(res).split('\n').slice(-5).map(l => `      ${l}`).join('\n'))
     return { cli, text: null }
   }
   log('ok')
@@ -437,7 +446,7 @@ stdout.write('    commit-and-tag-version ... ')
 const apply = run('npx', ['commit-and-tag-version', ...catvArgs])
 if (!apply.ok) {
   log('FAILED')
-  log(apply.out)
+  log(errorText(apply))
   fail('commit-and-tag-version failed')
 }
 log('ok')
@@ -457,12 +466,12 @@ else {
 }
 
 const add = git('add', '-A')
-if (!add.ok) fail(`git add failed:\n${add.out}`)
+if (!add.ok) fail(`git add failed:\n${errorText(add)}`)
 const commit = git('commit', '-m', `chore(release): v${nextVersion}`)
-if (!commit.ok) fail(`git commit failed:\n${commit.out}`)
+if (!commit.ok) fail(`git commit failed:\n${errorText(commit)}`)
 log(`    committed: chore(release): v${nextVersion}`)
 const tag = git('tag', '-a', `v${nextVersion}`, '-m', `tilebox v${nextVersion}`)
-if (!tag.ok) fail(`git tag failed:\n${tag.out}`)
+if (!tag.ok) fail(`git tag failed:\n${errorText(tag)}`)
 log(`    tagged: v${nextVersion}`)
 
 log('')
