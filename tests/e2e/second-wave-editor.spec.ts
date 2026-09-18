@@ -7,10 +7,11 @@
  */
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import sharp from 'sharp'
 import { localInputToIso } from '../../app/utils/schedule'
 import { buildSiteExtras } from '../../content/site-extras'
+import { contactFileName } from '../../types/profile'
 import { PERSONAL_PROFILE_PATH as PROFILE_PATH, readProfile, ROOT } from './helpers'
 
 const BACKUP = `${PROFILE_PATH}.e2e-wave-backup`
@@ -223,6 +224,80 @@ test('UTM panel: the example follows the checked fields, a bad value is refused,
   for (const label of ['Source (utm_source)', 'Medium (utm_medium)', 'Campaign (utm_campaign), optional']) await panel.getByLabel(label).fill('')
   await save(page)
   expect(readProfile().site?.utm).toBeUndefined()
+})
+
+test('the contact card and UTM fields are clearable, wait for the typing to stop, and block the save on a refused value', async ({ page }) => {
+  const before = readFileSync(PROFILE_PATH, 'utf8')
+  const profileFile = readProfile()
+  await openSiteTab(page)
+  const contactPanel = page.locator('[data-contact-panel]')
+  const preview = contactPanel.locator('[data-contact-preview]')
+  const defaultFile = (await preview.getAttribute('download')) ?? ''
+  const clear = async (field: Locator) => {
+    await field.click()
+    await field.press('ControlOrMeta+a')
+    await field.press('Backspace')
+  }
+
+  // Full name: the draft (the file name of the preview) follows about 600 ms after the last key, not on every key.
+  const fullName = contactPanel.getByLabel('Full name')
+  await clear(fullName)
+  await fullName.pressSequentially('Zed Tester', { delay: 30 })
+  await expect(fullName).toHaveAttribute('data-pending', '')
+  await expect(preview).toHaveAttribute('download', defaultFile)
+  await expect(preview).toHaveAttribute('download', 'zed-tester.vcf', { timeout: 1500 })
+  await expect(fullName).not.toHaveAttribute('data-pending', '')
+  // Cleared: the input stays empty (never rewritten), the key leaves the draft.
+  await clear(fullName)
+  await page.waitForTimeout(1000)
+  await expect(fullName).toHaveValue('')
+  await expect(preview).toHaveAttribute('download', contactFileName(profileFile.profile.name))
+
+  // Public email: no message while typing, one after the wait, an alert only after the blur. Clearing removes it.
+  const email = contactPanel.getByLabel('Public email')
+  const contactError = contactPanel.locator('[data-field-error]')
+  await clear(email)
+  await email.pressSequentially('not-an-email', { delay: 30 })
+  await page.waitForTimeout(300)
+  await expect(contactError).toHaveCount(0)
+  await expect(contactError).toHaveCount(1, { timeout: 1500 })
+  await expect(email).toHaveAttribute('aria-invalid', 'true')
+  await expect(email).toHaveValue('not-an-email')
+  await expect(contactPanel.getByRole('alert')).toHaveCount(0)
+  await email.blur()
+  await expect(contactPanel.getByRole('alert')).toHaveCount(1)
+  await clear(email)
+  await email.blur()
+  await expect(email).toHaveValue('')
+  await expect(contactError).toHaveCount(0)
+
+  // UTM: the same field. The "incomplete" note follows the CHECKED text, so it waits too.
+  const utmPanel = page.locator('[data-utm-panel]')
+  const source = utmPanel.getByLabel('Source (utm_source)')
+  const incomplete = utmPanel.locator('[data-utm-incomplete]')
+  await clear(source)
+  await source.blur()
+  await expect(incomplete).toHaveCount(0)
+  await source.pressSequentially('newsletter', { delay: 30 })
+  await page.waitForTimeout(200)
+  await expect(incomplete).toHaveCount(0)
+  await expect(incomplete).toBeVisible({ timeout: 1500 })
+  await clear(source)
+  await page.waitForTimeout(1000)
+  await expect(source).toHaveValue('')
+  await expect(incomplete).toHaveCount(0)
+
+  // A refused value: the save key checks the field at once and writes nothing.
+  await source.pressSequentially('Bad Value', { delay: 10 })
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect(page.locator('[data-save-blocked]')).toContainText('Save is blocked')
+  await expect(page.locator('[data-field-problems]')).toContainText('Site > Source (utm_source): Use lowercase')
+  await expect(utmPanel.locator('[data-field-error]')).toContainText('lowercase')
+  await page.waitForTimeout(500)
+  expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
+  await clear(source)
+  await source.blur()
+  await expect(page.locator('[data-field-problems]')).toHaveCount(0)
 })
 
 test('share checkbox: off writes share false and the dev page has no button, on removes the key', async ({ page }) => {
