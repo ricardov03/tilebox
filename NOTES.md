@@ -687,6 +687,32 @@ Cause: the review fix that anchored `ROOT` in `content/resolve.ts` on `import.me
 Fix: `ROOT` is now found by walking upward (from the module, then from `process.cwd()`) to the first folder that holds `content/profile.example.json`.
 Lesson: a change to the resolver or to `server/` must run the Playwright `dev` project, not only `static`. The `dev` project catches this (4 tests, green again).
 
+### Release pipeline fix (2026-09-18)
+Symptom: the first real run of `.github/workflows/release.yml` (tag `v0.1.0`) failed in "Zip dist and write checksum": `sha256sum: tilebox-v0.1.0.zip: No such file or directory`. The tag was on GitHub, but there was no GitHub Release.
+Cause: `dist` is a symlink to `.output/public`. The step ran `cd dist && zip -r ../tilebox-TAG.zip . && cd ..`. `zip` opens `../` from the real folder, so the zip went to `.output/`. The shell `cd ..` is logical, so it went back to the workspace, where `sha256sum` found nothing. Reproduced locally with `GITHUB_REF_NAME=v9.9.9`: the zip was in `.output/tilebox-v9.9.9.zip`, the `.sha256` file was empty, exit 1.
+Fix in `release.yml`:
+- `ZIP="$GITHUB_WORKSPACE/tilebox-${TAG}.zip"; (cd dist && zip -qr "$ZIP" .)`, then `cd "$GITHUB_WORKSPACE"` and `sha256sum`. The step then proves its output: `test -s` on both files and `index.html` must be in the zip.
+- The zip check is `unzip -Z1 "$ZIP" > list` + `grep -qx index.html list`, not `unzip -l | grep -q`. Actions runs `bash -e -o pipefail`. `grep -q` exits on the first match, `unzip` gets SIGPIPE, and the step fails with exit 141. Seen locally.
+- One env var `TAG` = `inputs.tag || github.ref_name`. No `GITHUB_REF_NAME` left in the steps. A first step checks that `TAG` looks like `v1.2.3` or `v1.2.3-beta.1`. Checkout uses `ref: refs/tags/${{ env.TAG }}`.
+- `workflow_dispatch` with the input `tag`: `gh workflow run release.yml -f tag=v0.1.0` runs the pipeline again for an existing tag. A manual run takes `release.yml` from `main` and the code from the tag, so this fix also repairs `v0.1.0`.
+- The publish step is safe to run again: `softprops/action-gh-release` v3.0.3 updates an existing release (title, body from `body_path`) and `overwrite_files: true` replaces the two assets (the input exists in `action.yml` at the pinned SHA). `files` names the two files of this tag, not a glob.
+
+New flow in `scripts/release.mjs` (step 6, optional):
+- After the commit and the tag, the script asks `Push main and the tag, and create the GitHub Release now? [y/N]`. `--push`: no question. `--no-push`: print the manual commands. No terminal, or `--yes` without `--push`: no push.
+- Steps, each logged before it runs: `git push --follow-tags origin main`; `gh` on `PATH` + `gh auth status` (if not: hint with `brew install gh`, `gh auth login` and the manual `gh release create`, exit 0, because the tag push started the pipeline and the pipeline makes the release too); `gh release view` then `gh release edit` or `gh release create ... --verify-tag` (`--prerelease` for a version with `-`); the URL; the watch offer (`--watch`: `gh run list --workflow=release.yml --branch <tag>`, retry up to 30 s, then `gh run watch <id> --exit-status`; on failure it prints `gh run view <id> --log-failed` and exits 1).
+- `npm run release:publish -- vX.Y.Z` = `node scripts/release.mjs --publish-only vX.Y.Z`: the same steps for a tag that exists locally, no bump. With `--no-push`: the `gh` steps only. It refuses a tag that does not exist locally. `git push --follow-tags origin main` also pushes a missing tag when `main` is up to date (checked in a scratch repo), so one push command serves both modes.
+- The script never uploads a zip. A local `dist/` is built from `content/profile.json` and the personal images. The zip and the checksum come from the pipeline only.
+- `--dry-run` prints the publish plan and runs no publish command.
+- Commands are found through `PATH` only. No test hook in the product code.
+
+Verified in `.tilebox-test/` (ignored, deleted after the run): a throwaway clone with a local bare repo as `origin`, and a fake `gh` shell script first on `PATH` that logs its argv. GitHub was never reached.
+- Dry run: plan printed, `gh` log empty, nothing pushed.
+- Create path (with a real push to the bare origin), edit path when the release exists, `--prerelease` for `v9.9.9-beta.1`, `--watch` ok, `--watch` with a failed pipeline (exit 1 + `--log-failed` hint), `--watch` with no run (gives up after 30 s, exit 0), `gh` logged out (exit 0 + hint, no release call), `gh` missing (exit 0 + hint), unknown tag (exit 1, refused), `--push` with `--no-push` (exit 1), `--publish-only` without a value (exit 1, one clear line). 41 checks, 0 failed.
+- The `[y/N]` question under a real pty (`script`): `y` watches, `n` does not.
+- Full flow in the clone: no terminal and no flags = commit + tag, nothing pushed, manual commands printed. `--push --watch --release-as 9.9.11-rc.1` = push, `gh release create ... --prerelease`, watch.
+Not verified without the real GitHub: a real `workflow_dispatch` run, the update of an existing release by the action, and the real `gh release create --verify-tag`.
+Lesson: a workflow step that writes a file must check that the file exists, in the same step. And test shell steps locally with `bash -e -o pipefail`.
+
 ## WP9
 
 Branch: `wp/9-profile-extras`. Date: 2026-09-18. Node used: 22.23.1.

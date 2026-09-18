@@ -9,8 +9,20 @@
  *    summary. You accept, edit, write your own, or skip.
  * 5. Apply: bump package.json + package-lock.json, update CHANGELOG.md,
  *    write releases/vX.Y.Z.md, commit "chore(release): vX.Y.Z", tag vX.Y.Z.
+ * 6. Publish (optional): push main and the tag, then make the GitHub Release
+ *    with the `gh` CLI (title + releases/vX.Y.Z.md as the body). In a terminal
+ *    the script asks first. Without a terminal, or with --yes, it does not push.
  *
- * Nothing is pushed. Publish with: git push --follow-tags origin main
+ * The zip and the checksum come from the pipeline only
+ * (.github/workflows/release.yml). This script NEVER uploads a local build:
+ * a local dist/ holds your personal profile (content/profile.json, your images).
+ * The pipeline builds from the repo, which has the sample content only.
+ *
+ * Repair a release (the tag exists, but no GitHub Release, or the pipeline failed):
+ *   npm run release:publish -- v0.1.0   (= node scripts/release.mjs --publish-only v0.1.0)
+ *
+ * Every external command (git, gh, npm, npx) is found through PATH. There is
+ * no other hook. A test puts a fake `gh` first on PATH.
  *
  * Flags:
  *   --release-as <ver>  force the version (e.g. 1.0.0)
@@ -20,7 +32,12 @@
  *   --summary "<text>"  use this summary, no AI draft
  *   --no-ai             never call an AI CLI
  *   --dry-run           print what would happen, change nothing
- *   --yes               accept the AI draft without asking
+ *   --yes               accept the AI draft without asking (does not push: add --push)
+ *   --push              after the tag: push and make the GitHub Release, do not ask
+ *   --no-push           never push, never ask. Print the manual commands.
+ *                       With --publish-only: skip the push, do the gh steps only.
+ *   --watch             after the publish: wait for the release pipeline (gh run watch)
+ *   --publish-only <tag>  no version bump. The publish steps for a tag that exists locally.
  */
 import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -33,7 +50,19 @@ import { stdin, stdout } from 'node:process'
 const FALLBACK_REPO = 'https://github.com/ricardov03/tilebox'
 const AI_TIMEOUT_MS = 90_000
 
-const { values: opts } = parseArgs({
+/** parseArgs, but a wrong flag gives one clear line, not a stack trace. */
+function parseCli(config) {
+  try {
+    return parseArgs(config)
+  }
+  catch (error) {
+    stdout.write(`\nError: ${error.message}\n`)
+    stdout.write('Usage: npm run release -- [flags]   or   npm run release:publish -- vX.Y.Z\n')
+    process.exit(1)
+  }
+}
+
+const { values: opts } = parseCli({
   options: {
     'release-as': { type: 'string' },
     'first-release': { type: 'boolean', default: false },
@@ -43,11 +72,17 @@ const { values: opts } = parseArgs({
     'no-ai': { type: 'boolean', default: false },
     'dry-run': { type: 'boolean', default: false },
     'yes': { type: 'boolean', default: false },
+    'push': { type: 'boolean', default: false },
+    'no-push': { type: 'boolean', default: false },
+    'watch': { type: 'boolean', default: false },
+    'publish-only': { type: 'string' },
   },
   strict: true,
 })
 
 const dryRun = opts['dry-run']
+const VERSION_TAG_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
+const PIPELINE_WAIT_MS = 30_000
 
 // On Windows, npm and npx are .cmd files. Node refuses to spawn a .cmd file
 // without a shell (EINVAL), so those two run through the shell there.
@@ -132,18 +167,60 @@ function check(label, cmd, args) {
 }
 
 function findOnPath(name) {
+  const names = isWindows ? [name, `${name}.exe`] : [name]
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue
-    const candidate = join(dir, name)
-    try {
-      accessSync(candidate, constants.X_OK)
-      return candidate
-    }
-    catch {
-      // not here
+    for (const file of names) {
+      const candidate = join(dir, file)
+      try {
+        accessSync(candidate, constants.X_OK)
+        return candidate
+      }
+      catch {
+        // not here
+      }
     }
   }
   return null
+}
+
+/** Run a command with the terminal attached, so the user sees its progress. */
+function runLive(cmd, args) {
+  const res = spawnSync(cmd, args, { stdio: 'inherit', shell: isWindows && SHELL_COMMANDS.has(cmd) })
+  return { ok: res.status === 0 && !res.error }
+}
+
+/** A command line as the user would type it. For logs only. */
+function shown(cmd, args) {
+  return [cmd, ...args].map(arg => (/^[\w@%+=:,./-]+$/.test(arg) ? arg : `"${arg.replaceAll('"', '\\"')}"`)).join(' ')
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** Ask one line. Resolves to null when there is no terminal or stdin closes. */
+async function askLine(question) {
+  if (!stdin.isTTY) {
+    log(`${question}(no terminal)`)
+    return null
+  }
+  const rl = createInterface({ input: stdin, output: stdout })
+  const closed = new Promise(resolve => rl.once('close', () => resolve(null)))
+  try {
+    const answer = await Promise.race([rl.question(question), closed])
+    return answer === null ? null : answer.trim()
+  }
+  finally {
+    rl.close()
+  }
+}
+
+/** Yes only on "y" or "yes". No terminal means no. */
+async function askYesNo(question) {
+  if (!stdin.isTTY) return false
+  const answer = (await askLine(question))?.toLowerCase()
+  return answer === 'y' || answer === 'yes'
 }
 
 function readPackageVersion() {
@@ -189,6 +266,196 @@ function releaseFileContent(version, summary, section) {
     `Full changelog: ${REPO}/blob/v${version}/CHANGELOG.md`,
     '',
   ].join('\n')
+}
+
+// ---------------------------------------------------------------- publish (push + GitHub Release)
+//
+// NEVER upload a locally built zip from here. A local dist/ is built from your
+// content/profile.json and your images, so it holds personal data. The zip and
+// the checksum come from the pipeline only: it builds from the repo (sample content).
+
+function publishCommands(tag) {
+  const notes = `releases/${tag}.md`
+  const title = `tilebox ${tag}`
+  const create = ['release', 'create', tag, '--title', title, '--notes-file', notes, '--verify-tag']
+  // A version with "-" (1.0.0-beta.1) is a prerelease. Same rule as the pipeline.
+  if (tag.includes('-')) create.push('--prerelease')
+  return {
+    push: ['push', '--follow-tags', 'origin', 'main'],
+    auth: ['auth', 'status'],
+    view: ['release', 'view', tag],
+    edit: ['release', 'edit', tag, '--title', title, '--notes-file', notes],
+    create,
+    url: ['release', 'view', tag, '--json', 'url', '--jq', '.url'],
+    runList: ['run', 'list', '--workflow=release.yml', '--branch', tag, '--limit', '1', '--json', 'databaseId', '--jq', '.[0].databaseId'],
+  }
+}
+
+function logCommand(cmd, args) {
+  log(`    $ ${shown(cmd, args)}`)
+}
+
+function printManualCommands(tag) {
+  const cmds = publishCommands(tag)
+  log('')
+  log('Nothing was pushed. Publish with:')
+  log(`  ${shown('git', cmds.push)}`)
+  log(`  ${shown('gh', cmds.create)}`)
+  log(`Or do both with: npm run release:publish -- ${tag}`)
+  log('The tag push starts the pipeline. It adds the zip and the checksum to the release.')
+  log('Without gh, the pipeline makes the release itself.')
+}
+
+function printGhHint(tag, reason) {
+  const cmds = publishCommands(tag)
+  log('')
+  log(`    ${reason} The GitHub Release was not made from here.`)
+  log('    Install and log in (one time):')
+  log('      brew install gh        (other systems: https://cli.github.com)')
+  log('      gh auth login')
+  log('    Then make the release yourself:')
+  log(`      ${shown('gh', cmds.create)}`)
+  log(`    Or run: npm run release:publish -- ${tag} --no-push`)
+  log('    This is not an error: the pipeline makes the release too when it is missing.')
+}
+
+/** Find the pipeline run of the tag, wait for it, and say what to do when it fails. */
+async function watchPipeline(tag) {
+  const cmds = publishCommands(tag)
+  logCommand('gh', cmds.runList)
+  const deadline = Date.now() + PIPELINE_WAIT_MS
+  let runId = null
+  for (;;) {
+    const res = run('gh', cmds.runList)
+    const out = res.out.trim()
+    if (res.ok && /^\d+$/.test(out)) {
+      runId = out
+      break
+    }
+    if (Date.now() >= deadline) break
+    await sleep(3000)
+  }
+  if (!runId) {
+    log(`    no pipeline run for ${tag} after ${PIPELINE_WAIT_MS / 1000} s.`)
+    log(`    Look later with: gh run list --workflow=release.yml`)
+    log(`    Start it by hand with: gh workflow run release.yml -f tag=${tag}`)
+    return
+  }
+  const watchArgs = ['run', 'watch', runId, '--exit-status']
+  logCommand('gh', watchArgs)
+  if (runLive('gh', watchArgs).ok) {
+    log(`    pipeline: ok. tilebox-${tag}.zip and tilebox-${tag}.sha256 are on the release.`)
+    return
+  }
+  log('')
+  log('    pipeline: FAILED. The release has no zip yet. Next step:')
+  log(`      gh run view ${runId} --log-failed`)
+  log('    After the fix is on main, run the pipeline again for the same tag:')
+  log(`      gh workflow run release.yml -f tag=${tag}`)
+  process.exitCode = 1
+}
+
+/** Dry run: print every command of the publish steps. Run none. */
+function printPublishPlan(tag, { push }) {
+  const cmds = publishCommands(tag)
+  if (push) log(`    1. would run: ${shown('git', cmds.push)}`)
+  else log('    1. push: skipped (--no-push). The tag must be on GitHub already.')
+  log(`    2. would run: ${shown('gh', cmds.auth)}  (gh missing or not logged in: print a hint, stop, exit 0)`)
+  log(`    3. would run: ${shown('gh', cmds.view)}`)
+  log(`         release exists:  ${shown('gh', cmds.edit)}`)
+  log(`         no release yet:  ${shown('gh', cmds.create)}`)
+  log(`    4. would run: ${shown('gh', cmds.url)}`)
+  if (opts.watch) {
+    log(`    5. would run: ${shown('gh', cmds.runList)}  (retry up to ${PIPELINE_WAIT_MS / 1000} s)`)
+    log('       would run: gh run watch <id> --exit-status')
+  }
+  else {
+    log('    5. would offer to watch the pipeline (--watch does it without asking)')
+  }
+  log('    never uploads a local zip: the pipeline builds and attaches it')
+}
+
+/**
+ * The publish steps for a tag that exists locally. Each command is logged before it runs.
+ * `push: false` skips step 1 (the tag is on GitHub already).
+ */
+async function publish(tag, { push }) {
+  const cmds = publishCommands(tag)
+  step(`Publish ${tag}${dryRun ? ' (dry run: no command runs)' : ''}`)
+  if (dryRun) {
+    printPublishPlan(tag, { push })
+    return
+  }
+
+  // 1. push main and the tag. The tag push starts the pipeline.
+  if (push) {
+    logCommand('git', cmds.push)
+    if (!runLive('git', cmds.push).ok) {
+      fail(`git push failed. Nothing is on GitHub. Fix it, then run: npm run release:publish -- ${tag}`)
+    }
+  }
+  else {
+    log('    push: skipped (--no-push). The tag must be on GitHub already.')
+  }
+
+  // 2. gh is optional. Without it the pipeline still makes the release.
+  if (!findOnPath('gh')) {
+    printGhHint(tag, 'The gh CLI is not on PATH.')
+    return
+  }
+  logCommand('gh', cmds.auth)
+  const auth = run('gh', cmds.auth)
+  if (!auth.ok) {
+    log(errorText(auth).split('\n').slice(0, 5).map(l => `      ${l}`).join('\n'))
+    printGhHint(tag, 'The gh CLI is not logged in.')
+    return
+  }
+
+  // 3. update the release when it exists (an earlier run, or the pipeline), else create it.
+  logCommand('gh', cmds.view)
+  const exists = run('gh', cmds.view).ok
+  const action = exists ? cmds.edit : cmds.create
+  log(exists ? '    release exists: update the title and the body' : '    no release yet: create it')
+  logCommand('gh', action)
+  const made = run('gh', action)
+  if (!made.ok) {
+    log(errorText(made).split('\n').slice(-10).map(l => `      ${l}`).join('\n'))
+    fail(`gh release ${exists ? 'edit' : 'create'} failed. The pipeline still makes the release when it is missing.\n`
+      + `Try again with: npm run release:publish -- ${tag} --no-push`)
+  }
+
+  // 4. the URL
+  logCommand('gh', cmds.url)
+  const url = run('gh', cmds.url)
+  log(`    GitHub Release: ${url.ok && url.out.trim() ? url.out.trim() : `${REPO}/releases/tag/${tag}`}`)
+
+  // 5. the assets come later, from the pipeline
+  log(`    The pipeline attaches tilebox-${tag}.zip and tilebox-${tag}.sha256 in a few minutes.`)
+  const watch = opts.watch || (!opts.yes && await askYesNo('    Watch the pipeline now? [y/N] '))
+  if (watch) await watchPipeline(tag)
+  else log('    Watch it with: gh run watch   (or pass --watch next time)')
+}
+
+// ---------------------------------------------------------------- publish only (no version bump)
+
+if (opts.push && opts['no-push']) fail('--push and --no-push do not go together.')
+
+if (opts['publish-only'] !== undefined) {
+  const raw = opts['publish-only'].trim()
+  const tag = raw.startsWith('v') ? raw : `v${raw}`
+  step(`Publish only: ${raw}`)
+  if (!VERSION_TAG_RE.test(tag)) fail(`"${raw}" is not a version tag. Use the form v1.2.3 or v1.2.3-beta.1.`)
+  if (!git('rev-parse', '--is-inside-work-tree').ok) fail('not inside a git repository')
+  if (!git('rev-parse', '-q', '--verify', `refs/tags/${tag}`).ok) {
+    fail(`tag ${tag} does not exist locally. Make it with "npm run release", or get it with "git fetch --tags origin".`)
+  }
+  log(`    tag ${tag}: exists locally`)
+  if (!existsSync(join('releases', `${tag}.md`))) {
+    fail(`releases/${tag}.md is missing. It is the body of the GitHub Release. Get it with: git checkout ${tag} -- releases/${tag}.md`)
+  }
+  log(`    releases/${tag}.md: found`)
+  await publish(tag, { push: !opts['no-push'] })
+  process.exit(process.exitCode ?? 0)
 }
 
 // ---------------------------------------------------------------- a. preflight
@@ -331,23 +598,6 @@ const releaseFile = join(releasesDir, `v${nextVersion}.md`)
 let summary = null
 let keepExistingReleaseFile = false
 
-/** Ask one line. Resolves to null when there is no terminal or stdin closes. */
-async function askLine(question) {
-  if (!stdin.isTTY) {
-    log(`${question}(no terminal)`)
-    return null
-  }
-  const rl = createInterface({ input: stdin, output: stdout })
-  const closed = new Promise(resolve => rl.once('close', () => resolve(null)))
-  try {
-    const answer = await Promise.race([rl.question(question), closed])
-    return answer === null ? null : answer.trim()
-  }
-  finally {
-    rl.close()
-  }
-}
-
 async function readOwnSummary() {
   log('    Type your summary. Finish with an empty line.')
   const lines = []
@@ -486,6 +736,19 @@ if (dryRun) {
     fail('dry run left changes behind. This is a bug in scripts/release.mjs.')
   }
   log('    working tree: still clean')
+
+  const dryTag = `v${nextVersion}`
+  if (opts['no-push']) {
+    step(`Publish ${dryTag} (dry run)`)
+    log('    would not push (--no-push). Would print the manual commands:')
+    printManualCommands(dryTag)
+  }
+  else {
+    if (opts.push) log('\n    --push: would publish without asking')
+    else if (opts.yes || !stdin.isTTY) log('\n    no --push (and --yes or no terminal): would NOT push. With --push the steps are:')
+    else log('\n    would ask: Push main and the tag, and create the GitHub Release now? [y/N]. On yes:')
+    await publish(dryTag, { push: true })
+  }
   process.exit(0)
 }
 
@@ -536,4 +799,23 @@ if (!tag.ok) {
 log(`    tagged: v${nextVersion}`)
 
 log('')
-log('Done. Review with: git show --stat HEAD. Publish with: git push --follow-tags origin main')
+log('Done. The commit and the tag are local. Review with: git show --stat HEAD')
+
+// ---------------------------------------------------------------- g. publish (optional)
+
+const newTag = `v${nextVersion}`
+
+/** --push: yes. --no-push: no. --yes or no terminal: no (safe default). Else ask. */
+async function decidePush() {
+  if (opts.push) return true
+  if (opts['no-push']) return false
+  if (opts.yes || !stdin.isTTY) {
+    log(`\n${opts.yes ? '--yes' : 'No terminal'} without --push: not pushing.`)
+    return false
+  }
+  log('')
+  return askYesNo('Push main and the tag, and create the GitHub Release now? [y/N] ')
+}
+
+if (await decidePush()) await publish(newTag, { push: true })
+else printManualCommands(newTag)

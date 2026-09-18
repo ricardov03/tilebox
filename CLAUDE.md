@@ -24,7 +24,7 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 - Images: v1 local files. Later Pexels picker (decided over Unsplash). Later R2 uploads.
 - Deploy: Cloudflare Pages, build `npm run generate`, output `dist`, `NODE_VERSION=24`.
 - Commit messages: Conventional Commits (`type(scope): subject`, present tense, lower case, max 72 chars). A local commitlint hook rejects the rest. No attribution lines.
-- Release: `npm run release` (local, makes the version commit and the tag), then `git push --follow-tags origin main`. The tag starts the GitHub release workflow.
+- Release: `npm run release` (local, makes the version commit and the tag), then it asks to publish: `git push --follow-tags origin main` + the GitHub Release with the `gh` CLI (`--push` no question, `--no-push` manual commands, `--watch` waits for the pipeline; `gh` is optional). The tag starts `.github/workflows/release.yml`, which adds the zip and the checksum. Never upload a local zip (personal data). Repair an existing tag: `npm run release:publish -- vX.Y.Z`. Re-run the pipeline: `gh workflow run release.yml -f tag=vX.Y.Z`.
 - Publish: `npm run publish` (local, `scripts/publish.mjs`). First run: pick Cloudflare Pages or Netlify, browser login, site name, availability check, create, build, upload. Later runs: build + upload. State in `.tilebox/publish.json` (ignored). No tokens in the repo. `npm run deploy` = `publish -- --provider cloudflare`, `npm run deploy:preview` adds `--preview`. The pipeline never deploys.
 
 ## Still needed from Ricardo (not blocking WP0)
