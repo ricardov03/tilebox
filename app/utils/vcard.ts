@@ -6,6 +6,11 @@
  * Input: the top-level `contact` object and the profile NAME, nothing else.
  * The private `profile.email` never enters this function. No `PHOTO`: a
  * base64 picture would make the file large, and the page already shows it.
+ *
+ * WP17, the email spam shield: a vCard needs a RAW address by format, and this
+ * file is public. So the `EMAIL` line needs `contact.shareEmail === true`. Without
+ * it the card has no address at all, and `robots.txt` also asks polite bots to
+ * skip `/site/contact.vcf`.
  */
 import type { Contact } from '../../types/profile'
 import { splitName } from './site-head'
@@ -75,7 +80,8 @@ export function buildVCard(contact: Contact, profileName: string): string {
     ...(contact.org ? [`ORG:${escapeVCardText(contact.org)}`] : []),
     ...(contact.title ? [`TITLE:${escapeVCardText(contact.title)}`] : []),
     ...(contact.phone ? [`TEL;TYPE=CELL:${oneLine(contact.phone)}`] : []),
-    ...(contact.email ? [`EMAIL;TYPE=INTERNET:${oneLine(contact.email)}`] : []),
+    // Opt-in only (WP17): this file is public and the format cannot hide an address.
+    ...(contact.shareEmail === true && contact.email ? [`EMAIL;TYPE=INTERNET:${oneLine(contact.email)}`] : []),
     ...(contact.url ? [`URL:${oneLine(contact.url)}`] : []),
     ...(contact.note ? [`NOTE:${escapeVCardText(contact.note)}`] : []),
     'END:VCARD',
