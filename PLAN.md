@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: v1 done. WP6 release tooling done. WP7 (personal data out of git) done. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
+Status: v1 done. WP6 release tooling done. WP7 (personal data out of git) done. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). WP9 profile extras (pulsing dot, highlights, private email, Gravatar avatar) on `wp/9-profile-extras`. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -287,8 +287,8 @@ UI icons: link `line-md:link`, external `line-md:external-link`, map `line-md:ma
 - Real `<a>` for every link tile. Focus ring visible: 2px `--color-accent` outline, 2px offset.
 - Text contrast 4.5:1 minimum on every preset, light and dark, for every text pair including accent-soft and hover. `npm run check:contrast` runs in `pregenerate` and fails the build on a regression. Values above are the checked ones (2026-09-17).
 - Tiles: `rounded-tile` = 24px on phones, 28px from 768px (one token, `--radius-tile`, responsive). 1px `--color-line` border. No shadow. Hover: lift 2px.
-- Motion: one page-load stagger of tiles (40ms each, 300ms, opacity + 8px translate). `line-md` icons draw themselves once on load. Nothing else. Respect `prefers-reduced-motion` (stagger off; icons get `animation: none` via CSS).
-- Avatar: 96px circle desktop, 64px phone. Fallback = initials on the accent color with accent-soft text.
+- Motion: one page-load stagger of tiles (40ms each, 300ms, opacity + 8px translate). `line-md` icons draw themselves once on load. The status dot pulses (`animate-pulse`, WP9). Nothing else. Respect `prefers-reduced-motion` (stagger off; icons get `animation: none` via CSS).
+- Avatar: 96px circle desktop, 64px phone. Fallback = initials on the accent color with accent-soft text. Compact scale (WP9, when the profile has highlights or a visible email): 64px desktop, 40px phone, name 56px / 36px, bio 17px / 16px limited to 3 lines, so the fixed 2x2 tile never overflows.
 - Photo tile: image covers the tile. Caption sits bottom-left on a soft scrim only if `caption` is set.
 - No gradients, no shadows, no emoji as icons.
 
@@ -302,6 +302,9 @@ Two files, one shape (WP7): `content/profile.json` is the user's document, ignor
     "name": "Ricardo Vargas",
     "handle": "ricardov",
     "bio": "Front-end developer. I build web products with Nuxt and Vue.",
+    "highlights": ["Nuxt, Vue and TypeScript", "Design systems and accessible UI", "Founder of CONDOMERA"],
+    "email": "you@example.com",
+    "showEmail": false,
     "avatar": "/avatar.jpg",
     "status": "Now building CONDOMERA",
     "theme": { "colors": "condomera", "fonts": "geist", "mode": "system" }
@@ -325,6 +328,9 @@ Two files, one shape (WP7): `content/profile.json` is the user's document, ignor
 ```
 
 Rules:
+- `profile.highlights` (WP9): optional, max 3 strings, 1 to 80 chars each, default `[]`. A real `<ul>` under the bio.
+- `profile.email` (WP9): required, `z.email()`. `profile.showEmail`: boolean, default `false`. The public page never imports this file. It imports `#profile` = `.nuxt/tilebox/public-profile.json`, the output of `toPublicProfile()` (`types/profile.ts`), written by `modules/public-profile.ts`: no `email` unless `showEmail` is true, no `showEmail` key, `avatar` already resolved. Type: `PublicProfile`.
+- Avatar precedence (WP9): `profile.avatar` when set, else `/avatar.gravatar.jpg` when `scripts/fetch-avatar.ts` downloaded it (Gravatar, sha256 of the email, build time only, never at runtime), else initials.
 - `id` unique. `size` in `1x1 | 2x1 | 1x2 | 2x2`. `section` has no size.
 - `layout.mobile` optional. Falls back to `layout.desktop`.
 - Validate with `zod` in `types/profile.ts`. Export both the schema and the TS types from it.
@@ -410,6 +416,11 @@ Done when: `git ls-files` has `content/profile.example.json` and not `content/pr
 Owns: `scripts/publish.mjs`, `package.json` scripts (`publish`, `site:publish`, `deploy`, `deploy:preview`) and the `netlify-cli` dev dependency, README "Publish" section, `.tilebox/` and `.netlify/` lines in `.gitignore`.
 Design (decided by Ricardo): `npm run publish` publishes from the user's machine, like `netlify init` + `netlify deploy --prod`. First run: pick a provider (Cloudflare Pages or Netlify), log in with the browser, pick a site name, check the free subdomain is available (Cloudflare: DNS lookup of `<name>.pages.dev`; Netlify: HTTPS HEAD of `<name>.netlify.app`, 404 = free), create the project, build with `NUXT_PUBLIC_SITE_URL` = the live URL, upload, print the live URL, save the choices in `.tilebox/publish.json`. Later runs: build + upload + print. No API key or token in the repo, ever; the CLIs (`wrangler`, `netlify-cli`, both dev dependencies) keep the login in the home folder. The old `deploy` and `deploy:preview` scripts are thin aliases of `publish`. Node built-ins only, same style as `scripts/release.mjs`.
 Done when: `npm run publish -- --help` prints the usage. With fake `wrangler` and `netlify` shims first on `PATH`, `--provider cloudflare --name <free> --yes --no-build` and the Netlify equivalent create the project, write `.tilebox/publish.json` (provider, name, accountId or accountSlug, siteId, url, createdAt, lastPublishedAt) and print `Live: <url>`; the Netlify auto-suffix case stores the real name. A taken name (real DNS: `hono.pages.dev`; real HTTPS: `hono.netlify.app`) is refused before create. Invalid names, `--reset`, provider conflicts and a logged-out CLI fail with a clear message and exit 1 or 2. README "Publish" section, CLAUDE.md command, NOTES.md `## WP8`. `npm run lint` (covers `scripts/*.mjs`), `npm run typecheck`, `npm run generate` green. A real login and a real upload are verified by Ricardo.
+
+### WP9. Profile extras
+Owns: the `highlights`, `email`, `showEmail` fields and the `PublicProfile` types + `toPublicProfile()` in `types/profile.ts`, `modules/public-profile.ts`, the `#profile` alias target in `nuxt.config.ts`, `app/composables/useProfile.ts`, `app/components/ProfileHeader.vue`, `content/gravatar.ts`, `content/migrate.ts`, `scripts/fetch-avatar.ts`, the migration in `scripts/ensure-profile.ts`, the placeholder warning in `scripts/validate-profile.ts`, `server/api/avatar/gravatar.{get,post}.ts`, `app/components/editor/HighlightsField.vue`, `app/components/editor/GravatarButton.vue`, the Profile tab in `app/pages/edit.vue`, `tests/e2e/privacy.spec.ts`, `package.json` scripts (`fetch:avatar`, its place in `predev` and `pregenerate`).
+Design (decided by Ricardo): (A) the status dot pulses, not under `prefers-reduced-motion`, and is `aria-hidden`. (B) Up to 3 highlights under the bio, as a list. (C) The email is required and private by default: with `showEmail: false` it is in no file of the built site, because the page imports a sanitized copy of the profile, never the raw file. With `showEmail: true` it is a `mailto:` link with `line-md:email` under the highlights. (D) The avatar comes from the email through Gravatar, downloaded at build time to `public/avatar.gravatar.jpg` (ignored by git). An uploaded `profile.avatar` wins. The public page never calls gravatar.com. The editor has the email field, the visibility checkbox, 3 highlight inputs with counters and a "Use my Gravatar" button (dev-only route).
+Done when: `grep -r "hello@example.com" dist | wc -l` is 0 after `npm run generate` on the example. `tests/e2e/privacy.spec.ts` (every text file of `dist/` + the sanitizer unit checks) is green. A long bio + 3 long highlights + email + status stay inside the 2x2 tile at 1280 and 390. An old `profile.json` gets the 3 new keys from `ensure:profile`, one printed line, nothing else changed; a second run does nothing. A save in `/edit` reaches the public page in dev without a restart. `public/avatar.gravatar.jpg` is never tracked. axe stays at 0 violations. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev` green. README, `content/README.md`, NOTES.md `## WP9`.
 
 ## 9. Code review with Grok
 
