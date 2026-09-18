@@ -1,6 +1,7 @@
 /**
  * Dev only. Validates the body with the zod contract, checks every icon
  * against the installed Iconify packs, then writes content/profile.json.
+ * Always that file, never the example: it is created when it does not exist.
  * The write is atomic: a temp file in the same folder, then a rename.
  * `restartNeeded` is true when nuxt.config.ts must re-read the file
  * (theme preset or icon set changed).
@@ -8,7 +9,7 @@
 import { rename, unlink, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { ProfileSchema, type Profile } from '~~/types/profile'
-import { assertDev, checkIcons, iconsOf, PROFILE_PATH, readProfileFile } from '../utils/editor'
+import { assertDev, checkIcons, iconsOf, PROFILE_WRITE_PATH, readProfileFile } from '../utils/editor'
 
 function invalid(errors: string[]): never {
   throw createError({
@@ -59,6 +60,6 @@ export default defineEventHandler(async (event) => {
     restartNeeded = true
   }
 
-  await writeAtomic(PROFILE_PATH, `${JSON.stringify(next, null, 2)}\n`)
+  await writeAtomic(PROFILE_WRITE_PATH, `${JSON.stringify(next, null, 2)}\n`)
   return { ok: true as const, restartNeeded }
 })
