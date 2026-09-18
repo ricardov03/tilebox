@@ -36,6 +36,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Review pipeline suite (fake grok, no network)
+        run: npm run test:review
+
       - name: Generate
         run: npm run generate
 
