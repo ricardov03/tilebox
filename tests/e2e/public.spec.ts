@@ -2,7 +2,7 @@
  * Public page, prerendered `dist/`. Server: scripts/serve-dist.mjs.
  */
 import { expect, test } from '@playwright/test'
-import { columnsOf, readProfile, THEME_KEY, tileLefts } from './helpers'
+import { columnsOf, profileIsPersonal, readProfile, THEME_KEY, tileLefts } from './helpers'
 
 const profile = readProfile()
 const GRID = 'ul[aria-label="Tiles"]'
@@ -14,6 +14,55 @@ test('has one h1 with the profile name', async ({ page }) => {
   await expect(page.locator('h1')).toHaveCount(1)
   await expect(page.locator('h1')).toHaveText(profile.profile.name)
   await expect(page).toHaveTitle(profile.profile.name)
+})
+
+test('highlights render as a list under the bio', async ({ page }) => {
+  await page.goto('/')
+  const { highlights } = profile.profile
+  const list = page.locator('ul[aria-label="Highlights"]')
+  // The tracked example has 3. A personal file may have fewer; an empty list renders nothing.
+  if (!profileIsPersonal()) expect(highlights).toHaveLength(3)
+  if (highlights.length === 0) {
+    await expect(list).toHaveCount(0)
+    return
+  }
+  await expect(list.locator('> li')).toHaveCount(highlights.length)
+  await expect(list.locator('> li')).toHaveText(highlights)
+})
+
+test('the email shows as a mailto link only when showEmail is true', async ({ page }) => {
+  await page.goto('/')
+  const { email, showEmail } = profile.profile
+  if (!profileIsPersonal()) expect(showEmail).toBe(false)
+  const link = page.locator(`a[href="mailto:${email}"]`)
+  if (showEmail) {
+    await expect(link).toHaveCount(1)
+    await expect(link).toContainText(email)
+    return
+  }
+  await expect(link).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText(email)
+  // The example has no mailto link at all.
+  if (!profileIsPersonal()) await expect(page.locator('a[href^="mailto:"]')).toHaveCount(0)
+})
+
+test('the status dot pulses and is hidden from assistive tech', async ({ page }) => {
+  test.skip(!profile.profile.status, 'profile has no status')
+  await page.goto('/')
+  const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
+  await expect(dot).toHaveClass(/animate-pulse/)
+  expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('pulse')
+})
+
+test.describe('reduced motion', () => {
+  test.use({ reducedMotion: 'reduce' })
+
+  test('the status dot does not pulse', async ({ page }) => {
+    test.skip(!profile.profile.status, 'profile has no status')
+    await page.goto('/')
+    const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
+    expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+  })
 })
 
 test('shows 4 columns at 1280', async ({ page }) => {

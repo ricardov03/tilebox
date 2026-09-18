@@ -111,6 +111,76 @@ test('the save route rejects an empty profile name', async ({ page }) => {
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
 })
 
+test('edits email, email visibility and highlights, and saves them', async ({ page }) => {
+  await openEditor(page)
+  await page.getByRole('tab', { name: 'Profile' }).click()
+
+  await page.locator('#p-email').fill('me@tilebox.test')
+  await page.locator('#p-show-email').check()
+  await page.locator('#p-highlight-0').fill('First highlight')
+  await page.locator('#p-highlight-1').fill('')
+  await page.locator('#p-highlight-2').fill('Third input, second highlight')
+  await expect(page.getByText('15/80')).toBeVisible()
+
+  // The live preview shows the highlights, the email link and the pulsing dot.
+  const preview = page.locator('li[data-profile]')
+  await expect(preview.locator('ul[aria-label="Highlights"] > li')).toHaveText(['First highlight', 'Third input, second highlight'])
+  await expect(preview.locator('a[href="mailto:me@tilebox.test"]')).toBeVisible()
+  await expect(preview.locator('.animate-pulse')).toHaveCount(1)
+
+  await save(page)
+
+  const saved = readProfile().profile
+  expect(saved.email).toBe('me@tilebox.test')
+  expect(saved.showEmail).toBe(true)
+  // The empty input in the middle was dropped.
+  expect(saved.highlights).toEqual(['First highlight', 'Third input, second highlight'])
+
+  // The public page gets the new sanitized profile without a restart.
+  await page.goto('/')
+  await expect(page.locator('a[href="mailto:me@tilebox.test"]')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('ul[aria-label="Highlights"] > li')).toHaveCount(2)
+})
+
+test('hiding the email removes it from the public page', async ({ page }) => {
+  await openEditor(page)
+  await page.getByRole('tab', { name: 'Profile' }).click()
+  await expect(page.locator('#p-show-email')).toBeChecked()
+  await page.locator('#p-show-email').uncheck()
+  await expect(page.locator('li[data-profile] a[href^="mailto:"]')).toHaveCount(0)
+  await save(page)
+  expect(readProfile().profile.showEmail).toBe(false)
+
+  // The dev server rewrites the sanitized profile a moment after the save (file watcher). Production builds it fresh.
+  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).not.toContain('me@tilebox.test')
+  await page.goto('/')
+  await expect(page.locator('a[href="mailto:me@tilebox.test"]')).toHaveCount(0)
+})
+
+test('an invalid email shows an inline error and is not written', async ({ page }) => {
+  const before = readFileSync(PROFILE_PATH, 'utf8')
+  await openEditor(page)
+  await page.getByRole('tab', { name: 'Profile' }).click()
+
+  await page.locator('#p-email').fill('not-an-email')
+  await expect(page.locator('#p-email-error')).toContainText('email')
+  await expect(page.locator('#p-email')).toHaveAttribute('aria-invalid', 'true')
+
+  // The invalid value never reached the draft, so there is nothing to save.
+  await page.keyboard.press('ControlOrMeta+s')
+  await page.waitForTimeout(500)
+  expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
+  expect(before).not.toContain('not-an-email')
+})
+
+test('the Gravatar route refuses a placeholder email', async ({ request }) => {
+  const response = await request.post('/api/avatar/gravatar', { data: { email: 'you@example.com' } })
+  expect(response.status()).toBe(400)
+  const state = await request.get('/api/avatar/gravatar')
+  expect(state.status()).toBe(200)
+  expect(typeof (await state.json()).exists).toBe('boolean')
+})
+
 test('uploads a png through ImagePicker into public/blocks', async ({ page }) => {
   await openEditor(page)
   const profile: Profile = readProfile()
