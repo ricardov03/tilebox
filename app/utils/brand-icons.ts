@@ -83,8 +83,15 @@ export const BRAND_ICONS: Readonly<Record<string, string>> = {
  * Icons for links that are not web pages. The mail scheme comes from `MAILTO_PREFIX`,
  * because the literal string may be in no file of `dist/` (WP17, docs/invariants.md).
  */
+/**
+ * The icon of a mail link. ONE definition (WP20): the PUBLIC copy of a mail tile carries a
+ * `mail` token and no url, so `resolveLinkIcon` cannot ask `brandIconFor` for the scheme any
+ * more and reads this constant instead. `NETWORKS.email` and `UI_ICONS.email` are the same name.
+ */
+export const MAIL_ICON = 'line-md:email'
+
 const SCHEME_ICONS: Readonly<Record<string, string>> = {
-  [MAILTO_PREFIX]: 'line-md:email',
+  [MAILTO_PREFIX]: MAIL_ICON,
   'tel:': 'line-md:phone',
 }
 

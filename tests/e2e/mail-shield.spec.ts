@@ -31,8 +31,12 @@ import {
   PublicProfileSchema,
   PublicProfileShapeSchema,
   toPublicProfile,
+  type Block,
+  type LinkBlock,
   type Profile,
 } from '../../types/profile'
+import { MAIL_ICON } from '../../app/utils/brand-icons'
+import { resolveLinkIcon } from '../../app/components/blocks/media'
 import { buildJsonLd, buildHead } from '../../app/utils/site-head'
 import { linkTargets } from '../../content/link-check'
 
@@ -249,6 +253,23 @@ test.describe('the sanitizer', () => {
     expect(PublicProfileSchema.safeParse(withMailto).success).toBe(false)
   })
 
+  test('WP20: a public mail tile keeps the envelope the editor shows', () => {
+    const linkBlock = (profile: { blocks: Block[] }) => {
+      const block = profile.blocks.find(item => item.id === 'mail')
+      expect(block?.type).toBe('link')
+      return block as LinkBlock
+    }
+    // The editor still holds the `mailto:` url, so it shows the envelope.
+    expect(resolveLinkIcon(linkBlock(FIXTURE))).toEqual({ kind: 'icon', name: MAIL_ICON, source: 'brand' })
+    // The public copy has a token and NO url, so `brandIconFor` cannot see the scheme any more.
+    // Before WP20 this fell through to `line-md:link` and the tile changed its face in the build.
+    const mail = linkBlock(publicProfile)
+    expect(resolveLinkIcon(mail)).toEqual({ kind: 'icon', name: MAIL_ICON, source: 'brand' })
+    // An own icon still wins, and a tile with neither still gets the fallback.
+    expect(resolveLinkIcon({ ...mail, icon: 'line-md:home' })).toEqual({ kind: 'icon', name: 'line-md:home', source: 'manual' })
+    expect(resolveLinkIcon({})).toEqual({ kind: 'icon', name: 'line-md:link', source: 'fallback' })
+  })
+
   test('WP20: the guard reads every part of the public copy, `site` included', () => {
     const paths = (value: unknown) => {
       const result = PublicProfileSchema.safeParse(value)
@@ -352,6 +373,26 @@ test.describe('the mail tile in a browser', () => {
     expect(await page.content()).not.toMatch(/mailto:/i)
     expect(await page.content()).not.toContain(address)
     expect(await page.locator('a[href^="mailto:"]').count()).toBe(0)
+  })
+
+  test('WP20: the mail link tile draws the same envelope as the Email social tile', async ({ page }) => {
+    const tile = mailTile()
+    test.skip(tile === null, 'this profile has no mailto: tile')
+    if (!tile) return
+    await page.goto('/')
+    // The yardstick: the social `email` tile takes its icon from the NETWORKS map, which is the same
+    // `line-md:email` the mail scheme maps to. Before WP20 the LINK tile drew `line-md:link` instead,
+    // because the public copy has a `mail` token and no url for `brandIconFor` to read.
+    const socialIcon = page.locator(`${TILES} a[rel~="me"] svg, ${TILES} [data-protected-email] svg`)
+    const linkTile = page.locator(`${TILES} [data-protected-email]`, { hasText: tile.title }).first()
+    const linkIcon = linkTile.locator('svg').first()
+    const yardstick = page.locator(`${TILES} [data-protected-email]`, { hasText: 'Write to me' }).first().locator('svg').first()
+    test.skip(await yardstick.count() === 0, 'this profile has no Email social tile to compare with')
+    expect(await socialIcon.count()).toBeGreaterThan(0)
+    const shape = (html: string) => (html.match(/ d="[^"]+"/g) ?? []).join('|')
+    const linkShape = shape(await linkIcon.innerHTML())
+    expect(linkShape).not.toBe('')
+    expect(linkShape).toBe(shape(await yardstick.innerHTML()))
   })
 
   test('one mouse move upgrades it to a real mailto: link, with the same accessible name', async ({ page }) => {

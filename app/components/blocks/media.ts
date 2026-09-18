@@ -3,7 +3,8 @@
  * No Vue imports here: `scripts/*.ts` run this file with tsx.
  */
 import { LOCAL_ICON_PATH as LOCAL_FAVICON, LOCAL_THUMB_PATH as LOCAL_THUMB } from '../../../types/local-paths'
-import { brandIconFor } from '../../utils/brand-icons'
+import { brandIconFor, MAIL_ICON } from '../../utils/brand-icons'
+import type { MailToken } from '../../utils/mail-shield'
 
 /** The `source` of an image block, as far as the credit line needs it. */
 export interface ImageCreditSource {
@@ -114,10 +115,14 @@ const FALLBACK_LINK_ICON = 'line-md:link'
 
 /**
  * Icon of a link tile, in order (WP10a): the owner's `icon`, the brand icon
- * from the URL (no network), the local favicon file, then `line-md:link`.
+ * from the URL or from a `mail` token, the local favicon file, then `line-md:link`.
  */
-export function resolveLinkIcon(block: { url?: string, icon?: string, favicon?: string }): LinkIcon {
+export function resolveLinkIcon(block: { url?: string, icon?: string, favicon?: string, mail?: MailToken }): LinkIcon {
   if (block.icon) return { kind: 'icon', name: block.icon, source: 'manual' }
+  // WP20: the PUBLIC copy of a mail tile has a `mail` token and NO url (the shield removed it), so
+  // `brandIconFor` can no longer see the mail scheme. Without this the built page drew the generic
+  // link icon while the editor, which still holds the `mailto:` url, showed the envelope.
+  if (block.mail !== undefined) return { kind: 'icon', name: MAIL_ICON, source: 'brand' }
   // WP17: no URL yet (an incomplete block in the editor) = the default link icon.
   const brand = block.url ? brandIconFor(block.url) : undefined
   if (brand) return { kind: 'icon', name: brand, source: 'brand' }
