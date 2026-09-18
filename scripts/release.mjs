@@ -125,9 +125,12 @@ function readPackageVersion() {
   return JSON.parse(readFileSync('package.json', 'utf8')).version
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function versionHeadingRe(version) {
-  const v = version.replaceAll('.', '\\.')
-  return new RegExp(`^#{2,3} \\[?${v}\\]?[ (]`)
+  return new RegExp(`^#{2,3} \\[?${escapeRegExp(version)}\\]?[ (]`)
 }
 
 const anyVersionHeadingRe = /^#{2,3} \[?\d+\.\d+\.\d+[^ \]]*\]?[ (]/
