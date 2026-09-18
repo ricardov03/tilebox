@@ -1,6 +1,6 @@
 # Security: the link preview engine, the Pexels picker and the dev routes
 
-State: WP10 security round + WP12 (Pexels picker), 2026-09-18. Code: `content/unfurl.ts`, `content/unfurl-cache.ts`, `server/utils/editor.ts`, `public/_headers`. Tests: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`.
+State: WP10 security round + WP12 (Pexels picker) + WP18 (local icon search), 2026-09-18. Code: `content/unfurl.ts`, `content/unfurl-cache.ts`, `content/icon-index.ts`, `server/utils/editor.ts`, `public/_headers`. Tests: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`, `icons.spec.ts`, `icons-dev.spec.ts`.
 
 ## What runs where
 - The PUBLIC site is static files. It has no server code, makes no request to another host, and never runs the engine.
@@ -10,6 +10,7 @@ State: WP10 security round + WP12 (Pexels picker), 2026-09-18. Code: `content/un
 - The URL of a link tile, chosen by the owner. From it: the page head (512 KB at most), a keyless oEmbed endpoint for 13 known sites, the web manifest, icon candidates, and the preview image when the owner asked for it.
 - Last resort for an icon: Google's favicon service. It gets the link's hostname, at edit or build time, from the owner's machine.
 - Video tiles: the YouTube thumbnail, through the same guarded request.
+- **One outbound call less since WP18.** The editor's icon search used to ask `api.iconify.design/search` on every keystroke, which sent the owner's search text to another host. It now reads the two installed packs from `node_modules/@iconify-json/<set>/icons.json` (`content/icon-index.ts`, found with `ROOT`), so the editor searches icons offline and no search text leaves the machine. `GET /api/icons/svg` draws one icon from the same local data for the picker's previews, so those previews need no foreign host either.
 - The avatar from the email (`content/gravatar-fetch.ts`, WP15): one request to `https://gravatar.com/avatar/<sha256 of the email>`, through the same guarded request, with a host allow-list (`gravatar.com`, `www.gravatar.com`, `secure.gravatar.com`, `https` only, on every redirect hop). 2 MB at most, a real JPEG, PNG or WebP by its first bytes, then sharp writes a NEW WebP (input limit 4096x4096 pixels, `failOn: 'error'`, 512 px at most, no metadata) with the fixed name `public/avatar.gravatar.webp`. Before WP15 the answer was stored as it came.
 
 ## The attacker
@@ -27,6 +28,14 @@ State: WP10 security round + WP12 (Pexels picker), 2026-09-18. Code: `content/un
 
 ## The dev routes (`server/api/*`)
 All are 404 outside `nuxt dev`. One gate, `assertEditorRequest()`: `Host` must be localhost / 127.0.0.1 / [::1] (DNS rebinding) -> 403; `Origin`, when present, must be this origin -> 403; `Sec-Fetch-Site: cross-site` or `same-site` -> 403; `Content-Type` must be `application/json` (uploads: `multipart/form-data`) -> 415. An HTML form on another website can never send JSON, so it cannot save a profile or start a fetch. Uploads: an SVG is drawn as a PNG and only the PNG is stored; a raster must decode as the format its name says.
+
+## The icon routes (WP18)
+Code: `app/utils/icon-sets.ts`, `content/icon-index.ts`, `server/api/icons/search.get.ts`, `server/api/icons/svg.get.ts`.
+- **No network.** Both routes read local pack files only. `icons.spec.ts` checks the source of the two routes and of the index for any network call (`fetch`, `$fetch`, `ofetch`, `node:http`, `node:net`, `api.iconify.design`) and for any import outside a small allow-list.
+- **Dev only.** The index is loaded through `import.meta.dev ? await import(...) : null`, so a production build has no copy of it and both routes are 404 there. Then `assertEditorRequest(event, 'none')` as usual.
+- **Input.** Zod: `q` is one string (an array is a 400) and the index cuts it to 64 characters; `name` must match `ICON_NAME_RE` (an allowed set, then `[a-z0-9]` words joined by single hyphens), `color` is six hex digits. So no caller-supplied text ever reaches a file path: the name is a key of an already parsed JSON object, never part of a path. A traversal string like `../../package.json` fails the pattern (400).
+- **Output.** The search returns names of the two sets only. The SVG is built from the pack's `body`, width and height; a body that could act as a page (`<script`, `<foreignObject`, an `on...=` attribute, `javascript:`, `<iframe`, `<!ENTITY`) is refused as a second layer, and `/api/icons/svg` gets the same sandbox CSP and `nosniff` as the asset folders (guard layer 5), so the file can run nothing when it is opened directly. `Cache-Control: max-age=3600`.
+- **Removed brands.** An icon the pack marks `hidden: true`, or an alias whose parent chain is hidden, is absent from the search, gives 404 on the SVG route, and is refused by a save and by `npm run check:icons`.
 
 ## The link checker (WP11)
 `npm run check:links`, the step before the upload in `npm run publish`, and the dev route `POST /api/links/check` (`content/link-check.ts`) ask every external http(s) URL of the profile. They use the SAME guarded request as the engine (`safeRequest()`), so guard layers 1 and 2 apply without change: public unicast addresses only, the pinned address, ports 80 and 443, every redirect hop checked, 8 s per hop, one budget of 20 s and 8 redirects per URL, the honest user agent. The only addition to the engine is the method: `HEAD` first, then one `GET` that reads 1 KB at most when the site answers 403, 405 or 501. 60 URLs at most, 4 at a time, one request per host at a time. Nothing is stored: no file, no cache entry, no change to the profile. A link to a private address is reported as `broken` (`blocked address`) without any connection. The route goes through `assertEditorRequest()` like every other dev route, and a closed editor request stops the job.

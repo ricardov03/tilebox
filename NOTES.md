@@ -1749,3 +1749,61 @@ $ npx nuxt build; grep -rl tilebox-unfurl .output/server | wc -l -> 0
 - The dev server prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. They were already in the first dev run of this branch, before any editor change. Not looked into.
 - Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport (the live check was a 404).
 The 2 skips are the two "example only" tests of WP14 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start. New tests: static +9 (gravatar 13 for 5, second-wave +1), dev +4 (pexels-editor +1, second-wave-editor +3).
+
+## WP18. Two icon sets, local search
+
+Branch `wp/18-icon-sets`. Date 2026-09-18. Plan: `PLAN.md` section 5.5 and section 8 `WP18`.
+Ricardo asked for it in these words: "We need to limit all the icons possibilities. Let's support simple-icons and line-md by default. Let's make the search only look into these libraries in the search box."
+
+### For the owner of `app/components/editor/IconPicker.vue`
+- **Swap the result preview `img` src to `/api/icons/svg?name=`.** `previewUrl()` (line 38) still builds `https://api.iconify.design/<prefix>/<icon>.svg?color=%23<inkHex>`. The new dev route takes the same two values: `/api/icons/svg?name=<prefix:name>&color=<rrggbb>` (no `#`, six hex digits). Then the editor makes no `api.iconify.design` request at all. Nothing else in that file has to change: `/api/icons/search` keeps its `{ icons: string[] }` shape.
+
+### What changed
+- `app/utils/icon-sets.ts` (new) is the ONE list: `ICON_SETS = ['line-md', 'simple-icons']`, `IconSet`, `ICON_NAME_RE` (`^(line-md|simple-icons):[a-z0-9]+(?:-[a-z0-9]+)*$`, built from the list), `isAllowedIconName()`, `iconSetOf()`, `iconSetUrl()`, `ICON_SETS_TEXT`, `ICON_SETS_MESSAGE`. Client-safe: no node import, so the schema, the app, the server, the scripts and the tests all read the same file.
+- `types/profile.ts`: `iconName` is `z.string().regex(ICON_NAME_RE, ICON_SETS_MESSAGE)`. The message is "Use an icon from line-md or simple-icons". The old pattern took any prefix.
+- `content/migrate.ts`: `migrateIconsText()` removes an `icon` of another set from its block, plus `foreignIcons()`, `removedIconLine()` and `foreignIconAdvice()`. Called from `scripts/ensure-profile.ts` (so it runs in `predev`). It cuts the `"icon": "..."` line when it can, so a hand-made file keeps its own layout; otherwise it rewrites 2-space JSON with a final newline. Idempotent. `content/profile.example.json` is never touched. `scripts/validate-profile.ts` adds one advice line when a build hits such an icon (a build never changes your file).
+- `content/icon-index.ts` (new) is the local index and the ONE rule. `iconStatus()` / `iconProblem()` (allowed set AND exists AND not hidden), `searchIcons()`, `defaultIcons()`, `buildIconSvg()`, `iconIndexStats()`. The packs are found with `createRequire(resolve(ROOT, 'package.json'))`: from `ROOT` of `content/resolve.ts`, never from the file's own location (Nitro bundles it into `.nuxt/`, the bug that broke `/api/profile` once).
+- `server/api/icons/search.get.ts`: no more `fetch` of `api.iconify.design`. It loads the index under `import.meta.dev` only, then `assertEditorRequest(event, 'none')`, then zod (`q` once, an array is a 400). Answer `{ icons, sets, total }`, 48 names at most.
+- `server/api/icons/svg.get.ts` (new): `GET /api/icons/svg?name=<prefix:name>[&color=<rrggbb>]` -> `image/svg+xml`, `Cache-Control: max-age=3600`, and the sandbox CSP + `nosniff` of the asset folders through a `routeRules` entry in `nuxt.config.ts`. 400 for another set or a bad shape, 404 for a missing or hidden icon.
+- `server/utils/editor.ts`: `checkIcons()` is now four lines over `iconProblem()`. The pack loader, its zod schemas and its cache moved to the index, so save and `check:icons` cannot drift apart.
+- `scripts/check-icons.ts`: same rule, one message per problem, both collection links. It reads the raw profile JSON instead of `parseProfile()`, so a foreign name gets this script's message and not a schema error.
+- `nuxt.config.ts`: `iconsIn()` and the dev brand list drop a name outside the two sets instead of asking `@nuxt/icon` to bundle it.
+
+### Ranking (the search)
+Query: lower case, trimmed, cut to 64 characters, split on spaces and hyphens. 0 exact name, 1 name starts with the query, 2 every token starts a name segment, 3 name contains the query. Ties: `line-md` before `simple-icons`, then the shorter name, then the alphabet. A query that is itself an allowed name and exists is the FIRST result. An empty query gives `UI_ICONS` + the networks, so the grid is never blank.
+`mail` shows the rule at work: `simple-icons:mailbox` (starts with) comes before `line-md:email` (contains). That is the spec, not a bug.
+
+### Numbers (2026-09-18, this machine)
+| Set | names in the pack | hidden | in the index |
+|---|---|---|---|
+| `line-md` | 1279 | 15 | 1264 |
+| `simple-icons` | 3745 | 275 | 3470 |
+| both | 5024 | 290 | 4734 |
+
+Hidden = the brands simple-icons removed, plus their aliases (`simple-icons:linkedin`, `simple-icons:slack`, `simple-icons:amazonaws` -> hidden parent). `line-md:linkedin` is there.
+Index build 61 ms (budget 1500 ms). One query: `mail` 1.4 ms, `github`/`a` 2.0 ms, `you tube` 7.3 ms (budget 50 ms). Built once per dev process.
+
+### Checks
+```
+$ npm ci                                   -> exit 0
+$ npm run lint                             -> exit 0
+$ npm run typecheck                        -> exit 0
+$ npm run test:review                      -> exit 0 (passed=130 failed=0)
+$ npm run check:icons                      -> exit 0 (68 icons, line-md and simple-icons)
+$ npm run generate                         -> exit 0
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ npx playwright test                      -> 353 passed, 2 skipped (static 262, dev 91)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+$ npm run dev -- --port 3482               -> /edit 200, /api/icons/search?q=mail 200,
+                                              /api/icons/svg?name=line-md:email 200 image/svg+xml,
+                                              0 ERROR lines in 20 s
+```
+New tests: static +24 (`icons.spec.ts`), dev +10 (`icons-dev.spec.ts`).
+The 2 skips are the same two "example only" tests as before (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before the static project reads it, so `profileIsPersonal()` is true and both skip themselves.
+Live migration check: two foreign icons put into `content/profile.json` by hand, then `npm run ensure:profile` printed
+`profile: removed icon "lucide:mail" from block b1 (only line-md and simple-icons are supported)` and the same line for `mdi:home` / block `b7`. A second run printed nothing.
+
+### Open
+- The `IconPicker.vue` preview `img` still calls `api.iconify.design`. One line for its owner, above. Until then the editor makes one foreign request per shown result; the search itself makes none.
+- No Grok verdict for this branch yet (`npm run review -- --range main..wp/18-icon-sets --files <block>`).
+- A pack update can hide more brands. `npm run check:icons` runs in `pregenerate`, so a build says so; the profile keeps the name until you change it (the migration only removes a FOREIGN set, never a hidden icon, so nothing is lost silently).

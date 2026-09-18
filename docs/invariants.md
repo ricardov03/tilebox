@@ -4,7 +4,7 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 
 ## The public page
 1. **Static.** `npm run generate` writes plain files to `dist/`. No server code, no `/edit`, no `/api` in `dist/`.
-2. **No runtime network call.** The public page never asks another host for anything: no font, icon API, image URL, embed, analytics or third-party script. Fonts, icons, favicons and thumbnails are fetched at BUILD time and served as local files. `api.iconify.design` is allowed in the editor only.
+2. **No runtime network call.** The public page never asks another host for anything: no font, icon API, image URL, embed, analytics or third-party script. Fonts, icons, favicons and thumbnails are fetched at BUILD time and served as local files. `api.iconify.design` is not used by the editor's icon search or icon previews either: those read the installed packs from disk (rule 16).
 3. **Color and font tokens only.** Components use the tokens of `app/assets/css/main.css` and the presets. No literal color, no literal font family. Every text pair keeps 4.5:1 (`npm run check:contrast`).
 
 ## Personal data
@@ -26,9 +26,10 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 ## Contracts
 14. **Zod schemas are `.strict()` and old profiles stay valid.** A new field is optional or has a default; `content/migrate.ts`, `content/profile.example.json`, `PLAN.md` section 6 and the README change in the same branch. One rule, one definition: a rule that exists in a script AND in the editor is a bug waiting.
 15. **TypeScript strict. No `any`. No `console.log` left behind** (scripts that print their result are the exception).
+16. **Icons come from the two installed sets only, and the editor's icon search is local.** `ICON_SETS` in `app/utils/icon-sets.ts` (`line-md`, `simple-icons`) is the ONE source: the schema pattern (`ICON_NAME_RE`), the save check, `scripts/check-icons.ts`, the bundle list in `nuxt.config.ts` and the profile migration all read it. `package.json` lists exactly those two `@iconify-json/*` packs. A name of another set, an icon that does not exist in its pack, and an icon the pack marks `hidden: true` (a removed brand) are all refused, with one message that names the two sets. `/api/icons/search` and `/api/icons/svg` answer from `node_modules/@iconify-json/<set>/icons.json` through `content/icon-index.ts`, resolved with `ROOT`: no `api.iconify.design`, no network, so the editor works offline and a search text never leaves the machine.
 
 ## Process
-16. **A change to `content/resolve.ts` or to `server/` runs the Playwright `dev` project**, not only `static`: `npx playwright test --project=dev`. The `static` project cannot see a broken dev server.
-17. **Every branch ends green:** `npm run lint`, `npm run typecheck`, `npm run generate`, `npm run test:review`, the Playwright projects it touches. Output goes to `NOTES.md`.
-18. **Review before a merge:** `npm run review -- --range main..<branch> --files <block>` per block (`docs/review-tools.md`). The model that writes the code is never the model that reviews it. A blind run (exit 3) is not a pass.
-19. **Conventional Commits** (`type(scope): subject`, lower case, present tense, 72 chars at most; commitlint rejects the rest). **No attribution or co-author lines** in commits, code or docs.
+17. **A change to `content/resolve.ts` or to `server/` runs the Playwright `dev` project**, not only `static`: `npx playwright test --project=dev`. The `static` project cannot see a broken dev server.
+18. **Every branch ends green:** `npm run lint`, `npm run typecheck`, `npm run generate`, `npm run test:review`, the Playwright projects it touches. Output goes to `NOTES.md`.
+19. **Review before a merge:** `npm run review -- --range main..<branch> --files <block>` per block (`docs/review-tools.md`). The model that writes the code is never the model that reviews it. A blind run (exit 3) is not a pass.
+20. **Conventional Commits** (`type(scope): subject`, lower case, present tense, 72 chars at most; commitlint rejects the rest). **No attribution or co-author lines** in commits, code or docs.
