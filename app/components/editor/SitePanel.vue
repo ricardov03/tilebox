@@ -82,6 +82,8 @@ interface AssetsResponse {
   ogSource: 'upload' | 'generated' | 'none'
   messages: string[]
   version: string
+  /** The contact card and the QR code of the same call (content/site-extras.ts). */
+  extras?: { qrUrl: string, messages: string[] }
 }
 
 interface FetchErrorLike {
@@ -97,8 +99,9 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : 'Request failed'
 }
 
-/** Cache-busting stamp of the previews. Set on the client only, so the first render has no `?v=`. */
-const version = ref('')
+/** Cache-busting stamp of the previews, shared with the QR panel (the same route writes the files of both). */
+const assets = useSiteAssets()
+const { bust } = assets
 const busy = ref<'regenerate' | AssetKey | null>(null)
 const assetError = ref<string | null>(null)
 const assetNotes = ref<string[]>([])
@@ -106,11 +109,11 @@ const lastFaviconSource = ref<AssetsResponse['faviconSource'] | null>(null)
 /** false after a preview image failed to load (no generated file yet). */
 const previewOk = reactive({ ico: true, apple: true, og: true })
 
-onMounted(() => {
-  version.value = Date.now().toString(36)
+onMounted(assets.touch)
+// New files, also when the QR panel made them: load every preview again.
+watch(assets.version, () => {
+  previewOk.ico = previewOk.apple = previewOk.og = true
 })
-
-const bust = (path: string) => (version.value ? `${path}?v=${version.value}` : path)
 
 const FAVICON_LABELS: Record<AssetsResponse['faviconSource'], string> = {
   upload: 'your upload',
@@ -131,7 +134,7 @@ async function regenerate(nextSite: Site | undefined = props.profile.site, reaso
   try {
     const body: Profile = { ...props.profile, site: nextSite }
     const res = await $fetch<AssetsResponse>('/api/site/assets', { method: 'POST', body })
-    version.value = res.version
+    assets.made(res)
     assetNotes.value = res.messages
     lastFaviconSource.value = res.faviconSource
     previewOk.ico = previewOk.apple = previewOk.og = true
