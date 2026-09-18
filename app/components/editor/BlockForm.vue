@@ -13,7 +13,7 @@
   opens the shared inline confirm.
 -->
 <script setup lang="ts">
-import { BlockSchema, SPOTLIGHTS, type Block, type Spotlight } from '~~/types/profile'
+import { BlockSchema, QR_SIZES, SPOTLIGHTS, type Block, type Spotlight } from '~~/types/profile'
 import { SIZES } from '~/utils/sizes'
 import { NETWORK_IDS, NETWORKS, UI_ICONS } from '~/utils/networks'
 
@@ -22,6 +22,9 @@ const props = defineProps<{
   /** The inline delete confirm is open in this form. */
   confirming: boolean
 }>()
+
+/** The Size options are the list of the block's schema: a QR tile is square (`QR_SIZES`), so the control never offers a size the schema refuses. */
+const sizeOptions = computed<readonly string[]>(() => (props.block.type === 'qr' ? QR_SIZES : SIZES))
 
 const emit = defineEmits<{
   'update:block': [block: Block]
@@ -158,7 +161,7 @@ const labelClass = LABEL_CLASS
         @change="patch({ size: text($event) })"
       >
         <option
-          v-for="size in SIZES"
+          v-for="size in sizeOptions"
           :key="size"
           :value="size"
         >

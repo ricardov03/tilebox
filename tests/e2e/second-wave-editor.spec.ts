@@ -121,6 +121,44 @@ test('schedule: the two inputs round-trip to ISO with this machine\'s offset, a 
   expect(cleared).toEqual(block)
 })
 
+test('a QR block offers only the sizes its schema takes', async ({ page }) => {
+  await openEditor(page)
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'QR code', exact: true }).click()
+  const size = page.locator('form select[id$="-size"]')
+  await expect(size).toHaveValue('1x1')
+  await expect(size.locator('option')).toHaveText(['1x1', '2x2'])
+  await size.selectOption('2x2')
+  await expect(page.locator('form [role="alert"]')).toHaveCount(0)
+  // Another type still has every size.
+  await page.getByRole('button', { name: '← All blocks' }).click()
+  await page.locator(`[data-select-block="${firstLink().id}"]`).click()
+  await expect(page.locator('form select[id$="-size"] option')).toHaveCount(4)
+  // Not saved: the next test loads the file again.
+})
+
+test('schedule: a date that is half typed stays when the form renders again (a late commit of another field)', async ({ page }) => {
+  const block = firstLink()
+  const oldTitle = block.type === 'link' ? block.title : ''
+  await openBlock(page, block.id)
+  const start = page.locator('[data-schedule-input="startsAt"]')
+  await start.fill('2031-05-06T10:00')
+  await expect(start).toHaveValue('2031-05-06T10:00')
+  // Clear ONE part of the date: the control is incomplete and its value is ''. The browser fires `change` for
+  // that too, so the local state follows and a new render has nothing old to write back (Grok B5b2 said it had).
+  await start.focus()
+  await page.keyboard.press('Backspace')
+  await expect(start).toHaveValue('')
+  // The title commits now (as its idle timer does while the owner is already in the date field): the form renders again.
+  const title = page.locator('form input[id$="-title"]')
+  await title.fill(`${oldTitle} x`)
+  await title.blur()
+  await expect(page.locator(`li[data-id="${block.id}"]`)).toContainText(`${oldTitle} x`)
+  // The half-typed date is still half typed: the old date did not come back.
+  await expect(start).toHaveValue('')
+  // Not saved: the next test loads the file again.
+})
+
 test('an end date in the past shows Expired', async ({ page }) => {
   const block = firstLink()
   await openBlock(page, block.id)
