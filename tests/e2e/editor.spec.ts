@@ -776,6 +776,39 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
   await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:github'))
 })
 
+test('WP20: two untitled mail links are named by their addresses, not both "Link without a title"', async ({ page }) => {
+  await openEditor(page)
+  await mockIcons(page)
+  const form = page.locator('form')
+
+  /** A new link block with an emptied title and this URL. Returns its id. */
+  const untitledLink = async (url: string) => {
+    // "All blocks" only exists while a block form is open, so the first round has nothing to close.
+    const back = page.getByRole('button', { name: 'All blocks' })
+    if (await back.count()) await back.click()
+    await page.getByRole('button', { name: 'Add block' }).click()
+    await page.getByRole('button', { name: 'Link', exact: true }).click()
+    const id = (await page.locator('li[data-id]').last().getAttribute('data-id')) ?? ''
+    await form.locator('input[id$="-url"]').fill(url)
+    const title = form.locator('input[id$="-title"]')
+    await title.fill('')
+    await title.blur()
+    return id
+  }
+
+  const ada = await untitledLink('mailto:ada@tilebox.test')
+  const bob = await untitledLink('mailto:bob@tilebox.test')
+  await page.getByRole('button', { name: 'All blocks' }).click()
+
+  // The list row, and every control named after the block. Before WP20 `hostOf()` gave '' for a
+  // mail URL, so BOTH rows read "Link without a title" and the two tiles could not be told apart.
+  await expect(page.locator(`li[data-id="${ada}"]`)).toContainText('ada@tilebox.test')
+  await expect(page.locator(`li[data-id="${bob}"]`)).toContainText('bob@tilebox.test')
+  await expect(page.locator('li[data-id]').filter({ hasText: 'Link without a title' })).toHaveCount(0)
+  await expect(page.locator(`[data-delete-block="${ada}"]`)).toHaveAttribute('aria-label', 'Delete ada@tilebox.test')
+  await expect(page.locator(`[data-hide-block="${bob}"]`)).toHaveAttribute('aria-label', 'Hide bob@tilebox.test')
+})
+
 test('Hide dims the block, the save keeps it in the file and drops it from the page, Show brings it back', async ({ page }) => {
   const block = readProfile().blocks.find(b => b.type === 'map' && !b.hidden)
   if (!block || block.type !== 'map') throw new Error('the sample has a map block')

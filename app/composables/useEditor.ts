@@ -4,7 +4,7 @@
  * and talks to the dev-only routes in server/api.
  */
 import type { Block, BlockType, Profile, Theme } from '~~/types/profile'
-import { hostOf } from '~/components/blocks/media'
+import { domainLabel } from '~/components/blocks/media'
 
 export type LayoutKey = 'desktop' | 'mobile'
 export type EditorTab = 'profile' | 'blocks' | 'theme' | 'site'
@@ -131,7 +131,10 @@ export function copyOf(source: Block, takenIds: readonly string[]): Block {
 /** One short line that names a block in lists and preview tiles. */
 export function blockSummary(block: Block): string {
   switch (block.type) {
-    case 'link': return block.title ?? (hostOf(block.url) || 'Link without a title')
+    // WP20: `domainLabel`, the SAME helper the tile uses, so a `mailto:` or `tel:` link without a
+    // title is named by its address or number here too. `hostOf` has no hostname for those schemes,
+    // so every such tile read "Link without a title" and two of them were impossible to tell apart.
+    case 'link': return block.title ?? (domainLabel(block.url) || 'Link without a title')
     case 'social': return block.label ?? block.network
     case 'image': return block.caption ?? block.alt ?? 'Image without a description'
     case 'text': return block.title ?? (block.body?.slice(0, 40) || 'Empty text')

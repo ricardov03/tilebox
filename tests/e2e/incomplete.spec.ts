@@ -3,11 +3,14 @@
  * Every text of a block is optional in the file. A block without its ESSENTIAL value is
  * "incomplete": it is valid, it saves, and the build leaves it out like a hidden block.
  */
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
+import { ROOT } from './helpers'
 import { linkTargets } from '../../content/link-check'
 import { linkNeedsFetch } from '../../content/unfurl-cache'
 import { buildHead, defaultSiteTitle, siteDescription } from '../../app/utils/site-head'
-import { resolveLinkIcon } from '../../app/components/blocks/media'
+import { domainLabel, hostOf, resolveLinkIcon } from '../../app/components/blocks/media'
 import {
   BlockSchema,
   blockDropReason,
@@ -109,4 +112,23 @@ test('the head, the icon, the link check and the link preview take a profile wit
   expect(linkTargets(input)).toEqual([])
   const [link] = input.blocks
   expect(link?.type === 'link' && linkNeedsFetch(link)).toBe(false)
+})
+
+test('WP20: the name of an untitled link comes from `domainLabel`, which reads every scheme', () => {
+  // `blockSummary()` in app/composables/useEditor.ts names an untitled link in the editor list,
+  // in the preview aria-labels and on every hide / duplicate / delete control. It used `hostOf()`,
+  // which has NO hostname for `mailto:` and `tel:`, so every such tile read "Link without a title"
+  // and two of them could not be told apart. `domainLabel()` is the helper the tile itself uses.
+  // (`useEditor.ts` needs the Nuxt auto-imports, so it cannot be imported here; the browser test
+  // "WP20: two untitled mail links are named by their addresses" in editor.spec.ts drives the real list.)
+  expect(hostOf('mailto:ada@example.com')).toBe('')
+  expect(hostOf('tel:+12025550100')).toBe('')
+  expect(domainLabel('mailto:ada@example.com')).toBe('ada@example.com')
+  expect(domainLabel('mailto:bob@example.com')).toBe('bob@example.com')
+  expect(domainLabel('tel:+12025550100')).toBe('+12025550100')
+  expect(domainLabel('https://github.com/nuxt')).toBe('github.com')
+  expect(domainLabel(undefined)).toBe('')
+  const source = readFileSync(resolve(ROOT, 'app/composables/useEditor.ts'), 'utf8')
+  expect(source).toContain('domainLabel(block.url)')
+  expect(source).not.toContain('hostOf(block.url)')
 })
