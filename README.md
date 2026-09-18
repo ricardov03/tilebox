@@ -15,6 +15,12 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Editing by hand](#editing-by-hand)
 - [Link previews](#link-previews)
 - [Site metadata](#site-metadata)
+- [Scheduling](#scheduling)
+- [Save contact](#save-contact)
+- [QR code](#qr-code)
+- [Share button](#share-button)
+- [UTM tags](#utm-tags)
+- [Link check](#link-check)
 - [Scripts](#scripts)
 - [Tests](#tests)
 - [CI](#ci)
@@ -34,12 +40,18 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Avatar from your email: the build downloads your Gravatar picture once. The public page never calls gravatar.com.
 - Site metadata from your profile: title, description, canonical link, Open Graph and X card, JSON-LD (`ProfilePage` + `Person`), `rel="me"` on social links, optional `noindex`. Edit it in `/edit` > **Site**.
 - Favicon set and social preview image made at build time from your avatar or your initials, in your colors. Your own upload wins. No network, no service.
-- Seven tile types: link, social, image, text, section, map, video.
+- Nine tile types: link, social, image, text, section, map, video, save contact, QR code.
 - Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
 - Smart links: paste a URL and the tile finds its brand icon (about 60 sites, no network). With link previews on, your machine reads the title, the description, the icon and, only if you switch it on, the image of the website. Everything is saved as local files. Visitors never call another host.
 - Featured look: a 2x1, 1x2 or 2x2 link tile can show the website's image next to its text.
 - Hide a block without deleting it: a hidden block stays in the editor and is in no file of the built site.
+- Schedule a block: a start date, an end date, or both. The build leaves a block out before its start and after its end. A tile with an end date also hides itself in the browser when the time has passed.
+- Save contact: a tile that downloads your contact card (vCard), a local file the build writes from fields you mark as public.
+- QR code of your page, drawn at build time as a local SVG. The editor also gives you a 1024 px PNG for print.
+- Share button on the profile tile: the share sheet of the phone, else "Link copied". Browser APIs only.
+- UTM tags added at build time to the links that leave your site. Your saved links stay clean.
+- Dead-link check: `npm run check:links`, also before every publish and as a button in the editor. It only warns.
 - Duplicate a block with one click. Spotlight: one tile can ask for attention with a gentle move every 6 seconds (off with reduced motion).
 - Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
 - Remove a block from the list, from the tile, or with the Delete key. Every delete asks first, and Undo stays for 8 seconds.
@@ -152,6 +164,7 @@ An older `profile.json` without `email`, `showEmail` and `highlights` is upgrade
 Rules: every block `id` is unique. `layout.desktop` lists every block id. `layout.mobile` is optional.
 `size` is one of `1x1`, `2x1`, `1x2`, `2x2`. Section blocks have no `size`.
 Every block type takes `"hidden": true`: the block stays in your file and in the editor, and the build leaves it out (no HTML, no payload, no JS).
+Every block type also takes `"startsAt"` and `"endsAt"` (see [Scheduling](#scheduling)). `link`, `social`, `map` and `video` blocks take `"noUtm": true` (see [UTM tags](#utm-tags)).
 
 | Type | Required fields | Optional fields |
 |---|---|---|
@@ -162,6 +175,16 @@ Every block type takes `"hidden": true`: the block stays in your file and in the
 | `section` | `title` | |
 | `map` | `label`, `url` | `sublabel` |
 | `video` | `url` | `title`, `thumbnail` |
+| `contact` | | `title` (default "Save my contact"), `description`, `icon` (default `line-md:account`). See [Save contact](#save-contact) |
+| `qr` | | `caption` (default: the host of your site). `size` is `1x1` or `2x2` only. See [QR code](#qr-code) |
+
+New top-level keys (all optional, an old file stays valid):
+
+| Key | What it is |
+|---|---|
+| `contact` | The PUBLIC contact card: `enabled`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. See [Save contact](#save-contact) |
+| `site.share` | `false` removes the share button. Missing = on. See [Share button](#share-button) |
+| `site.utm` | `{ "source": "tilebox", "medium": "profile", "campaign": "spring-2027" }`. `campaign` is optional. See [UTM tags](#utm-tags) |
 
 Link fields (all optional, an old file stays valid):
 
@@ -283,6 +306,89 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 
 **Upload your own.** `/edit` > **Site** > Favicon or Social preview image > upload. **An SVG upload is converted to PNG:** the editor draws it as a 512x512 PNG and stores only that PNG, never the SVG (a file in `public/` is served from your own domain, and an SVG opened directly can run script). A raster upload must really be the format its name says. The file goes to `public/site-uploads/` (not tracked), the path goes to `site.favicon` or `site.ogImage`, and the previews update. **Remove upload** goes back to the generated one. **Regenerate** builds the files again from what the editor shows, saved or not; `npm run dev` and every build make them again from the saved profile. Save as usual.
 
+## Scheduling
+
+Every block takes two optional dates: `startsAt` and `endsAt`. In `/edit`, open a block and use **Advanced** > **Schedule**. The two fields use the time zone of your computer. The file stores ISO 8601 with the offset, for example `"startsAt": "2026-12-01T09:00:00-05:00"`. `endsAt` must be after `startsAt`.
+
+The page is static, so be clear about what a date can do:
+
+| Case | At build time | In the browser |
+|---|---|---|
+| `startsAt` is in the future | The block is left out, like a hidden block: no HTML, no payload, no JS | Nothing. **Publish again after that time to show it** |
+| `endsAt` is in the past | The block is left out | Nothing to do |
+| `endsAt` is in the future | The block is on the page with `data-ends-at` | A tiny inline script (under 400 bytes, no network) hides the tile when the time has passed. It checks at load and every 60 seconds |
+
+- `startsAt` never ships. Only `endsAt` reaches the page.
+- With JavaScript off, a tile with a passed end date stays visible until your next publish removes it. The text of an ended block is in the files of the site until then: do not schedule a secret.
+- `npm run check:profile` prints one warning per expired block and per block that has not started yet, with the date to publish after.
+- The editor shows a status badge (Live, Scheduled from, Ends, Expired) and a calendar badge on the tile and on the list row.
+
+## Save contact
+
+A `contact` block is a tile that downloads your contact card: `<a href="/site/contact.vcf" download>`. The card is a local file. No service, no network call.
+
+1. `/edit` > **Site** > **Contact card**. Fill the fields and turn on "Make the contact card".
+2. `/edit` > **Blocks** > **Add block** > **Save contact**.
+
+**Everything in the contact card is public.** It is a file anyone can download. Your profile `email` is private and is never copied into the card: `contact.email` is its own field. Leave it empty to publish no email.
+
+- The build (`npm run build:site-assets`, inside `predev` and `pregenerate`) writes `public/site/contact.vcf` (not tracked) when `contact.enabled` is true. Else it removes the file.
+- Format: vCard 3.0, UTF-8, CRLF line ends, lines folded at 75 bytes; `,` `;` `\` and line breaks are escaped. Fields: `N`, `FN`, `ORG`, `TITLE`, `TEL;TYPE=CELL`, `EMAIL`, `URL`, `NOTE`. No `PHOTO`.
+- `fullName` defaults to your profile name. The download is named after it: `ada-lovelace.vcf`.
+- No file = no tile: the build leaves a `contact` block out while the card is off, and `check:profile` warns.
+- "Download preview" in the editor gives you the same text, made from what you see, saved or not.
+
+## QR code
+
+When the build knows your site URL (`NUXT_PUBLIC_SITE_URL`, else **Site URL** in `/edit` > **Site**), it draws the QR code of that URL to `public/site/qr.svg` (not tracked). `npm run publish` sets the URL for you. The URL must be `https`.
+
+- A `qr` block (`1x1` or `2x2`) shows the file as an image with a caption. Default caption: the host of your site.
+- The code is drawn by this project (`uqr`, a dev dependency) from the URL text. It is not a remote SVG. The page loads no QR library.
+- The code always uses the light colors of your preset on a solid ground, also in dark mode. A light-on-dark code does not scan on many phones.
+- No site URL = no file = no tile. `check:profile` warns.
+- `/edit` > **Site** > **QR code of the page**: a preview, "Download SVG", and "Download PNG" (1024 px, made by a dev-only route with sharp).
+
+## Share button
+
+A small button at the top right of the profile tile. On a phone it opens the share sheet (`navigator.share`). On other browsers it copies the address and shows "Link copied" for 2 seconds (announced to screen readers). Browser APIs only: no script from another site, no network call.
+
+Turn it off in `/edit` > **Site** ("Show a share button on my profile tile"), or with `"site": { "share": false }`.
+
+## UTM tags
+
+UTM tags tell the other website where a visit came from. Set them once in `/edit` > **Site** > **UTM tags** (source and medium are both needed, campaign is optional). Values: lowercase letters, digits, `_` and `-`, 40 at most.
+
+The BUILD adds them. Your saved links stay clean:
+
+| Link | Result |
+|---|---|
+| `https://a.example/page` | `https://a.example/page?utm_source=tilebox&utm_medium=profile` |
+| `https://a.example/?q=1#top` | `https://a.example/?q=1&utm_source=tilebox&utm_medium=profile#top` |
+| A link that already has `utm_source` | That tag stays. Only the missing tags are added |
+| `mailto:`, `tel:`, the contact card, a link to your own site | Never changed |
+| A block with `"noUtm": true` ("No UTM tags on this link" in the block form) | Never changed |
+
+Tagged blocks: link, social, map, video. The domain line of a link tile shows the host only. Brand icons, link previews and the link check use the URL you typed. JSON-LD `sameAs` lists your social links without the tags.
+
+## Link check
+
+```bash
+npm run check:links
+```
+
+It asks every external http(s) link of your profile once (60 at most, 4 at a time, one request per host at a time) and prints a table. It ALWAYS exits 0: a warning list, never a failed build. It is not part of `npm run generate`, because it is slow and needs the network.
+
+| Result | When |
+|---|---|
+| `ok` | 2xx or 3xx |
+| `blocked` | 401, 403, 429 and other 4xx. The site blocks checks. The link is probably fine |
+| `broken` | 404, 410, 5xx, unknown host, timeout, bad certificate, a private address |
+
+- One `HEAD` request per link. When the site refuses `HEAD` (403, 405, 501), one `GET` that reads 1 KB at most.
+- Every request uses the same guarded request as the link previews: public addresses only, redirects checked one by one, 8 seconds per hop, the honest user agent. See [`docs/security.md`](docs/security.md).
+- `npm run publish` runs it before the upload and prints the broken links as warnings. It never stops a publish. Skip it with `--skip-link-check`.
+- `/edit` > **Blocks** > **Check links**: the same check through a dev-only route. The result shows as small badges on the list rows and is kept in memory only.
+
 ## Scripts
 
 | Command | What it does |
@@ -299,7 +405,8 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 | `npm run fetch:avatar` | Downloads your Gravatar picture (from `profile.email`) to `public/avatar.gravatar.jpg`. Skipped when `profile.avatar` is set or the email is a placeholder. Never fails the build |
 | `npm run fetch:links` | Link previews for links with `enrich: true` whose files are missing (`public/icons/`, `public/thumbs/`), and YouTube thumbnails for video tiles. Never fails the build. `-- --url <link> [--image] [--force]` prints one answer as JSON |
 | `npm run fetch:favicons` | Old name. Alias of `npm run fetch:links` |
-| `npm run build:site-assets` | Writes the favicon set, the web manifest and the social preview image (`og.png`, 1200x630) to `public/site/` from your profile. No network. Never fails the build: on a problem the page keeps the tracked `/favicon.ico` and `/og.png` |
+| `npm run build:site-assets` | Writes the favicon set, the web manifest and the social preview image (`og.png`, 1200x630) to `public/site/` from your profile, plus `contact.vcf` (when the contact card is on) and `qr.svg` (when the site URL is known). No network. Never fails the build: on a problem the page keeps the tracked `/favicon.ico` and `/og.png` |
+| `npm run check:links` | Dead-link check of every external link of your profile (see Link check). Needs the network. Always exits 0. Not part of `pregenerate` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag. Then offers to push and make the GitHub Release (see Release) |
 | `npm run release:publish -- vX.Y.Z` | Push and make the GitHub Release for a tag that exists. No version bump (see Repair a release) |
@@ -315,8 +422,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back) | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back). `second-wave.spec.ts` (WP11): with no browser and a fixed date, the schedule matrix, the UTM matrix, the vCard text (escaping, CRLF, no `PHOTO`, no profile email), the QR file only with a site URL, the link checker with a mocked connection; on the built page, the end-date script, the share button (copy, announce, `navigator.share`, clear of the theme toggle at 1280 and 390), the contact tile download | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `second-wave-editor.spec.ts` (WP11): the schedule inputs round-trip to ISO in the saved file, the contact panel, the live UTM example, the share checkbox, "Check links" with a mocked route, the guards of the two new dev routes and the 1024 px QR PNG. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -372,6 +479,7 @@ If you have more than one Cloudflare account or Netlify team, the script asks wh
 | `--preview` | Upload to a preview URL, not production |
 | `--site-url https://...` | `NUXT_PUBLIC_SITE_URL` for this build only. Must start with `https://`. Use it after you set a custom domain. `NUXT_PUBLIC_SITE_URL` in your shell works too. Default: the saved live URL |
 | `--no-build` | Skip `npm run generate`, upload `dist/` as it is |
+| `--skip-link-check` | Skip the dead-link check that runs before the upload. The check only prints warnings and never stops a publish (see [Link check](#link-check)) |
 | `--yes` | Never ask. Fails with exit 2 when an answer is needed: no `--provider` or no `--name` on the first run, more than one account. Fails with exit 1 for no login or a taken name |
 | `--reset` | Forget `.tilebox/publish.json` and set up again. The project on the provider stays; delete it in the dashboard if you do not need it |
 | `--help` | Print the flags |
@@ -572,18 +680,20 @@ content/
   migrate.ts             adds the new profile keys to an older profile.json
   site-assets.ts         builds the favicon set, the manifest and the social image (sharp + satori)
   site-files.ts          names and paths of public/site/, which generated files exist
+  site-extras.ts         writes the contact card (contact.vcf) and the QR code (qr.svg, uqr) into public/site/
+  link-check.ts          the dead-link check, on the guarded request of unfurl.ts
   README.md              the personal data rules
 app/
   pages/index.vue        the public page (prerendered)
   pages/edit.vue         the editor. Development only
-  components/            ProfileHeader, BentoGrid, ThemeToggle
-  components/blocks/     the 7 tile types, Tile, BlockRenderer
-  components/editor/     forms, pickers, theme panel, drag grid
-  composables/           useProfile, useTheme, useSiteHead, useEditor
-  utils/                 presets, networks, sizes, brand-icons (host -> icon), site-head (the pure head builder)
+  components/            ProfileHeader, BentoGrid, ThemeToggle, ShareButton
+  components/blocks/     the 9 tile types, Tile, BlockRenderer
+  components/editor/     forms, pickers, theme panel, drag grid, the second wave panels (BlockAdvanced, SiteExtras, ContactPanel, QrPanel, UtmPanel, SharePanel, LinkCheckButton)
+  composables/           useProfile, useTheme, useSiteHead, useEditor, useSiteDraft, useLinkCheck
+  utils/                 presets, networks, sizes, brand-icons (host -> icon), site-head (the pure head builder), schedule, utm, vcard (pure)
   assets/css/            main.css, presets.css (generated)
 modules/public-profile.ts  writes the sanitized `#profile` copy the page imports (no hidden email, no hidden block)
-server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar, unfurl, site/assets, site/upload
+server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar, unfurl, site/assets, site/upload, site/qr.png, links/check
 types/profile.ts         the zod schema, the types, the public shape and the sanitizer
 types/site.ts            the `site` metadata schema
 assets/fonts/            Geist Regular and SemiBold (TTF, SIL OFL 1.1) for the social image
@@ -591,9 +701,9 @@ scripts/
   release.mjs            npm run release
   publish.mjs            npm run publish
   build-presets.ts  check-contrast.ts  check-icons.ts  fetch-links.ts  fetch-avatar.ts
-  validate-profile.ts  ensure-profile.ts  build-site-assets.ts  serve-dist.mjs
+  validate-profile.ts  ensure-profile.ts  build-site-assets.ts  check-links.ts  serve-dist.mjs
 releases/                one notes file per version, used as the GitHub Release body
-tests/e2e/               public, a11y, repo, privacy, gravatar, links, unfurl, site, editor, site-editor specs
+tests/e2e/               public, a11y, repo, privacy, gravatar, links, unfurl, site, second-wave, editor, site-editor, second-wave-editor specs
 public/                  og.png and favicon.ico (fallbacks), blocks/sample.jpg. Your images, site/ and site-uploads/ land here and are ignored
 design/canvas/           the design boards (light and dark)
 docs/review-tools.md     notes on the two code review tools used on this project
@@ -645,7 +755,6 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 - Left-rail layout preset.
 - Import a Bento.me export zip.
 - Open Graph image built from the profile at generate time.
-- A second wave of link page ideas, all static: scheduled tiles, a vCard download, a QR code, a share / copy button, UTM tags added at build, a dead-link check (`PLAN.md` 13.5).
 
 Full plan and decisions: `PLAN.md`.
 

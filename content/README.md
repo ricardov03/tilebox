@@ -21,6 +21,15 @@ A `git pull`, a release or a fresh clone never touches it, because git does not 
 
 The optional top-level `site` object holds the page title, description, site URL, language, `noindex`, X handle, job title, location and the paths of your own favicon and social image. Without it the build uses your name, handle and bio.
 `npm run build:site-assets` (part of `predev` and `pregenerate`) writes the favicon set and the social image to `public/site/`. Details: README, "Site metadata".
+`site.share` (`false` removes the share button) and `site.utm` (tags the build adds to outgoing links) live there too. Details: README, "Share button" and "UTM tags".
+
+## Contact card
+
+The optional top-level `contact` object is your PUBLIC contact card: `enabled`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. With `enabled: true` the build writes it to `public/site/contact.vcf`, a file anyone can download from your page. Everything in it is public. `profile.email` stays private and is never copied into the card. Details: README, "Save contact".
+
+## Schedule
+
+Every block takes `startsAt` and `endsAt` (ISO 8601 with an offset). The build leaves out a block that has not started or has ended. A block that starts later shows only after you publish again after that time. Details: README, "Scheduling".
 
 ## What else is ignored
 
@@ -32,7 +41,7 @@ public/avatar.*
 public/blocks/*        (except public/blocks/sample.jpg)
 public/icons/*         (website icons of your link tiles, always PNG; unused ones are removed by fetch:links)
 public/thumbs/*        (website images of your link tiles, YouTube thumbnails)
-public/site/           (favicon set, manifest and social image, made at build from your profile)
+public/site/           (favicon set, manifest, social image, contact card and QR code, made at build from your profile)
 public/site-uploads/   (your own favicon and social image, uploaded in /edit > Site)
 .tilebox/              (publish state, link preview cache)
 .netlify/
