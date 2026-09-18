@@ -213,8 +213,14 @@ step('Checks')
 check('npm run lint', 'npm', ['run', 'lint'])
 check('npm run typecheck', 'npm', ['run', 'typecheck'])
 check('npm run generate', 'npm', ['run', 'generate'])
-if (opts['skip-tests']) log('    playwright: skipped (--skip-tests)')
-else check('npx playwright test --project=static', 'npx', ['playwright', 'test', '--project=static'])
+if (opts['skip-tests']) {
+  log('    playwright: skipped (--skip-tests)')
+}
+else {
+  // Fast no-op when the browser is already installed. Saves a first local release.
+  check('npx playwright install chromium', 'npx', ['playwright', 'install', 'chromium'])
+  check('npx playwright test --project=static', 'npx', ['playwright', 'test', '--project=static'])
+}
 
 const afterChecks = git('status', '--porcelain').out
 if (afterChecks) {
