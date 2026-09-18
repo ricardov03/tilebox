@@ -87,8 +87,9 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag (see Release) |
-| `npm run deploy` | Generate and upload `dist/` to Cloudflare Pages, production branch (see Deploy) |
-| `npm run deploy:preview` | Same, to the `preview` branch |
+| `npm run publish` | Build and upload the page to Cloudflare Pages or Netlify from your machine (see Publish). `npm run site:publish` is the same command |
+| `npm run deploy` | Alias of `npm run publish -- --provider cloudflare` |
+| `npm run deploy:preview` | Alias of `npm run publish -- --provider cloudflare --preview` |
 
 `predev` runs presets and check:profile. `pregenerate` also runs check:contrast, check:icons and fetch:favicons.
 
@@ -111,32 +112,74 @@ npm run test:e2e -- --project=dev
 
 Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` then `npx --yes lighthouse http://localhost:4173/ --chrome-flags="--headless=new"`. Scores are recorded in `NOTES.md` (WP5).
 
-## Deploy
+## Publish
 
-Deploy is a local command with wrangler. The GitHub pipeline never deploys.
-
-One time:
+Publishing is one local command. No API key, no token in the repo, no bot. The GitHub pipeline never deploys.
 
 ```sh
-npx wrangler login
-npx wrangler pages project create tilebox --production-branch main   # only if the project does not exist yet
+npm run publish
 ```
 
-If the Cloudflare project is connected to Git, turn off automatic builds so only the local command deploys:
-Cloudflare dashboard > Workers & Pages > tilebox > Settings > Builds & deployments > Branch control > turn off **Automatic production branch deployments**.
+### First run
 
-Then:
+1. Pick a provider: **Cloudflare Pages** (`https://<name>.pages.dev`) or **Netlify** (`https://<name>.netlify.app`). Both have a free plan.
+2. Log in. The provider CLI opens the browser (`wrangler login` or `netlify login`). Allow the access and come back to the terminal. The CLI keeps the login in your home folder.
+3. Pick a site name: lowercase letters, digits and dashes, no dash at the start or end, max 37 characters.
+4. The script checks that `<name>.pages.dev` (DNS) or `<name>.netlify.app` (HTTPS) is still free. A taken name asks again.
+5. The project is created. `npm run generate` runs with `NUXT_PUBLIC_SITE_URL` set to the live URL so `og:image` and `og:url` are absolute. `dist/` is uploaded.
+6. The live URL is printed. The choices are saved in `.tilebox/publish.json`.
+
+If you have more than one Cloudflare account or Netlify team, the script asks which one, or takes `--account <id-or-slug>`.
+
+### Later runs
+
+`npm run publish` reads `.tilebox/publish.json`, builds, uploads, prints the live URL. `npm run publish -- --preview` uploads to a preview URL instead (Cloudflare `preview` branch, Netlify draft deploy) and leaves production alone.
+
+| Flag | Effect |
+|---|---|
+| `--provider cloudflare` or `--provider netlify` | Skip the provider prompt. Must match the saved provider |
+| `--name <site-name>` | Skip the name prompt. Must match the saved name |
+| `--account <id-or-slug>` | Cloudflare account id or Netlify team slug |
+| `--preview` | Upload to a preview URL, not production |
+| `--site-url https://...` | `NUXT_PUBLIC_SITE_URL` for this build only. Use it after you set a custom domain. `NUXT_PUBLIC_SITE_URL` in your shell works too. Default: the saved live URL |
+| `--no-build` | Skip `npm run generate`, upload `dist/` as it is |
+| `--yes` | Never ask. Fails when an answer is needed (no login, name taken, more than one account) |
+| `--reset` | Forget `.tilebox/publish.json` and set up again. The project on the provider stays; delete it in the dashboard if you do not need it |
+| `--help` | Print the flags |
+
+Exit codes: 0 ok, 1 error, 2 wrong usage. Every command the script runs is printed before it runs (`$ wrangler ...`). The upload stops after 10 minutes, the checks after 30 seconds.
+
+### What is stored, what is not
+
+`.tilebox/publish.json` (ignored by git) holds only the provider, the site name, the account id or team slug, the Netlify site id, the live URL and two dates:
+
+```json
+{ "provider": "cloudflare", "name": "ricardo", "accountId": "…", "url": "https://ricardo.pages.dev", "createdAt": "…", "lastPublishedAt": "…" }
+```
+
+No token or API key is ever written there or anywhere in the repo. Login tokens live where the CLIs put them, in your home folder (`npx wrangler whoami` and `npx netlify status` show who is logged in; `npx wrangler logout` and `npx netlify logout` remove the login). `.wrangler/` and `.netlify/` are ignored by git.
+
+To reattach an existing project (for example after `--reset`), write `.tilebox/publish.json` by hand with the fields above (`siteId` and `accountSlug` for Netlify) and run `npm run publish`.
+
+### Custom domain
+
+Set it in the provider dashboard, then publish again with the new URL so link previews use it:
+
+- Cloudflare: Workers & Pages > your project > **Custom domains**.
+- Netlify: your site > **Domain management**.
 
 ```sh
-npm run deploy           # generate + upload dist/ to the production branch (main)
-npm run deploy:preview   # generate + upload dist/ to the preview branch
+npm run publish -- --site-url https://ricardov.dev
 ```
 
-Both commands run `npm run generate` first. No `wrangler.toml` is needed for a Pages direct upload; the project name is in the command. `.wrangler/` is ignored by git.
+### Limits
 
-Set `NUXT_PUBLIC_SITE_URL` in your shell before `npm run deploy` (for example `NUXT_PUBLIC_SITE_URL=https://ricardov.dev npm run deploy`) so `og:image` and `og:url` are absolute.
+`dist/` must have at most 20,000 files and no file bigger than 25 MiB. The script counts before it uploads. Check the free plan limits of the provider you pick; this page is well inside them.
 
 ### Cloudflare Pages settings (Git-connected build, optional)
+
+You can also let Cloudflare build from GitHub instead of using `npm run publish`. If you do both, turn off automatic builds so only the local command deploys:
+Cloudflare dashboard > Workers & Pages > your project > Settings > Builds & deployments > Branch control > turn off **Automatic production branch deployments**.
 
 1. Push the repo to GitHub.
 2. Cloudflare dashboard: **Workers & Pages > Create > Pages > Connect to Git**. Pick the repo.
@@ -147,9 +190,9 @@ Set `NUXT_PUBLIC_SITE_URL` in your shell before `npm run deploy` (for example `N
 
 No Nitro preset is set. The build is plain static files. `/edit` and `/api` are not in `dist/`.
 
-### Netlify
+### Netlify settings (Git-connected build, optional)
 
-Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers. Add `NUXT_PUBLIC_SITE_URL` in the site's environment variables, same as above.
+Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers. Add `NUXT_PUBLIC_SITE_URL` in the site's environment variables, same as above. `npm run publish` does not need any of this: it uploads `dist/` directly with `--no-build`.
 
 ## Commit messages
 
