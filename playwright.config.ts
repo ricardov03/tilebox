@@ -44,7 +44,7 @@ export default defineConfig({
     },
     {
       name: 'dev',
-      testMatch: ['editor.spec.ts', 'site-editor.spec.ts', 'security-dev.spec.ts'],
+      testMatch: ['editor.spec.ts', 'editor-inputs.spec.ts', 'site-editor.spec.ts', 'security-dev.spec.ts'],
       timeout: 90_000,
       use: { baseURL: DEV_URL },
     },
