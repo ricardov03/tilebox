@@ -101,10 +101,18 @@ export const ThemeSchema = z.object({
   mode: z.enum(['system', 'light', 'dark']),
 }).strict()
 
+export const HIGHLIGHTS_MAX = 3
+export const HIGHLIGHT_MAX_CHARS = 80
+
 export const ProfileInfoSchema = z.object({
   name: z.string().min(1),
   handle: z.string().min(1),
   bio: z.string(),
+  /** Up to 3 short lines under the bio. Empty = nothing renders. */
+  highlights: z.array(z.string().min(1).max(HIGHLIGHT_MAX_CHARS)).max(HIGHLIGHTS_MAX).default([]),
+  /** Required. Private unless `showEmail` is true: the build removes it from the public profile. */
+  email: z.email(),
+  showEmail: z.boolean().default(false),
   avatar: z.string().nullable().optional(),
   status: z.string().optional(),
   theme: ThemeSchema,
@@ -156,6 +164,26 @@ export const ProfileSchema = z
 
 export type Profile = z.infer<typeof ProfileSchema>
 export type ProfileInfo = z.infer<typeof ProfileInfoSchema>
+
+/**
+ * What the public page gets (the `#profile` alias). Never the raw file.
+ * `email` is there only when `showEmail` is true. `showEmail` itself is dropped:
+ * an email in the public profile means "show it". `avatar` is already resolved
+ * (the uploaded one, else the Gravatar file, else missing = initials).
+ */
+export const PublicProfileInfoSchema = ProfileInfoSchema
+  .omit({ email: true, showEmail: true, avatar: true })
+  .extend({ email: z.email().optional(), avatar: z.string().optional() })
+  .strict()
+
+export const PublicProfileSchema = z.object({
+  profile: PublicProfileInfoSchema,
+  blocks: z.array(BlockSchema),
+  layout: LayoutSchema,
+}).strict()
+
+export type PublicProfile = z.infer<typeof PublicProfileSchema>
+export type PublicProfileInfo = z.infer<typeof PublicProfileInfoSchema>
 export type Theme = z.infer<typeof ThemeSchema>
 export type Block = z.infer<typeof BlockSchema>
 export type BlockType = Block['type']
@@ -172,6 +200,37 @@ export class ProfileValidationError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'ProfileValidationError'
+  }
+}
+
+/** Emails that mean "not set yet". No Gravatar lookup, and `check:profile` warns on a personal file. */
+export const PLACEHOLDER_EMAILS: readonly string[] = ['you@example.com', 'hello@example.com']
+
+export function isPlaceholderEmail(email: string): boolean {
+  return PLACEHOLDER_EMAILS.includes(email.trim().toLowerCase())
+}
+
+/**
+ * The sanitizer. Full profile in, public profile out.
+ * - `email` is kept only when `showEmail` is true.
+ * - `avatar`: `profile.avatar` when set, else `gravatarPath` (pass it only when the file exists), else no key.
+ * Pure: no file access. nuxt.config.ts, the editor preview and the tests call it.
+ */
+export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): PublicProfileInfo {
+  const { email, showEmail, avatar, ...rest } = info
+  const resolvedAvatar = avatar || gravatarPath
+  return {
+    ...rest,
+    ...(showEmail ? { email } : {}),
+    ...(resolvedAvatar ? { avatar: resolvedAvatar } : {}),
+  }
+}
+
+export function toPublicProfile(profile: Profile, gravatarPath?: string): PublicProfile {
+  return {
+    profile: toPublicProfileInfo(profile.profile, gravatarPath),
+    blocks: profile.blocks,
+    layout: profile.layout,
   }
 }
 
