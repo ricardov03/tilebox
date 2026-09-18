@@ -4,14 +4,14 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 
 ## Start here, every session
 1. Read `PLAN.md` fully. It is the source of truth. Every decision is in section 11.
-2. Status line at the top of `PLAN.md` says the next step. As of 2026-09-17 the next step is **WP0** (scaffold). No code exists yet.
-3. Design canvas (Claude Design artifact, live): https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ
+2. Status line at the top of `PLAN.md` says the next step.
+3. Design canvas (live, in the design tool): https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ
    A local copy of its boards is in `design/canvas/` (board A = light, board B = dark; both CONDOMERA blue + Geist).
 4. GitHub repo: `github.com/ricardov03/tilebox`. Ricardo created it empty. WP0 does `git init` + first push.
 
 ## How Ricardo wants to work
 - Plan file is enforced. Agents follow `PLAN.md` section 0 rules and own only their WP files.
-- WP1 to WP4 run as parallel Claude subagents. Fable stays architect, merges, runs reviews.
+- WP1 to WP4 run as parallel agents. The architect merges and runs reviews.
 - Code review by **Grok** after every WP. Ricardo will provide the Grok tools. Not provided yet.
 - Ask questions that improve quality. Max 2 options per decision. Say which one you would pick.
 - Reply style: ELI5 output style, Simplified Technical English. Short sentences. Exact paths and commands.

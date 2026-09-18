@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: WP0 merged 2026-09-17. WP1-WP4 in progress.
+Status: WP5 in progress (WP0-WP4 merged 2026-09-17).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -171,7 +171,7 @@ Same idea as PowerPoint theme colors. Every component uses only these names.
 
 ### 5.2 Color presets (3 for v1)
 
-Canvas sync 2026-09-17: Claude Desktop reworked both boards. Board A is now the CONDOMERA light look. Board B is the CONDOMERA dark look. So `condomera` is the default preset. Its light values come from board A. Its dark values come from board B.
+Canvas sync 2026-09-17: the design tool reworked both boards. Board A is now the CONDOMERA light look. Board B is the CONDOMERA dark look. So `condomera` is the default preset. Its light values come from board A. Its dark values come from board B.
 
 | Role | `condomera` (default) | `lunchbox` | `night` |
 |---|---|---|---|
@@ -377,11 +377,11 @@ Uses: `app/components/blocks/index.ts` from WP2. Until it exists, render a grey 
 Done when: the grid matches the canvas board at 1280 and 390. Theme toggle works and persists. `useSeoMeta` has title, description, OG image. Page-load stagger done.
 
 ### WP2. Block components
-Owns: `app/components/blocks/*`, `scripts/fetch-favicons.ts`, `scripts/check-icons.ts`, `public/icons/`.
+Owns: `app/components/blocks/*`, `scripts/fetch-favicons.ts`, `scripts/check-icons.ts`, `public/icons/`, `public/thumbs/`. May add its scripts to `package.json` (`check:icons`, `fetch:favicons`, `pregenerate`) with a note in `NOTES.md`.
 Done when: all 7 block types render from `content/profile.json` on all 3 color presets. Link tile shows `icon` if set, else a favicon fetched at build (fallback `line-md:link`). `check-icons.ts` runs in `pregenerate` and fails on an unknown icon. Video tile shows a thumbnail and loads the iframe only on click. Map tile is a link, no map JS. All tiles keyboard focusable.
 
 ### WP3. Local editor
-Owns: `app/pages/edit.vue`, `app/components/editor/*`, `server/api/*`.
+Owns: `app/pages/edit.vue`, `app/components/editor/*`, `server/api/*`, `server/utils/*`, `app/composables/useEditor.ts`. May add its dependencies and scripts to `package.json` with a note in `NOTES.md`.
 Done when: at `/edit` you can add, edit, delete, resize, reorder (drag) blocks. Desktop / mobile order switch. Theme panel: 3 color swatches, 3 font cards, mode switch. Click = live preview. Icon picker with Iconify search (line-md first) and a link to icones.js.org. Save runs `check-icons` and zod. Changing the font preset shows a note: restart `npm run dev` to download the new fonts. Save writes `content/profile.json` after zod validation. Image picker copies a file into `public/blocks/`. `/edit` is NOT in `dist/`. Save route 404s in prod build.
 
 ### WP4. Deploy + docs + CI
@@ -413,8 +413,8 @@ Done when: Lighthouse mobile 95+ on all four. axe has 0 serious issues. Works in
 
 | Question | Answer |
 |---|---|
-| Design direction | Hero-tile layout (board A). Canvas reworked by Claude Desktop on 2026-09-17: default presets are now colors `condomera`, fonts `geist`. Board B = dark mode values. |
-| Who writes code | Claude subagents in this session. Fable stays architect, merges, and runs the review loop. |
+| Design direction | Hero-tile layout (board A). Canvas reworked in the design tool on 2026-09-17: default presets are now colors `condomera`, fonts `geist`. Board B = dark mode values. |
+| Who writes code | Agents in this session. The architect merges and runs the review loop. |
 | Grok review timing | After each WP, before merge. Plus one full pass after WP5. |
 | Editor `/edit` in v1 | Yes. WP3 runs in parallel. |
 | Host | Cloudflare Pages first. Netlify config kept as backup. |
