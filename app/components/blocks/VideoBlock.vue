@@ -58,7 +58,7 @@ const embedUrl = computed(() => (videoId.value && playing.value ? youtubeEmbedUr
             <Icon
               :name="UI_ICONS.play"
               class="size-7"
-              aria-hidden="true"
+              :aria-hidden="true"
             />
           </span>
         </button>
