@@ -166,7 +166,17 @@ function bareHost(url: URL): string {
 /** True only for a public unicast address. Everything else is refused. */
 export function isPublicAddress(address: string): boolean {
   if (!ipaddr.isValid(address)) return false
-  return ipaddr.parse(address).range() === 'unicast'
+  const parsed = ipaddr.parse(address)
+  if (parsed.range() !== 'unicast') return false
+  if (parsed.kind() === 'ipv6') {
+    const parts = (parsed as ipaddr.IPv6).parts
+    // `::/96`, the old "IPv4-compatible" form (`::127.0.0.1` = `::7f00:1`). ipaddr.js calls it unicast,
+    // but a stack may send it to the IPv4 address inside. No public website lives there: refuse all of it.
+    if (parts.slice(0, 6).every(part => part === 0)) return false
+    // Any other form with an IPv4 address inside (mapped, translated) counts by that IPv4 address too.
+    if (parts.slice(0, 5).every(part => part === 0) && parts[5] === 0xFFFF) return false
+  }
+  return true
 }
 
 /** The SSRF guard for one URL. Returns the address to pin, or `null` for an allowed test host. */

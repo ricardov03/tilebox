@@ -297,7 +297,11 @@ test.describe('pure helpers', () => {
 })
 
 test.describe('the SSRF guard (no allowHosts)', () => {
-  const blocked = ['10.0.0.1', '127.0.0.1', '169.254.169.254', '192.168.1.10', '172.16.0.1', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '::ffff:127.0.0.1']
+  const blocked = [
+    '10.0.0.1', '127.0.0.1', '169.254.169.254', '192.168.1.10', '172.16.0.1', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '::ffff:127.0.0.1',
+    // S5: `::/96` (the old "IPv4-compatible" form, some stacks route it to the IPv4 address), `::`, and the mapped forms in hex.
+    '::127.0.0.1', '::7f00:1', '::10.0.0.1', '::a00:1', '::169.254.169.254', '::8.8.8.8', '::', '0:0:0:0:0:0:0:0', '::ffff:0:0', '::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:0:7f00:1', '64:ff9b::7f00:1',
+  ]
 
   test('private, loopback, link-local, CGNAT, unique-local and IPv4-mapped addresses are not public', () => {
     for (const address of blocked) expect(isPublicAddress(address), address).toBe(false)
