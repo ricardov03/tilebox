@@ -202,6 +202,14 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
         return
       }
       return html('<html><head><title>Etag page</title></head></html>', { etag: '"v1"' })
+    case '/always-304':
+      // A broken server or proxy: a full page once, then 304 for ever, also to a request with no condition.
+      if ((hits.get(path) ?? 0) > 1) {
+        res.writeHead(304)
+        res.end()
+        return
+      }
+      return html('<html><head><title>Old title</title></head></html>', { etag: '"v1"' })
     case '/pdf':
       res.writeHead(200, { 'content-type': 'application/pdf' })
       res.end('%PDF-1.4')
@@ -623,6 +631,22 @@ test.describe('S2: one budget for the whole unfurl', () => {
     expect(Date.now() - again).toBeLessThan(200)
     expect([...hits.keys()].filter(path => path.startsWith('/slow-hop/')).length).toBe(3)
     expect(TOTAL_TIMEOUT_MS).toBe(20_000)
+  })
+
+  test('force: a 304 to a request with no condition is a failed refresh, and the old data stays', async () => {
+    const url = `${base}/always-304`
+    expect(await unfurl(url, options)).toMatchObject({ ok: true, cached: false, title: 'Old title' })
+    const before = readCacheSync(dirs)[url]
+
+    const forced = await unfurl(url, { ...options, force: true })
+    expect(hits.get('/always-304')).toBe(2)
+    expect(seenHeaders.get('/always-304')?.['if-none-match']).toBeUndefined()
+    // Not "refreshed": the editor must not show the old data as new.
+    expect(forced).toEqual({ ok: false, reason: 'http 304' })
+    // The entry of the last good read is untouched, and a normal read still answers from it.
+    expect(readCacheSync(dirs)[url]).toEqual(before)
+    expect(await unfurl(url, options)).toMatchObject({ ok: true, cached: true, title: 'Old title' })
+    expect(hits.get('/always-304')).toBe(2)
   })
 
   test('a failure is remembered for 10 minutes, `force` asks again, and a good read forgets it', async () => {

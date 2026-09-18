@@ -952,15 +952,18 @@ async function run(input: string, caller: UnfurlOptions): Promise<UnfurlResult> 
 
   if (!found && !remembered) {
     try {
+      // Refresh (`force`) asks for the whole page: with `If-None-Match` a 304 would keep the old data.
+      const conditional = entry !== undefined && usable && !options.force
       const response = await safeRequest(pageUrl, {
         accept: HTML_ACCEPT,
         maxBytes: MAX_HTML_BYTES,
         overflow: 'cut',
         stopAtHeadEnd: true,
-        // Refresh (`force`) asks for the whole page: with `If-None-Match` a 304 would keep the old data.
-        ...(entry && usable && !options.force ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
+        ...(conditional ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
       }, options)
-      if (response.status === 304 && entry) {
+      // A 304 counts only as the answer to OUR condition. A server that sends one to a full request
+      // (`force`, or an entry whose files are gone) did not refresh anything: `http 304`, the old entry stays.
+      if (response.status === 304 && conditional) {
         const data: UnfurlData = { ...entry.data, fetchedAt }
         await updateCache(key, { ...entry, data }, ctx.dirs)
         return answer(data, showImage, true)
