@@ -155,6 +155,29 @@ test('the stored form shows only after the field lost the focus', () => {
   expect(t.field.state.text).toBe('https://a.example/docs')
 })
 
+test('a debounced commit, then a blur: the field shows the stored form, not the raw text', () => {
+  const t = setup('', { normalize: text => text.trim().replace(/\/+$/, '') })
+  t.field.focus()
+  t.field.input('  https://a.example/')
+  t.tick(FIELD_DEBOUNCE_MS)
+  expect(t.commits).toEqual(['https://a.example'])
+  // Still typing: the raw text stays.
+  expect(t.field.state.text).toBe('  https://a.example/')
+  // The blur checks the same value again. Nothing new is committed, and the input still follows the model.
+  t.field.blur()
+  expect(t.commits).toEqual(['https://a.example'])
+  expect(t.field.state).toMatchObject({ text: 'https://a.example', error: undefined, pending: false })
+})
+
+test('a refused value keeps its raw text on a blur', () => {
+  const t = setup('https://old.example', { normalize: text => text.trim() })
+  t.field.focus()
+  t.field.input('  not a url ')
+  t.field.blur()
+  expect(t.commits).toEqual([])
+  expect(t.field.state).toMatchObject({ text: '  not a url ', error: 'Invalid URL' })
+})
+
 test('after dispose nothing is committed', () => {
   const t = setup('https://old.example')
   t.field.focus()

@@ -11,6 +11,8 @@
  *   a paste and `flush()` (the save key). Never on every key.
  * - A value that passes is committed. A value that fails is not: the text
  *   stays, `state.error` says why, the model keeps its last valid value.
+ * - With the focus the input keeps the raw text. Without it (a blur, the save key)
+ *   a value that passed shows its stored form (a trimmed URL), whoever committed it.
  * - Empty + required = the error "Required". Empty + optional = `commit('')`.
  */
 
@@ -90,6 +92,15 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
     options.commit(value)
   }
 
+  /**
+   * A value passed the check. Without the focus the input shows the stored form. `commit()` alone does
+   * not do it: the debounced check may have committed this value already (then the model does not
+   * change again and `modelChanged()` never runs), and the blur that follows would leave the raw text.
+   */
+  function showStored(value: string) {
+    if (!state.focused && options.model() === value) state.text = value
+  }
+
   function check(): boolean {
     stopTimer()
     if (disposed) return state.error === undefined
@@ -102,6 +113,7 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
       }
       state.error = undefined
       commit('')
+      showStored('')
       return true
     }
     const reason = options.validate?.(value)
@@ -111,6 +123,7 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
     }
     state.error = undefined
     commit(value)
+    showStored(value)
     return true
   }
 
