@@ -7,13 +7,13 @@
 import type { LinkBlock } from '~~/types/profile'
 import { UI_ICONS } from '~/utils/networks'
 import { sizeToSpan } from '~/utils/sizes'
-import iconManifest from '~~/public/icons/manifest.json'
+import iconManifest from '#manifest/icons'
 import { domainLabel, faviconPath, hostOf, type TileVariant } from './media'
 import Tile from './Tile.vue'
 
 const props = defineProps<{ block: LinkBlock }>()
 
-/** Written by `scripts/fetch-favicons.ts` at build time. Static import: the fallback is decided at build. */
+/** `public/icons/manifest.json` (written by `scripts/fetch-favicons.ts`), or an empty map when the file is missing. Static import: the fallback is decided at build. */
 const FAVICONS: Readonly<Record<string, string>> = iconManifest
 
 const variant = computed<TileVariant>(() => {

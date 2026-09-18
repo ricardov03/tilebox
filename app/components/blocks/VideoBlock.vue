@@ -5,13 +5,13 @@
 <script setup lang="ts">
 import type { VideoBlock } from '~~/types/profile'
 import { UI_ICONS } from '~/utils/networks'
-import thumbManifest from '~~/public/thumbs/manifest.json'
+import thumbManifest from '#manifest/thumbs'
 import { hostOf, thumbPath, youtubeEmbedUrl, youtubeId } from './media'
 import Tile from './Tile.vue'
 
 const props = defineProps<{ block: VideoBlock }>()
 
-/** Written by `scripts/fetch-favicons.ts` at build time. */
+/** `public/thumbs/manifest.json` (written by `scripts/fetch-favicons.ts`), or an empty map when the file is missing. */
 const THUMBS: Readonly<Record<string, string>> = thumbManifest
 
 const title = computed(() => props.block.title ?? 'Video')
