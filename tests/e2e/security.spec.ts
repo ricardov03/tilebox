@@ -12,7 +12,7 @@ import sharp from 'sharp'
 import { buildSiteAssets } from '../../content/site-assets'
 import { SITE_FILES } from '../../content/site-files'
 import { storeSiteUpload, SiteUploadError } from '../../content/site-upload'
-import { FRESH_MS, pruneLinkFiles, readCacheSync, withLocalLinkFiles, type UnfurlDirs } from '../../content/unfurl-cache'
+import { FRESH_MS, MAX_CACHE_ENTRIES, pruneLinkFiles, readCacheSync, updateCache, withLocalLinkFiles, type UnfurlDirs } from '../../content/unfurl-cache'
 import { parseProfile, ProfileSchema, type Profile } from '../../types/profile'
 import { SiteSchema } from '../../types/site'
 import { ROOT } from './helpers'
@@ -307,5 +307,36 @@ test.describe('S3: unused fetched files are removed', () => {
     symlinkSync(real, linked.icons)
     expect(await pruneLinkFiles(profileWith([]), { dirs: linked, now: NOW })).toEqual([])
     expect(existsSync(join(real, 'orphan.png'))).toBe(true)
+  })
+})
+
+test.describe('S3: the cache file has a size limit', () => {
+  test('500 entries at most: the oldest `fetchedAt` goes first', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tilebox-cap-'))
+    try {
+      const dirs: UnfurlDirs = { icons: join(dir, 'icons'), thumbs: join(dir, 'thumbs'), cache: join(dir, 'cache.json') }
+      const start = Date.parse('2026-01-01T00:00:00.000Z')
+      const entryAt = (index: number) => {
+        const url = `https://site-${index}.example/`
+        return [url, { data: { url, finalUrl: url, source: 'html' as const, fetchedAt: new Date(start + index * 60_000).toISOString() }, imageTried: false }] as const
+      }
+      expect(MAX_CACHE_ENTRIES).toBe(500)
+      // 520 entries on file, in a mixed order. The next write brings the file back under the limit.
+      const entries = Object.fromEntries(Array.from({ length: 520 }, (_, index) => entryAt((index * 7) % 520)))
+      writeFileSync(dirs.cache, JSON.stringify({ version: 1, entries }))
+      const [newestUrl, newest] = entryAt(1000)
+      await updateCache(newestUrl, newest, dirs)
+
+      const kept = readCacheSync(dirs)
+      expect(Object.keys(kept)).toHaveLength(500)
+      expect(kept[newestUrl]).toBeDefined()
+      // 521 entries, 500 stay: site-0 to site-20 (the 21 oldest) are gone, site-21 is the oldest left.
+      expect(kept['https://site-20.example/']).toBeUndefined()
+      expect(kept['https://site-21.example/']).toBeDefined()
+      expect(kept['https://site-519.example/']).toBeDefined()
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

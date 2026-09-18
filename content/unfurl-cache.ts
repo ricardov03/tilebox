@@ -37,6 +37,8 @@ export const MAX_URL_CHARS = 2048
 export const FRESH_MS = 30 * 24 * 60 * 60 * 1000
 /** A failed read is remembered for 10 minutes, so a dead or hostile link does not cost every build and every keystroke again. */
 export const NEGATIVE_MS = 10 * 60 * 1000
+/** Most entries kept in the file. Over it, the oldest `fetchedAt` goes first: the file cannot grow for ever. */
+export const MAX_CACHE_ENTRIES = 500
 /** Most failures kept in the file. Older ones go first. */
 export const MAX_FAILURES = 200
 
@@ -177,6 +179,11 @@ function mutateCache(dirs: UnfurlDirs, change: (file: CacheFile) => void): Promi
   const job = writeQueue.then(async () => {
     const file = readCacheFileSync(dirs)
     change(file)
+    const keys = Object.keys(file.entries)
+    if (keys.length > MAX_CACHE_ENTRIES) {
+      const newestFirst = Object.entries(file.entries).sort(([, a], [, b]) => Date.parse(b.data.fetchedAt) - Date.parse(a.data.fetchedAt))
+      file.entries = Object.fromEntries(newestFirst.slice(0, MAX_CACHE_ENTRIES))
+    }
     const tmp = `${dirs.cache}.${process.pid}.tmp`
     try {
       await mkdir(dirname(dirs.cache), { recursive: true })
