@@ -13,5 +13,15 @@ playwright-report
 test-results
 content/profile.json.e2e-backup
 .wrangler/
+
+# Personal data. Never committed. See content/README.md
+content/profile.json
+public/avatar.*
+public/blocks/*
+!public/blocks/sample.jpg
+public/icons/*
+!public/icons/.gitkeep
+public/thumbs/*
+!public/thumbs/.gitkeep
 .tilebox/
 .netlify/

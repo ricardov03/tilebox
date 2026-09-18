@@ -4,11 +4,13 @@
  * - YouTube video blocks: hqdefault.jpg -> public/thumbs/<id>.jpg
  * Existing files are kept. Network errors log one line and never fail the build.
  * Writes public/icons/manifest.json { host -> file } and public/thumbs/manifest.json { id -> file }.
- * Commit the manifests and the fetched files. `npm run fetch:favicons`, runs in `pregenerate`.
+ * The manifests and the fetched files are not tracked (they come from your profile).
+ * `npm run fetch:favicons`, runs in `pregenerate`. Reads the profile content/resolve.ts picks.
  */
 import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { profilePath } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 import { hostOf, youtubeId } from '../app/components/blocks/media'
 
@@ -77,7 +79,7 @@ async function writeManifest(dir: string, entries: Map<string, string>): Promise
 }
 
 async function run(): Promise<void> {
-  const raw = await readFile(resolve(process.cwd(), 'content/profile.json'), 'utf8')
+  const raw = await readFile(profilePath(), 'utf8')
   const profile = parseProfile(JSON.parse(raw))
   await mkdir(ICONS_DIR, { recursive: true })
   await mkdir(THUMBS_DIR, { recursive: true })

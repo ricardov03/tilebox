@@ -1,12 +1,38 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { relative, resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
-import profileJson from './content/profile.json'
+import { profilePath, ROOT } from './content/resolve'
 import { parseProfile } from './types/profile'
 import { FONT_PRESETS } from './app/utils/presets'
 import { NETWORKS, UI_ICONS } from './app/utils/networks'
 
-// profile.json is read here at config time (PLAN.md 5.4).
-// A preset or icon change in profile.json needs a dev server restart.
-const profile = parseProfile(profileJson)
+// The profile is read here at config time (PLAN.md 5.4). content/resolve.ts
+// picks content/profile.json (yours, not tracked) or the tracked example.
+// A preset or icon change in the file needs a dev server restart.
+const PROFILE_PATH = profilePath()
+const profile = parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
+
+/**
+ * `public/<dir>/manifest.json` is written by scripts/fetch-favicons.ts (pregenerate)
+ * and is not tracked. On a fresh clone, before that script runs, the alias points
+ * at an empty module so `nuxt dev` and `nuxt typecheck` still work.
+ */
+function manifestOrEmpty(dir: 'icons' | 'thumbs'): string {
+  const file = resolve(ROOT, `public/${dir}/manifest.json`)
+  return existsSync(file) ? file : resolve(ROOT, 'app/components/blocks/empty-manifest.ts')
+}
+
+/** Files that may be missing in a fresh clone, resolved once at config time. The app imports them by these names. */
+const FILE_ALIASES = {
+  '#profile': PROFILE_PATH,
+  '#manifest/icons': manifestOrEmpty('icons'),
+  '#manifest/thumbs': manifestOrEmpty('thumbs'),
+}
+
+/** tsconfig `paths` for the aliases above. Nuxt drops the extension when it derives paths from `alias`; a `.json` target needs it. */
+const FILE_ALIAS_PATHS = Object.fromEntries(
+  Object.entries(FILE_ALIASES).map(([name, file]) => [name, [relative(resolve(ROOT, '.nuxt'), file).split('\\').join('/')]]),
+)
 
 /** Font families for the chosen font preset only. Other presets are not downloaded. */
 function fontsFor(presetId: typeof profile.profile.theme.fonts) {
@@ -57,6 +83,7 @@ export default defineNuxtConfig({
       siteUrl: '',
     },
   },
+  alias: FILE_ALIASES,
 
   routeRules: {
     '/edit': { prerender: false },
@@ -80,6 +107,7 @@ export default defineNuxtConfig({
 
   typescript: {
     strict: true,
+    tsConfig: { compilerOptions: { paths: FILE_ALIAS_PATHS } },
     // scripts/ and types/ are not app code. Typecheck them with the node project.
     nodeTsConfig: {
       include: ['../scripts/**/*', '../types/**/*', '../tests/**/*', '../playwright.config.ts'],

@@ -1,9 +1,10 @@
 /**
- * Dev only. Returns content/profile.json, read from disk and validated on
- * every call. 400 with one message per issue when the file is not valid.
+ * Dev only. Returns the profile (content/profile.json, else the example),
+ * read from disk and validated on every call. 400 with one message per
+ * issue when the file is not valid.
  */
 import { ProfileSchema } from '~~/types/profile'
-import { assertDev, PROFILE_PATH, readProfileFile } from '../utils/editor'
+import { assertDev, profileReadPath, readProfileFile } from '../utils/editor'
 
 export default defineEventHandler(async () => {
   assertDev()
@@ -13,7 +14,7 @@ export default defineEventHandler(async () => {
     throw createError({
       statusCode: 400,
       statusMessage: 'Invalid profile',
-      message: `${PROFILE_PATH}:\n${errors.join('\n')}`,
+      message: `${profileReadPath()}:\n${errors.join('\n')}`,
       data: { errors },
     })
   }

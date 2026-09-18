@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: v1 done. WP6 release tooling merged. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
+Status: v1 done. WP6 release tooling done. WP7 (personal data out of git) done. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -294,6 +294,8 @@ UI icons: link `line-md:link`, external `line-md:external-link`, map `line-md:ma
 
 ## 6. Data shape (`content/profile.json`)
 
+Two files, one shape (WP7): `content/profile.json` is the user's document, ignored by git, created by `predev` from the example, written by the editor. `content/profile.example.json` is the tracked sample. `content/resolve.ts` picks the personal file when it exists, else the example; every entry point (`nuxt.config.ts`, scripts, server routes, tests) goes through it. GitHub CI and the release zip build the example. Personal images (`public/avatar.*`, `public/blocks/*` except `sample.jpg`) and the fetched `public/icons/*`, `public/thumbs/*` are ignored too.
+
 ```json
 {
   "profile": {
@@ -336,8 +338,10 @@ Rules:
 ```
 tilebox/
   PLAN.md  NOTES.md  README.md
-  content/profile.json
-  public/avatar.jpg  public/blocks/  public/icons/  public/og.png
+  content/profile.json          # yours, ignored by git (WP7)
+  content/profile.example.json  # the tracked sample
+  content/resolve.ts            # picks profile.json or the example
+  public/avatar.jpg  public/blocks/  public/icons/  public/og.png   # avatar, blocks/* (except sample.jpg), icons/* ignored
   app/
     app.vue
     assets/css/main.css  assets/css/presets.css   # presets.css is generated
@@ -396,6 +400,11 @@ Done when: Lighthouse mobile 94+ performance and 100 on the other three; the pag
 Owns: `scripts/release.mjs`, `.versionrc.json`, `commitlint.config.mjs`, `releases/`, `.github/workflows/release.yml`, `package.json` scripts (`release`, `deploy`, `deploy:preview`, `prepare`, `simple-git-hooks`).
 Design (decided by Ricardo): releases start locally with `npm run release`. No bot, no PAT, no API keys. The pipeline only validates a pushed tag and publishes the GitHub Release with `GITHUB_TOKEN`. Deploy to Cloudflare Pages is a manual local wrangler command. Commit messages are checked by a local git hook (commitlint), not in CI. The plain-words release summary is drafted by a local AI CLI (`claude`, fallback `grok`), shown in the terminal, and accepted, edited or replaced by the user.
 Done when: `git commit -m "bad message"` is rejected by the hook and `chore: x` passes. `node scripts/release.mjs --dry-run --no-ai --skip-tests` prints the next version and the release file preview and leaves the tree clean. `node scripts/release.mjs --dry-run --skip-tests --yes` shows a draft from `claude -p`. `.github/workflows/release.yml` is valid YAML and fails when the tag differs from `package.json`. `releases/v0.1.0.md` exists. README has "Commit messages", "Release" and "Deploy" sections. `npm run lint`, `npm run typecheck`, `npm run generate` green.
+
+### WP7. Personal data out of git
+Owns: `content/*` (`profile.example.json`, `resolve.ts`, `README.md`), the "Personal data" block in `.gitignore`, `public/icons/.gitkeep`, `public/thumbs/.gitkeep`, `scripts/ensure-profile.ts`, `scripts/validate-profile.ts`, `tests/e2e/repo.spec.ts`, `app/components/blocks/empty-manifest.ts`, the `#profile` and `#manifest/*` aliases in `nuxt.config.ts`, the profile read and write paths in `server/utils/editor.ts`, `package.json` scripts (`ensure:profile`, `predev`), the personal-data preflight in `scripts/release.mjs`.
+Design (decided by Ricardo): `content/profile.json` is the user's personal document. It is never committed, pushed, or replaced by a git update or a release. Same for personal images. The repo ships a sample (`content/profile.example.json`). One resolver (`content/resolve.ts`) picks the personal file when it exists, else the example, and every entry point uses it. The save route always writes the personal file. `predev` creates the personal file from the example; `pregenerate` does not, so CI and the release zip build the sample site. Only `npm run deploy` / `npm run deploy:preview` publish the real site.
+Done when: `git ls-files` has `content/profile.example.json` and not `content/profile.json`, `public/avatar.*`, `public/icons/manifest.json` or `public/thumbs/*`. A fresh clone builds with `npm run generate` without a `profile.json` and prints `profile: content/profile.example.json (example)`. The first `npm run dev` creates `content/profile.json`, prints one line about it, and `git status` stays clean. `npm run release` fails when `content/profile.json` or an image other than `sample.jpg` is tracked. `tests/e2e/repo.spec.ts` runs in the `static` project. `content/README.md` and the README section "Your personal data" exist. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright static green.
 
 ### WP8. Publish command
 Owns: `scripts/publish.mjs`, `package.json` scripts (`publish`, `site:publish`, `deploy`, `deploy:preview`) and the `netlify-cli` dev dependency, README "Publish" section, `.tilebox/` and `.netlify/` lines in `.gitignore`.
