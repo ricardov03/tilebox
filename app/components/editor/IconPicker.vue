@@ -7,6 +7,8 @@
   endpoint (dev only) and fall back to the name as text.
 -->
 <script setup lang="ts">
+import { LinkBlockSchema } from '~~/types/profile'
+
 const model = defineModel<string | undefined>()
 
 const props = defineProps<{
@@ -76,16 +78,17 @@ function pick(name: string) {
   model.value = name
 }
 
-function onManual(event: Event) {
-  const target = event.target
-  if (!(target instanceof HTMLInputElement)) return
-  const value = target.value.trim()
-  model.value = value || undefined
+/** The pasted name must be a full Iconify name. The schema of the link block has the rule. */
+function iconError(value: string): string | undefined {
+  const result = LinkBlockSchema.shape.icon.safeParse(value)
+  return result.success ? undefined : result.error.issues[0]?.message
 }
 
 function markFailed(name: string) {
   failed.value = new Set(failed.value).add(name)
 }
+
+const trimmed = (text: string) => text.trim()
 
 const inputId = computed(() => `${props.id}-icon`)
 const inputClass = INPUT_CLASS
@@ -97,7 +100,7 @@ const inputClass = INPUT_CLASS
       {{ label ?? 'Icon' }}
     </legend>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-start gap-3">
       <span
         class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-ground"
         aria-hidden="true"
@@ -112,20 +115,21 @@ const inputClass = INPUT_CLASS
           class="text-xs text-muted"
         >none</span>
       </span>
-      <label
-        :for="inputId"
-        class="sr-only"
-      >Icon name (prefix:name)</label>
-      <input
-        :id="inputId"
-        :value="model ?? ''"
-        type="text"
-        placeholder="line-md:github"
-        spellcheck="false"
-        :class="inputClass"
-        class="min-w-0 flex-1 font-mono"
-        @change="onManual"
-      >
+      <div class="min-w-0 flex-1">
+        <EditorTextField
+          :id="inputId"
+          label="Icon name (prefix:name)"
+          label-hidden
+          problem-label="Icon name"
+          :model-value="model"
+          :validate="iconError"
+          :normalize="trimmed"
+          placeholder="line-md:github"
+          spellcheck="false"
+          mono
+          @commit="model = $event || undefined"
+        />
+      </div>
       <button
         v-if="model"
         type="button"
