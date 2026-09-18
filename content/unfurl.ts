@@ -760,6 +760,29 @@ async function saveImage(candidate: ImageCandidate, options: UnfurlOptions, dirs
   }
 }
 
+export type PictureResult = { ok: true, body: Buffer } | { ok: false, reason: string }
+
+/**
+ * One remote picture for a build script (the YouTube thumbnail of a video tile), through the SAME
+ * guard as every other request: address check, pinned IP, redirects by hand, timeouts, and the
+ * byte limit applied WHILE the body is read (5 MB by default). The bytes are decoded and written
+ * again as a JPEG, so the file on disk is never the remote file as it came. Never throws.
+ */
+export async function fetchPicture(url: string, options: UnfurlOptions & { maxBytes?: number } = {}): Promise<PictureResult> {
+  try {
+    const response = await safeRequest(url, { accept: 'image/jpeg,image/png,image/webp', maxBytes: options.maxBytes ?? MAX_IMAGE_BYTES, overflow: 'fail' }, options)
+    if (response.status !== 200) return { ok: false, reason: `http ${response.status}` }
+    const kind = sniffImage(response.body)
+    if (kind !== 'jpeg' && kind !== 'png' && kind !== 'webp') return { ok: false, reason: 'not a picture' }
+    const { default: sharp } = await import('sharp')
+    const body = await sharp(response.body, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' }).rotate().jpeg({ quality: 85 }).toBuffer()
+    return { ok: true, body }
+  }
+  catch (error) {
+    return { ok: false, reason: error instanceof UnfurlError ? error.reason : 'not a picture' }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // oEmbed and other shortcuts
 // ---------------------------------------------------------------------------

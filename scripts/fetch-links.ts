@@ -10,6 +10,8 @@
  *   A link with `enrich` off makes no request at all.
  * - YouTube video blocks: hqdefault.jpg -> public/thumbs/<id>.jpg, listed in
  *   public/thumbs/manifest.json { id -> file } (the `#manifest/thumbs` alias).
+ *   The download goes through the engine's guarded request (`fetchPicture`):
+ *   address check, redirects by hand, 5 MB limit while reading, written again as a JPEG.
  *
  * Existing files are kept. A network error prints one line and never fails the build.
  * The fetched files are not tracked (they come from your profile).
@@ -19,18 +21,19 @@
  * folders do not grow for ever and no orphan ships with the site.
  *
  * Debug one link: `npm run fetch:links -- --url https://nuxt.com [--image] [--force]`
- * prints the engine's answer as JSON and changes nothing else.
+ * prints the engine's answer as JSON. It is a REAL run of the engine: it writes
+ * `.tilebox/unfurl-cache.json` and the fetched files in `public/icons/` and
+ * `public/thumbs/`. It does not read or write the profile, and it does not prune.
  */
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { profilePath, ROOT } from '../content/resolve'
-import { unfurl } from '../content/unfurl'
+import { fetchPicture, unfurl } from '../content/unfurl'
 import { linkNeedsFetch, pruneLinkFiles } from '../content/unfurl-cache'
 import { parseProfile } from '../types/profile'
 import { youtubeId } from '../app/components/blocks/media'
 
-const TIMEOUT_MS = 5000
-/** Largest body accepted. A YouTube thumbnail is under 100 KB. */
+/** Largest body accepted. A YouTube thumbnail is under 100 KB. The engine stops reading at this size. */
 const MAX_BYTES = 5 * 1024 * 1024
 const THUMBS_DIR = resolve(ROOT, 'public/thumbs')
 
@@ -59,23 +62,13 @@ async function download(job: Job): Promise<boolean> {
   const target = resolve(job.dir, job.file)
   if (await exists(target)) return true
   try {
-    const response = await fetch(job.url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'follow' })
-    const type = response.headers.get('content-type') ?? ''
-    if (!response.ok || !type.startsWith('image/')) {
-      process.stdout.write(`skip ${job.key}: HTTP ${response.status} ${type || 'no content-type'}\n`)
+    // Never a raw `fetch`: the engine checks the address of every hop and counts the bytes while it reads.
+    const picture = await fetchPicture(job.url, { maxBytes: MAX_BYTES })
+    if (!picture.ok) {
+      process.stdout.write(`skip ${job.key}: ${picture.reason}\n`)
       return false
     }
-    const declared = Number(response.headers.get('content-length') ?? 0)
-    if (declared > MAX_BYTES) {
-      process.stdout.write(`skip ${job.key}: body is ${declared} bytes, limit ${MAX_BYTES}\n`)
-      return false
-    }
-    const body = Buffer.from(await response.arrayBuffer())
-    if (body.byteLength > MAX_BYTES) {
-      process.stdout.write(`skip ${job.key}: body is ${body.byteLength} bytes, limit ${MAX_BYTES}\n`)
-      return false
-    }
-    await writeFile(target, body)
+    await writeFile(target, picture.body)
     process.stdout.write(`got  ${job.key} -> ${job.file}\n`)
     return true
   }
@@ -122,7 +115,7 @@ async function run(): Promise<void> {
   process.stdout.write(`OK  link previews ${linksOk}/${links.length}, thumbnails ${thumbs.size}/${thumbJobs.size}${removed.length ? `, ${removed.length} unused files removed` : ''}\n`)
 }
 
-/** `--url <link> [--image] [--force]`: print the engine's answer for one link. */
+/** `--url <link> [--image] [--force]`: print the engine's answer for one link. Writes the cache and the fetched files. */
 async function debugOne(args: string[]): Promise<boolean> {
   const at = args.indexOf('--url')
   const url = at === -1 ? undefined : args[at + 1]

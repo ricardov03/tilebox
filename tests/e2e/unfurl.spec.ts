@@ -18,6 +18,7 @@ import {
   checkTarget,
   cleanText,
   decodeHtml,
+  fetchPicture,
   githubAvatarFor,
   isPublicAddress,
   MAX_SUB_REQUESTS,
@@ -39,6 +40,7 @@ import {
   type UnfurlDirs,
   type UnfurlOptions,
 } from '../../content/unfurl'
+import { ROOT } from './helpers'
 import { FRESH_MS, NEGATIVE_MS, readCacheSync, readFailuresSync } from '../../content/unfurl-cache'
 
 /** 1x1 transparent PNG. */
@@ -687,6 +689,26 @@ test.describe('C1: the reason names the real cause', () => {
     expect(await ask('https://ssrf.test/', toPrivate)).toEqual({ ok: false, reason: 'blocked address' })
     const loop: Transport = url => Promise.resolve(new Response('', { status: 302, headers: { location: `${url.origin}/again` } }))
     expect(await ask('https://loop.test/', loop)).toEqual({ ok: false, reason: 'too many redirects' })
+  })
+})
+
+test.describe('C2: build-time pictures use the guarded request', () => {
+  test('fetchPicture re-encodes a picture as JPEG, stops at the byte limit, and refuses what is not a picture', async () => {
+    const good = await fetchPicture(`${base}/real.png`, options)
+    expect(good.ok).toBe(true)
+    if (good.ok) expect(sniffImage(good.body)).toBe('jpeg')
+    expect(await fetchPicture(`${base}/real.png`, { ...options, maxBytes: 64 })).toEqual({ ok: false, reason: 'file too large' })
+    expect(await fetchPicture(`${base}/fake.png`, options)).toEqual({ ok: false, reason: 'not a picture' })
+    expect(await fetchPicture(`${base}/missing.jpg`, options)).toEqual({ ok: false, reason: 'http 404' })
+    expect(await fetchPicture(`${base}/to-private`, options)).toEqual({ ok: false, reason: 'blocked address' })
+    expect(await fetchPicture('http://127.0.0.1/x.jpg', { dirs })).toEqual({ ok: false, reason: 'blocked address' })
+  })
+
+  test('scripts/fetch-links.ts has no raw fetch', () => {
+    const source = readFileSync(join(ROOT, 'scripts/fetch-links.ts'), 'utf8')
+    expect(source).not.toMatch(/[^.\w]fetch\(/)
+    expect(source).not.toContain('redirect: \'follow\'')
+    expect(source).toContain('fetchPicture(')
   })
 })
 
