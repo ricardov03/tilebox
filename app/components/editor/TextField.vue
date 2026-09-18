@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<{
   required?: boolean
   /** Shows "(required)" after the label. */
   requiredMark?: boolean
-  type?: 'text' | 'url' | 'email'
+  type?: 'text' | 'url' | 'email' | 'tel'
   multiline?: boolean
   rows?: number
   /** The reason a non-empty value is refused, or `undefined`. */
@@ -100,6 +100,13 @@ function onBlur() {
   field.blur()
   emit('blur')
 }
+
+defineExpose({
+  /** What the input shows now: a refused text is here and not in the draft. */
+  text: () => state.text,
+  /** The parent set the model to `value`. The field follows by the rules of a change from outside, also when the model did not change (a refused text over the same value). */
+  sync: (value: string) => field.modelChanged(value),
+})
 
 const errorId = computed(() => `${props.id}-error`)
 const describedBy = computed(() => [state.error ? errorId.value : '', props.describedby ?? ''].filter(Boolean).join(' ') || undefined)

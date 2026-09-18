@@ -77,7 +77,7 @@ test.describe('S1c: the upload route never stores an SVG', () => {
 })
 
 test.describe('S6: the dev write routes take only what the editor sends', () => {
-  const JSON_ROUTES = ['/api/unfurl', '/api/save', '/api/avatar/gravatar', '/api/site/assets']
+  const JSON_ROUTES = ['/api/unfurl', '/api/save', '/api/avatar/gravatar', '/api/site/assets', '/api/links/check']
   const MULTIPART_ROUTES = ['/api/upload', '/api/site/upload?kind=favicon']
   const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
 

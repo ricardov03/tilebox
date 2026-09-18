@@ -205,13 +205,20 @@ const resizeTo = (input: Buffer, size: number) =>
   sharp(input).resize(size, size, { fit: 'contain', background: TRANSPARENT }).png().toBuffer()
 
 /**
+ * Every decode of a FILE (an upload, the avatar, which may be the Gravatar download) has the pixel limit
+ * of the upload route (content/site-upload.ts): a small file that decodes to a huge picture is refused.
+ * Pictures this module draws itself (SVG text, composites) need none.
+ */
+const FILE_LIMITS = { limitInputPixels: 8192 * 8192 }
+
+/**
  * Your upload as the 512 master. The file is only ever DRAWN (sharp), never copied:
  * `icon.svg` is written for the initials tile alone, the one SVG this module makes itself.
  * (The upload route already turns an SVG into a PNG, content/site-upload.ts.)
  */
 async function uploadArt(file: string): Promise<FaviconArt> {
   const isSvg = extname(file).toLowerCase() === '.svg'
-  const master = await sharp(await readFile(file), { limitInputPixels: 8192 * 8192, ...(isSvg ? { density: 300 } : {}) })
+  const master = await sharp(await readFile(file), { ...FILE_LIMITS, ...(isSvg ? { density: 300 } : {}) })
     .resize(MASTER_SIZE, MASTER_SIZE, { fit: 'contain', background: TRANSPARENT })
     .png()
     .toBuffer()
@@ -222,7 +229,7 @@ async function avatarArt(file: string): Promise<FaviconArt> {
   const circle = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${MASTER_SIZE}" height="${MASTER_SIZE}"><circle cx="${MASTER_SIZE / 2}" cy="${MASTER_SIZE / 2}" r="${MASTER_SIZE / 2}"/></svg>`,
   )
-  const master = await sharp(await readFile(file))
+  const master = await sharp(await readFile(file), FILE_LIMITS)
     .rotate()
     .resize(MASTER_SIZE, MASTER_SIZE, { fit: 'cover' })
     .ensureAlpha()
@@ -264,7 +271,7 @@ async function onGround(art: Buffer, size: number, inner: number, ground: string
 /* ---------- social image ---------- */
 
 async function avatarDataUri(file: string, size: number): Promise<string> {
-  const png = await sharp(await readFile(file)).rotate().resize(size, size, { fit: 'cover' }).png().toBuffer()
+  const png = await sharp(await readFile(file), FILE_LIMITS).rotate().resize(size, size, { fit: 'cover' }).png().toBuffer()
   return `data:image/png;base64,${png.toString('base64')}`
 }
 
@@ -507,7 +514,7 @@ export async function buildSiteAssets(options: BuildSiteAssetsOptions): Promise<
   let ogSource: OgImageSource = 'none'
   if (site?.ogImage) {
     try {
-      await write(SITE_FILES.ogImage, await ogPng(sharp(await readFile(localFile(publicDir, site.ogImage))).rotate()))
+      await write(SITE_FILES.ogImage, await ogPng(sharp(await readFile(localFile(publicDir, site.ogImage)), FILE_LIMITS).rotate()))
       ogSource = 'upload'
     }
     catch (error) {

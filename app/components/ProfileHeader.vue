@@ -11,6 +11,8 @@ const props = defineProps<{
    * the phone sizes there, at every viewport width.
    */
   small?: boolean
+  /** The share button, top right inside the tile (WP11, `site.share`). The public page passes it; the editor preview does not. */
+  share?: boolean
 }>()
 
 /** "Ricardo Vargas" -> "RV". One letter for a single word. */
@@ -78,7 +80,12 @@ const classes = computed<Record<Part, string>>(() => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col justify-between gap-2 overflow-hidden rounded-tile border border-line bg-tile p-6 md:gap-3 md:p-9">
+  <div class="relative flex h-full flex-col justify-between gap-2 overflow-hidden rounded-tile border border-line bg-tile p-6 md:gap-3 md:p-9">
+    <!-- On phones the fixed theme toggle covers the top right corner of this tile, so the share button sits left of it. -->
+    <ShareButton
+      v-if="share"
+      class="absolute top-4 right-16 md:top-6 md:right-6"
+    />
     <img
       v-if="profile.avatar"
       :src="profile.avatar"

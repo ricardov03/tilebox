@@ -1,10 +1,12 @@
 <!--
   Photo tile. The image covers the tile. `bg-photo` shows while it loads or if it is missing.
   Caption sits bottom-left on a soft scrim only if `caption` is set. PLAN.md 5.6.
+  A stock photo (`source`) shows its credit on the same scrim: "Photo by {author} on Pexels", the
+  author and the provider are links (WP12, `imageCredit()` in ./media.ts). Always shown for Pexels.
 -->
 <script setup lang="ts">
 import type { ImageBlock } from '~~/types/profile'
-import { isHttpUrl } from './media'
+import { imageCredit } from './media'
 import Tile from './Tile.vue'
 
 const props = withDefaults(defineProps<{
@@ -23,13 +25,9 @@ onMounted(() => {
   if (el && el.complete && el.naturalWidth === 0) failed.value = true
 })
 
-/** Author credit. The link renders only for an http(s) author URL. */
-const credit = computed(() => {
-  const source = props.block.source
-  if (!source?.author) return null
-  const url = source.authorUrl && isHttpUrl(source.authorUrl) ? source.authorUrl : null
-  return { author: source.author, url }
-})
+/** "Photo by {author} on {provider}". Links render only for http(s) URLs. */
+const credit = computed(() => imageCredit(props.block.source))
+const creditLink = 'rounded-sm text-ground underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ground'
 </script>
 
 <template>
@@ -62,17 +60,28 @@ const credit = computed(() => {
       >{{ block.caption }}</span>
       <span
         v-if="credit"
+        data-photo-credit
         class="font-mono text-xs text-ground/85"
       >
-        Photo by
-        <a
-          v-if="credit.url"
-          :href="credit.url"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="underline underline-offset-2"
-        >{{ credit.author }}</a>
-        <template v-else>{{ credit.author }}</template>
+        <template v-if="credit.author">
+          {{ 'Photo by ' }}<a
+            v-if="credit.authorUrl"
+            :href="credit.authorUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :class="creditLink"
+          >{{ credit.author }}</a><template v-else>{{ credit.author }}</template>
+        </template>
+        <template v-else>{{ 'Photo' }}</template>
+        <template v-if="credit.provider">
+          {{ ' on ' }}<a
+            v-if="credit.providerUrl"
+            :href="credit.providerUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            :class="creditLink"
+          >{{ credit.provider }}</a><template v-else>{{ credit.provider }}</template>
+        </template>
       </span>
     </div>
   </Tile>

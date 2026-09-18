@@ -323,9 +323,11 @@ const labelClass = LABEL_CLASS
         :src="block.src"
         :alt="block.alt"
         require-src
+        :stock-size="block.size"
         require-alt
         @update:src="onImageSrc"
         @update:alt="onImageAlt"
+        @stock="patch({ src: $event.src, alt: $event.alt, source: $event.source })"
       />
       <EditorTextField
         :id="fid('caption')"
@@ -440,6 +442,16 @@ const labelClass = LABEL_CLASS
         @update:src="patch({ thumbnail: $event ?? undefined }, ['thumbnail'])"
       />
     </template>
+
+    <!-- WP11: the contact / qr fields, then schedule + "no UTM" (one line each, the logic lives in those components). -->
+    <EditorBlockExtraFields
+      :block="block"
+      @update:block="emit('update:block', $event)"
+    />
+    <EditorBlockAdvanced
+      :block="block"
+      @update:block="emit('update:block', $event)"
+    />
 
     <div class="mt-2 flex flex-col gap-2 border-t border-line pt-4">
       <div class="flex gap-2">

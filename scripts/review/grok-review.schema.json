@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "required": ["passed", "summary", "findings"],
+  "properties": {
+    "passed": { "type": "boolean" },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "severity", "category", "file", "line", "claim", "evidence", "failure_path", "fix"],
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "type": "string", "enum": ["critical", "warning", "suggestion"] },
+          "category": {
+            "type": "string",
+            "enum": [
+              "second-code-path",
+              "bundled-path",
+              "privacy-leak",
+              "untrusted-input",
+              "editor-state",
+              "test-green-wrong-reason",
+              "schema-drift",
+              "runtime-network",
+              "dev-route-guard",
+              "a11y",
+              "docs",
+              "other"
+            ]
+          },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "claim": { "type": "string" },
+          "evidence": { "type": "string" },
+          "failure_path": { "type": "string" },
+          "fix": { "type": "string" }
+        }
+      }
+    }
+  }
+}

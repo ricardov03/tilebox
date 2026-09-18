@@ -18,6 +18,7 @@
  *   --preview                      upload to a preview URL, not production
  *   --site-url <https://...>       NUXT_PUBLIC_SITE_URL for the build (default: the saved live URL)
  *   --no-build                     skip `npm run generate`, upload dist/ as it is
+ *   --skip-link-check              skip the dead-link check before the upload (it only warns, it never stops a publish)
  *   --yes                          never ask; fail when an answer is needed
  *   --reset                        forget .tilebox/publish.json and set up again
  *   --help                         print this help
@@ -47,6 +48,8 @@ const CHECK_TIMEOUT_MS = 30_000
 const LOGIN_TIMEOUT_MS = 600_000
 const BUILD_TIMEOUT_MS = 600_000
 const DEPLOY_TIMEOUT_MS = 600_000
+/** 60 URLs, 4 at a time, 20 s each at most. */
+const LINK_CHECK_TIMEOUT_MS = 330_000
 
 const MAX_FILES = 20_000
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -73,6 +76,7 @@ Flags:
   --preview                      upload to a preview URL, not production
   --site-url <https://...>       NUXT_PUBLIC_SITE_URL for the build (default: the saved live URL)
   --no-build                     skip \`npm run generate\`, upload dist/ as it is
+  --skip-link-check              skip the dead-link check before the upload (warnings only)
   --yes                          never ask; fail when an answer is needed
   --reset                        forget ${STATE_FILE} and set up again
   --help                         print this help
@@ -522,6 +526,7 @@ const { values: opts } = (() => {
         'preview': { type: 'boolean', default: false },
         'site-url': { type: 'string' },
         'no-build': { type: 'boolean', default: false },
+        'skip-link-check': { type: 'boolean', default: false },
         'yes': { type: 'boolean', default: false },
         'reset': { type: 'boolean', default: false },
         'help': { type: 'boolean', default: false },
@@ -675,6 +680,39 @@ function build(state) {
   }
 }
 
+/**
+ * Before the upload: `npm run check:links` (scripts/check-links.ts, the guarded request of the link previews).
+ * Warnings only. A broken link, a timeout or a crash of the check never stops a publish.
+ */
+const LINK_CHECK_DONE_PREFIX = 'links checked:'
+
+function checkLinks() {
+  if (opts['skip-link-check']) {
+    step('Link check (skipped by --skip-link-check)')
+    return
+  }
+  step('Link check (warnings only, skip with --skip-link-check)')
+  const res = run(npmCli(), ['run', '--silent', 'check:links', '--', '--broken-only'], { timeout: LINK_CHECK_TIMEOUT_MS })
+  if (!res.ok) {
+    log(`    Link check did not finish${res.timedOut ? ' in time' : ''}. The publish goes on.`)
+    return
+  }
+  const lines = res.out.split('\n').map(line => line.trim())
+  // check:links always exits 0. Only its last line says that the check RAN (LINK_CHECK_DONE_PREFIX in content/link-check.ts).
+  if (!lines.some(line => line.startsWith(LINK_CHECK_DONE_PREFIX))) {
+    const why = lines.find(line => line.startsWith('links: check skipped'))
+    log(`    Link check did not run${why ? ` (${why})` : ''}. No link was checked. The publish goes on.`)
+    return
+  }
+  const broken = lines.filter(line => line.startsWith('broken link:'))
+  if (broken.length === 0) {
+    log('    No broken link found.')
+    return
+  }
+  for (const line of broken) log(`    Warning: ${line}`)
+  log(`    ${broken.length} broken link${broken.length === 1 ? '' : 's'}. Fix them in /edit and publish again. The publish goes on.`)
+}
+
 /** Step 7. */
 function deploy(state) {
   const preview = opts.preview
@@ -723,6 +761,7 @@ async function main() {
 
   await checkProfile()
   build(state)
+  checkLinks()
   deploy(state)
 }
 

@@ -4,6 +4,7 @@
  * Its own file, imported by ./profile.ts. Pure: zod only, safe for the client.
  */
 import { z } from 'zod'
+import { UTM_VALUE } from '../app/utils/utm'
 
 export const SITE_TITLE_MAX = 70
 export const SITE_DESCRIPTION_MAX = 160
@@ -28,6 +29,9 @@ const localPath = (extensions: string) => z.string().regex(
   `Must be a local path that starts with / and ends with .${extensions.split('|').join(', .')}`,
 )
 
+/** Lowercase letters, digits, `_` and `-`, 40 at most: a value that never needs escaping in a URL. */
+const utmValue = z.string().regex(UTM_VALUE, 'Use lowercase letters, digits, _ and - (40 at most)')
+
 export const SiteSchema = z.object({
   /** `<title>` and og:title. Default: the name, plus ` (@handle)`. */
   title: z.string().min(1).max(SITE_TITLE_MAX).optional(),
@@ -47,6 +51,14 @@ export const SiteSchema = z.object({
   xHandle: z.string().regex(/^[a-z0-9_]{1,15}$/i, 'Must be an X user name without the @').optional(),
   jobTitle: z.string().min(1).max(100).optional(),
   location: z.string().min(1).max(100).optional(),
+  /** The share button on the profile tile (WP11). Absent = true. `false` removes it. */
+  share: z.boolean().optional(),
+  /** UTM tags the BUILD adds to external links (WP11, app/utils/utm.ts). The stored URLs stay clean. Absent = none. */
+  utm: z.object({
+    source: utmValue,
+    medium: utmValue,
+    campaign: utmValue.optional(),
+  }).strict().optional(),
 }).strict()
 
 export type Site = z.infer<typeof SiteSchema>
@@ -62,6 +74,10 @@ export const SiteAssetsSchema = z.object({
   icon192: z.string().optional(),
   appleTouchIcon: z.string().optional(),
   manifest: z.string().optional(),
+  /** `/site/contact.vcf` (WP11). Missing = the build drops every `contact` block. */
+  contactCard: z.string().optional(),
+  /** `/site/qr.svg` (WP11). Missing = the build drops every `qr` block. */
+  qrCode: z.string().optional(),
 }).strict()
 
 export type SiteAssets = z.infer<typeof SiteAssetsSchema>
@@ -73,9 +89,9 @@ export interface PublicSiteExtras {
   builtAt?: string
 }
 
-/** What the public page gets: the fields, the generated asset paths, the build date. No upload paths. */
+/** What the public page gets: the fields, the generated asset paths, the build date. No upload paths, no `utm` (it is already inside the links). */
 export const PublicSiteSchema = SiteSchema
-  .omit({ ogImage: true, favicon: true })
+  .omit({ ogImage: true, favicon: true, utm: true })
   .extend({ assets: SiteAssetsSchema.optional(), builtAt: z.string().optional() })
   .strict()
 
@@ -83,7 +99,7 @@ export type PublicSite = z.infer<typeof PublicSiteSchema>
 
 /** Pure. The upload paths are dropped: the page only needs the generated files. */
 export function toPublicSite(site: Site | undefined, extras: PublicSiteExtras = {}): PublicSite {
-  const { ogImage: _ogImage, favicon: _favicon, ...rest } = site ?? {}
+  const { ogImage: _ogImage, favicon: _favicon, utm: _utm, ...rest } = site ?? {}
   return {
     ...rest,
     ...(extras.assets ? { assets: extras.assets } : {}),

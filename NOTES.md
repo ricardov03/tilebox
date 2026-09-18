@@ -1195,3 +1195,438 @@ $ E2E_STATIC_PORT=4421 E2E_DEV_PORT=3421 npx playwright test --project=dev      
 ### Open
 - Safari and Firefox: not checked (headless Chromium only).
 - A value typed with an IME is checked like any other: 600 ms after the last `input` event.
+
+## WP11
+
+Branch: `wp/11-second-wave` (from the local branch `merge/main-tmp`, commit `39f6970`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate worktree; the main checkout was not touched. Not merged, no tag. "Linktree second wave" = PLAN.md 13.5: schedule, save contact, QR code, share button, UTM tags, link check.
+
+### What was built
+- **Schedule.** `startsAt` / `endsAt` on every block type (`z.iso.datetime({ offset: true })`, `endsAt` after `startsAt` through ONE `superRefine` on `BlockSchema`, so the block form and the profile get the same check). Pure rules in `app/utils/schedule.ts`. `blockDropReason()` in `types/profile.ts` is the one rule for the build, `check:profile` and the tests. `toPublicProfile()` got a 4th argument `{ now?, envSiteUrl? }`; `modules/public-profile.ts` passes the time of the render (build time; in dev, the last profile change). The public block keeps `endsAt` only. `BentoGrid.vue` writes `data-ends-at` on the `<li>`; `app/pages/index.vue` adds the inline script (`ENDS_AT_SCRIPT`, 194 bytes, `tagPosition: 'bodyClose'`) only when a block has an end date. It sets `hidden` (Tailwind preflight: `display: none !important`).
+- **Save contact.** `ContactSchema` (strict, all optional), `app/utils/vcard.ts` (pure: escaping, 75-byte folding that never cuts a character, control and bidi characters removed by code point), `content/site-extras.ts` writes or REMOVES `public/site/contact.vcf`. `ContactBlock.vue` = `Tile` with the new `download` prop (only with it a local `href` becomes a link). The public profile gets `contact: { fileName }` only, and only when the file exists.
+- **QR code.** `qrSvg()` (`uqr` `renderSVG`, ecc M, border 2) in `content/site-extras.ts`; https only (`isSiteUrl`); env > `site.url`. `QrBlock.vue` is an `<img>`. `GET /api/site/qr.png` (dev only, `assertEditorRequest(event, 'none')`) draws the local SVG with sharp at 1024 px, nearest-neighbour.
+- **Share button.** `ShareButton.vue`, included in `ProfileHeader.vue` behind a `share` prop (the public page passes `site.share !== false`; the editor preview does not pass it). Same markup on server and client, so no `ClientOnly` and no hydration mismatch in the built page.
+- **UTM tags.** `app/utils/utm.ts` (`withUtm`, `withoutUtm`, `isExternalHttpUrl`). String work, not `URL.searchParams`: the typed query and hash stay byte for byte. `toPublicBlock()` tags link, social, map and video URLs. `toPublicSite()` drops `utm`. `sameAsOf()` strips the tags, so JSON-LD identity URLs stay clean.
+- **Link check.** `content/link-check.ts` (`linkTargets`, `classifyStatus`, `checkLink`, `checkLinks`, `linkTable`), `scripts/check-links.ts` (`--broken-only` for `publish.mjs`), `POST /api/links/check`, `useLinkCheck()` (`useState`, memory only), `LinkCheckButton.vue`, `BlockRowBadges.vue`.
+- **Editor.** All new UI is in NEW components. `useEditor()` now `provide`s the draft (`EDITOR_DRAFT`, `useEditorDraft()`), and `useSiteDraft()` reads and writes `site.*` and `contact` through it. So `edit.vue` has NO change, `SitePanel.vue` has one include line (`<EditorSiteExtras />`) plus one type on `withKey`, `BlockForm.vue` has two includes (`EditorBlockExtraFields`, `EditorBlockAdvanced`), `BlockList.vue` two (`EditorLinkCheckButton`, `EditorBlockRowBadges`), `PreviewTile.vue` one. `ImagePicker.vue` was not touched.
+- `server/api/save.post.ts` runs `buildSiteExtras()` BEFORE it writes the profile (no network, no sharp), so the dev page never drops a fresh contact or QR tile for a missing file and never links to a stale card.
+
+### Deviations and why
+1. **The example has a block that starts in 2099 (`b13`, "Scheduled draft tile").** The brief said "no time-dependent content except one `endsAt` in 2099", and also asked the privacy spec to prove that a future-start title is in no file of `dist/`. That proof needs such a block in the built profile. A 2099 start is as stable as a 2099 end, and it follows the precedent of the hidden block `b11`. Cost: `check:profile` prints one warning line on every build of the sample. The `endsAt` 2099 is on `b7`.
+2. **No `qr` block in the example**: it has no `site.url` (checked). `dist/site/qr.svg` exists only with `NUXT_PUBLIC_SITE_URL` or `site.url`.
+3. **The QR code always uses the LIGHT preset colors on a solid ground**, also in dark mode. The brief allowed "transparent/ground"; a light-on-dark code does not scan on many phones, and an `<img>` SVG cannot follow the theme toggle.
+4. **The contact card and the QR code are in a sibling module (`content/site-extras.ts`), not inside `buildSiteAssets()`.** The WP10b tests pin "8 files" and the exact folder listing of that builder. The script prints its summary line unchanged, then the extras lines.
+5. **`EMAIL;TYPE=INTERNET`** (the usual 3.0 form) instead of a bare `EMAIL`. `URL`, `TEL` and `EMAIL` are not text values in RFC 2426, so they are not comma-escaped; the schema and a second guard keep line breaks out.
+6. **Link check classes.** Other 4xx (400, 451...) count as `blocked`. A refusal of the SSRF guard (a private address) counts as `broken`: a visitor cannot open it either. Hidden blocks are checked too (the owner may show them again); the vCard URL is checked when the card is on. Besides "4 at a time" there is "one request per host at a time" (PLAN 13.5).
+7. **`content/unfurl.ts` (a WP10a file) got one option**: `method?: 'GET' | 'HEAD'` on `RequestOptions` (now exported) and `TransportInit`. Default `GET`, so the engine and its 152 tests are unchanged.
+8. **Icons.** `line-md` has no clock and no share icon (checked in the pack). Schedule badge: `line-md:calendar`. Share: `line-md:upload` (the arrow-out-of-a-tray shape of the iOS share icon), `line-md:confirm` after a copy. Contact: `line-md:account` (exists). All in `UI_ICONS`, so `check:icons` covers them (68 icons).
+9. **"Check links" sits at the top of the block list** (`BlockList.vue`), not in a tab header: the Blocks tab has no header, and this keeps `edit.vue` untouched.
+10. **Share button position on phones.** The fixed theme toggle covers the top right corner of the profile tile below `md`. The share button sits left of it (`right-16`), and at `md` and up in the corner (`md:right-6`). A test checks at 1280 and 390: 44 px, no overlap, 8 px gap or more, inside the tile, clear of the avatar and the name.
+11. `publish.mjs` runs the link check also with `--no-build`. Only `--skip-link-check` skips it. It can add up to about 5 minutes in the worst case (60 dead hosts); a normal profile takes seconds.
+
+### For the merge with the two parallel branches
+- `BlockForm.vue`: my change is the 10 lines before the last `<div class="mt-2 ...">` (two components that emit `update:block`). They need only `block` and the form's `emit`.
+- `SitePanel.vue`: `<EditorSiteExtras />` before the closing `</div>`, and `Record<string, Site[keyof Site]>` in `withKey()` (`site.utm` is an object, so `string | boolean` no longer fits). If the refactor rewrites `withKey()`, keep it spreading `site.value`: that is what keeps `share` and `utm` alive when another field changes.
+- `useEditor.ts`: `BLOCK_TYPES`, `BLOCK_TYPE_LABELS`, `newBlock`, `copyOf`, `blockSummary` got the two types; `provide(EDITOR_DRAFT, draft)` is the first line of `useEditor()`.
+- The Site tab has new labels. Kept unique against the WP10b tests (`getByLabel` matches substrings): the card uses "Role", not "Job title".
+
+### Known limits (documented in the README)
+- A scheduled START needs a new publish after that time. `check:profile` says so, with the date.
+- A tile with a passed `endsAt` stays visible with JavaScript off, and its text is in the files of the site until the next publish. Not for secrets.
+- In `nuxt dev`, a page opened right after a save can log one Vue hydration warning (server bundle and client bundle refresh at slightly different times). Dev only; it was there before for every saved field. The built page has none.
+
+### Tests
+- `static`: 191 passed (was 152). New file `tests/e2e/second-wave.spec.ts` (37 tests): schema (old profile valid, offset needed, `endsAt` after `startsAt`, every block type, qr sizes, utm slugs, strict `contact`), schedule matrix with a fixed `now` (both layouts cleaned, only `endsAt` ships, input untouched), `datetime-local` <-> ISO, script under 400 bytes; UTM matrix (existing query and hash, existing `utm_*`, `mailto:`, `tel:`, local path, same site, `www.`, `noUtm`, hidden block, image source untouched, env URL wins, `sameAs` clean, brand icon + cache key on the ORIGINAL url with a real cache file); vCard (escaping, CRLF only, 75-byte lines, no `PHOTO`, profile email absent from the card and from the public profile, stale file removed); QR (no URL = no file, colors, no script in the SVG, env wins, http refused); link check with a mocked transport (HEAD first, honest UA, pinned address, GET retry reads 2 chunks at most, redirect followed, DNS / certificate / timeout reasons, private address refused with no connection, targets, 4 at a time and one per host). Browser: end-date script with `page.clock` (hidden at load in 2100; hidden by the 60 s check), share button (clipboard permission, "Link copied", gone after 2 s, no foreign or `/api/` request; the `navigator.share` branch with a stub), geometry at 1280 and 390, contact tile `href` + `download` + a real download event, no QR without a site URL. `privacy.spec.ts` +2 (`.vcf` is a text file now): the 2099 block is in no file of `dist/`; the card is in `dist/` only when it is on and has no profile email. `public.spec.ts` counts tiles with `blockDropReason()`. a11y stays at 0 violations with the new tile and button.
+- `dev`: 54 passed (was 45). New file `tests/e2e/second-wave-editor.spec.ts` (7 tests): schedule round-trip to ISO with the machine's offset (saved file, reload, list badge, tile badge, dev page follows, Clear restores the block exactly), Expired badge, contact panel (public note, bad email refused, saved object, preview text, the card follows the save and leaves the disk when turned off), live UTM example (incomplete, bad value, saved, stored links clean, dev page tagged), share checkbox, "Check links" with the route mocked (badges, summary, file unchanged), the real routes (403 / 415 / 400 guards, a loopback link answers `blocked address` with no network, QR PNG 1024x1024 with the sandbox CSP on the SVG). `security-dev.spec.ts`: `/api/links/check` joined `JSON_ROUTES` (+2). The profile is backed up and restored; the two generated files are made again from the restored profile.
+- Both projects in one run: 243 passed, 2 skipped (the two "example only" tests: the dev server's `predev` creates `content/profile.json` before the static tests start; alone, `static` runs them).
+
+### Verification output (last lines)
+```
+$ npm run lint                      -> clean
+$ npm run typecheck                 -> clean
+$ npm run generate                  -> exit 0
+  warning: block "b13" starts on 2099-01-01T00:00:00Z. This build leaves it out: publish again after 2099-01-01T00:00:00Z to show it.
+  site: favicon from initials, social image generated (8 files in public/site/)
+  site: contact card written (/site/contact.vcf). Everything in it is public.
+$ ls dist/site                      -> the 8 files + contact.vcf (no qr.svg: the example has no site URL)
+$ NUXT_PUBLIC_SITE_URL=https://ricardo.example npx tsx scripts/build-site-assets.ts
+  site: QR code written for https://ricardo.example/
+$ grep -r "hello@example.com" dist | wc -l          -> 0
+$ grep -rl "Scheduled draft tile" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4422 E2E_DEV_PORT=3422 npx playwright test --project=static   -> 191 passed
+$ E2E_STATIC_PORT=4422 E2E_DEV_PORT=3422 npx playwright test --project=dev      -> 54 passed
+$ npm run check:icons               -> OK  68 icons found in installed Iconify packs
+$ npm run check:links               -> exit 0. 10 URLs: 6 ok, 0 blocked, 4 broken (the example.com/* sample paths answer 404)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks         -> exit 0
+```
+
+### Open
+- Review (Grok or OCR) not run yet. `content/link-check.ts`, `app/utils/vcard.ts` and the change in `content/unfurl.ts` are the security-relevant parts.
+- Safari and Firefox: not checked. `navigator.share` on a real phone: not checked (stubbed in the test).
+- `npm run publish` with the link check step was not run against a real provider (it needs Ricardo's login). `node scripts/publish.mjs --help` prints the new flag.
+
+## WP12
+
+Pexels photo picker (PLAN.md 13.1, now section 8 `### WP12`). Branch: `wp/12-pexels` (from the local `merge/main-tmp`). Date: 2026-09-18. Work was done in a separate git worktree; the main checkout was not touched. Not merged.
+
+No real Pexels key was available: NO real API call was made. Everything below the documentation check runs against a mocked connection.
+
+### Pexels API facts, checked on 2026-09-18 (https://www.pexels.com/api/documentation/)
+- Search: `GET https://api.pexels.com/v1/search`. `query` (required), `orientation` (`landscape`, `portrait`, `square`), `size` (`large` 24 MP, `medium` 12 MP, `small` 4 MP), `color` (12 names or a hex code), `locale`, `page` (default 1), `per_page` (default 15, max 80). One photo: `GET https://api.pexels.com/v1/photos/:id`.
+- Key: the header `Authorization: <key>`, the key as it is (no `Bearer`).
+- Photo: `id`, `width`, `height`, `url` (the photo page), `photographer`, `photographer_url`, `photographer_id`, `avg_color`, `src`, `alt`, `liked`. `src`: `original`, `large2x` (940x650 at DPR 2), `large` (940x650), `medium` (height 350), `small` (height 130), `portrait` (800x1200), `landscape` (1200x627), `tiny` (280x200).
+- Search answer: `photos`, `page`, `per_page`, `total_results`, `next_page` and `prev_page` (both optional).
+- Limits: 200 requests per hour and 20,000 per month by default. Headers `X-Ratelimit-Limit`, `X-Ratelimit-Remaining`, `X-Ratelimit-Reset` (UNIX seconds). **They come with 2xx answers only, NOT with a 429.** This changes the design: see decision 3.
+- Guidelines: "show a prominent link to Pexels" when you use the API, "always credit our photographers when possible (e.g. 'Photo by John Doe on Pexels' with a link to the photo page on Pexels)", do not copy the core function of Pexels, do not work around the rate limit.
+
+### What was built
+- `content/pexels.ts`: the engine (`searchPhotos`, `pickPhoto`, the zod input schemas, `PexelsError` with an HTTP status). Plain TypeScript, no Nuxt imports, paths from `ROOT` (the WP7 lesson), so Playwright can run it with a mocked `transport` and `lookup`.
+- `server/api/images/pexels/status.get.ts`, `search.get.ts`, `pick.post.ts` + `server/utils/pexels.ts`. All: 404 outside `nuxt dev`, then `assertEditorRequest()` (`none`, `none`, `json`). `search` and `pick` load the engine with `import.meta.dev ? await import(...) : null`, like `/api/unfurl`, so a build has no copy of it.
+- `app/components/editor/PexelsPicker.vue` (new) and the two tabs in `ImagePicker.vue`.
+- `imageCredit()` in `app/components/blocks/media.ts` + the credit line of `ImageBlock.vue`.
+- `.env.example`, README "Stock photos (Pexels)", `docs/security.md` "The Pexels picker", PLAN.md.
+
+### Decisions
+1. **The key is read with `process.env.PEXELS_API_KEY` in the route, not `runtimeConfig`.** Nuxt loads `.env` into the dev server (checked by hand: a `.env` with a dummy key -> `GET /status` answers `{ "configured": true }`). No `runtimeConfig` entry means no way to put it under `public` by mistake, and `nuxt.config.ts` has no word "pexels" (a test checks that).
+2. **`POST /pick` takes `{ id, size? }`, `size` = `large2x` (default) or `large`.** Never a URL. `large2x` is 1880 px wide at most, enough for the 1600 px target, and about 0.3 to 0.8 MB. `original` is not offered: it can be 50 MP for no gain. The byte limit stays at 15 MB as asked.
+3. **The 429 text.** A 429 has no rate-limit headers, so the engine remembers `X-Ratelimit-Reset` of the last good answer of this dev server. Known and in the future -> "try again at 14:05" (with the date when it is another day). Unknown -> "try again in about one hour". The route also sends `data.reset`.
+4. **The allow-list lives in `safeRequest()`** (`content/unfurl.ts`, a WP10a file; change noted here as PLAN.md section 0 rule 2 asks). Two new, optional request fields: `onlyHosts` (every hop must be https on a listed host, else "blocked host"; the address check still runs) and `headers` (sent on the FIRST hop only, so a redirect target never gets the key). Nothing changes for the callers that do not set them; `unfurl.spec.ts` and `security.spec.ts` are green.
+5. **WebP, quality 82.** Nothing was hurt by WebP: `ImageBlockSchema.src` is any local path, the link images of WP10a are WebP already, every browser of the last 5 years reads it. sharp drops metadata by default; the test puts an EXIF copyright text into the input and looks for it in the output.
+6. **Idempotent pick still asks the API once** (1 request of the quota): the answer needs `alt` and the credit fields, and they are not stored next to the file. The download and the encode are skipped. A file that is not a readable WebP is written again.
+7. **Alt text.** `alt` is required by the schema, so it is never empty: a new block has "Sample image". The Pexels alt is used when the current text is empty, starts with "Sample image", or is the text this field filled in for the photo picked before. A text the owner wrote stays. Pexels has no alt -> "Photo by {author}".
+8. **One `stock` event, one patch.** `ImagePicker.vue` emits `stock` with `src`, `alt` and `source` together; `BlockForm.vue` patches them at once. Two separate `update:*` events would race with `onImageSrc`, which sets `source: null`. The edit in `BlockForm.vue` is 2 template lines (`:stock-size`, `@stock`), no script change: the agent that refactors the text inputs should keep them.
+9. **Only image blocks get the Pexels tab** (`stock-size` prop). The video thumbnail field has no `source`, so a stock photo there could not be credited.
+10. **No key name in client code.** The edit page chunk IS part of `dist/` (the page says "dev only" there). So the help text of the no-key state says "the Pexels line of `.env` / `.env.example`" and never names the variable; the exact name is in README and `.env.example`. This keeps the canary strict: the name of the variable is in NO built file.
+11. **Offline.** The dev server is on the same machine and answers without internet, so the tab asks `navigator.onLine` first (no request). When the browser says online but Pexels cannot be reached, the server answers 502 / 504 "Cannot reach Pexels (...)" and the tab adds "Check your internet connection".
+12. **`hideCredit`: not built**, as decided. `imageCredit()` always answers a line for `provider: pexels`, also without an author ("Photo on Pexels"). URLs are used as they are: the UTM feature of another branch must skip credit links (it should only touch block URLs).
+13. **Thumbnails in the grid load from `images.pexels.com`** with `referrerpolicy="no-referrer"`. Dev editor only. The public page test "never requests another origin" is unchanged and green.
+14. **Housekeeping (item 7): confirmed.** `pruneLinkFiles()` loops over `['icons', 'thumbs']` only. `pexels.spec.ts` has a test with a `blocks/pexels-1.webp` next to an orphan icon: only the icon goes.
+
+### Deviations and why
+- **The credit links are tested in the `dev` project, not in the static browser.** The static site is built from the tracked example, and that example must not claim a Pexels credit for `sample.jpg` (it is not a Pexels photo), and a real Pexels photo could not be downloaded without a key. The preview tile of the editor IS the public `ImageBlock.vue`, so `pexels-editor.spec.ts` checks the two links, `href`, `rel`, `target` there, and `pexels.spec.ts` checks `imageCredit()` as a unit. When Ricardo's profile has a Pexels photo, `public.spec.ts` ("never requests another origin") covers it on the static page as it is.
+- **The key canary needs the dummy key at build time to be a full check**: `PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate`. Without it the value check passes trivially; the name check, the engine check (`api.pexels.com`) and the source checks still work. The test also looks for a key found in `.env` or in the environment, so on Ricardo's machine it checks his real key (only file names are printed). Suggestion for the architect, not done here (CI files belong to WP4/WP6): add that dummy variable to the `generate` step of `.github/workflows/ci.yml`.
+- `.nuxt/dist/client` does not exist after `nuxt generate` in this Nuxt version (the client files are moved to `.output/public` = `dist`). The canary reads it when it exists, and `.output/server` too.
+
+### Requests to other WPs
+- `CLAUDE.md` still says "Later Pexels picker". An agent may not edit that file: Ricardo or the architect should change the line to "Pexels picker built (WP12), key in `.env`".
+- The BlockForm refactor (local drafts): keep `:stock-size="block.size"` and `@stock="patch({ src, alt, source })"` on the image field, and let the alt draft follow `block.alt` after a pick.
+
+### Tests
+- `static`: +26 in `tests/e2e/pexels.spec.ts` (9 search, 2 input, 7 pick, 1 housekeeping, 4 credit, 3 key canary).
+- `dev`: +10 in `tests/e2e/pexels-editor.spec.ts` (6 browser tests with mocked routes, 4 on the real routes that are refused before any network call).
+- Cleanup: `content/profile.json` is backed up and restored (`.e2e-pexels-backup`, in `.gitignore`), every `public/blocks/pexels-*` is removed at the end.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate   -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4423 E2E_DEV_PORT=3423 npx playwright test --project=static
+178 passed      (was 152: +26)
+$ E2E_STATIC_PORT=4423 E2E_DEV_PORT=3423 npx playwright test --project=dev
+55 passed       (was 45: +10)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ printf 'PEXELS_API_KEY=<dummy>' > .env; npx nuxt dev --port 3423
+$ curl -s localhost:3423/api/images/pexels/status                          -> { "configured": true }
+$ curl -s -o /dev/null -w '%{http_code}' -H 'Origin: https://evil.test' ... -> 403
+(.env removed afterwards)
+$ ls public/blocks        -> sample.jpg
+```
+
+### Open (needs Ricardo's real key)
+- One live run: a search, "Load more", a pick, the saved file (`public/blocks/pexels-<id>.webp`, about 1600 px, under 1 MB), the credit on the tile, `npm run generate`, the page with no foreign request.
+- The real shape of a 401 and of a 429 from Pexels (status codes are from the documentation; the body is not read, so a change there cannot break the message).
+- The real value of `X-Ratelimit-Reset`: the documentation says "UNIX timestamp". The code reads it as seconds.
+- Safari and Firefox: not checked (headless Chromium only).
+- Grok review of this WP (PLAN.md section 9).
+
+## WP13 integration
+
+Branch: `wp/13-integration` (from `origin/main` `df09fa4` = WP10 + the editor input fix). Date: 2026-09-18. It merges `origin/wp/11-second-wave`, then `origin/wp/12-pexels`. Both were built from the commit BEFORE the input fix. Work was done in a separate worktree. Not merged into `main`, no tag.
+
+### Merge 1: `wp/11-second-wave` (3 conflict files)
+- `playwright.config.ts`: union. `static` = main's list (with `field-draft.spec.ts`) + `second-wave.spec.ts`. `dev` = main's list (with `editor-inputs.spec.ts`) + `second-wave-editor.spec.ts`.
+- `README.md`: the two rows of the Tests table = main's text + the WP11 sentence. Project layout: `useFieldDraft` AND `useSiteDraft`, `useLinkCheck`.
+- `NOTES.md`: `## Editor input fix`, then the whole `## WP11`.
+- Merged by git with no conflict, read by hand: `BlockForm.vue` (main's `EditorTextField` pattern + the two WP11 includes before the last div), `SitePanel.vue` (7 converted fields + `<EditorSiteExtras />`; `withKey()` still spreads `site.value`, so `share` and `utm` stay when another field changes), `useEditor.ts` (`provide(EDITOR_DRAFT, draft)` is the first line; the field registry of main lives in `useFieldDraft.ts` / `edit.vue`, untouched), `modules/public-profile.ts` (passes `{ now: new Date(), envSiteUrl: process.env.NUXT_PUBLIC_SITE_URL }` as the 4th argument), `package.json`, `package-lock.json` (`uqr`).
+
+### Merge 2: `wp/12-pexels` (8 conflict files)
+- `content/unfurl.ts`: `RequestOptions` has all three: `method` (WP11), `onlyHosts` and `headers` (WP12). In `safeRequest()` every hop runs the `onlyHosts` check, then `checkTarget()`; `headers` go on hop 0 only; `method` goes to the transport on every hop.
+- `BlockForm.vue`: the image field has `require-src` (main) + `:stock-size` and `@stock` (WP12). One `stock` patch = `src`, `alt`, `source`.
+- `ImagePicker.vue`: main's two `EditorTextField`s (path, alt) + the Upload / Pexels tabs and the `stock` event. The old `onSrcInput` / `onAltInput` of WP12 are gone (the fields commit). The path field is inside the Upload panel (`v-show`), so it stays mounted and follows a pick.
+- `playwright.config.ts`: + `pexels.spec.ts` (static), + `pexels-editor.spec.ts` (dev).
+- `README.md` (Tests table rows: + the two Pexels sentences; project layout: `content/pexels.ts`, the three routes, all spec names), `PLAN.md` (status line rewritten for this branch; section 8 has `### WP11` then `### WP12`), `docs/security.md` (the WP11 sections, then "The Pexels picker"), `NOTES.md` (`## WP11`, then `## WP12`).
+- `CLAUDE.md`: the stale "Later Pexels picker" line now says that the picker exists (key in `.env`, dev only).
+- `.gitignore`, `.env.example`, `content/README.md`, `package.json`: merged by git, checked. `package-lock.json`: `npm install` changed nothing, `npm ci` passes.
+- Hook order (unchanged): `predev` = ensure:profile, presets, check:profile, fetch:avatar, build:site-assets. `pregenerate` = presets, check:profile, check:contrast, check:icons, fetch:avatar, fetch:links, build:site-assets.
+
+### WP11 text fields converted to `EditorTextField` (13)
+- `BlockExtraFields.vue` (3): contact tile title, description; QR caption. `:key` holds the block id. The check is `BlockSchema` on the whole block, like `BlockForm.vue`. The icon picker got a `:key` too.
+- `ContactPanel.vue` (7): full name, company, role, phone (`type="tel"`, new in the `type` union of `TextField.vue`), public email, website, note (multiline). Model = the draft (`contact[key]`), check = `ContactSchema.shape[key]`, values are trimmed. Save bar name: `Site > Contact card, Public email`.
+- `UtmPanel.vue` (3): source, medium, campaign. The draft has no place for half a setting, so the panel keeps `values` = the CHECKED text of each field; `site.utm` is written only while source and medium are both there. **Behavior change:** the example and the "tags are off" note follow the checked values (about 600 ms after the last key), and a refused campaign no longer turns the example off: the draft keeps the last valid tags, the field shows the reason, and Save is blocked. `second-wave-editor.spec.ts` was changed for that (contact: error after blur + save bar; UTM: example keeps source and medium).
+- NOT converted, on purpose: the two `datetime-local` inputs of `BlockAdvanced.vue` (a picker, commits at once) and the Pexels search box (a search box, its own 800 ms wait).
+
+### Follow-ups
+- `ci.yml`: the Generate step sets `PEXELS_API_KEY: tilebox-canary-pexels-key-0f3a9c`. It is the same text as `CANARY` in `tests/e2e/pexels.spec.ts`, so the `e2e` job proves on CI that a key in the build environment reaches no file of `dist/`. Not a secret.
+- `pexels-editor.spec.ts` +1: after a pick the alt FIELD and the path field follow the block (a change from outside, no focus), a pick replaces the text it filled in itself, the owner's typed text stays.
+- `second-wave-editor.spec.ts` +1: contact card and UTM fields are clearable, show no message while typing, check about 600 ms after the last key, alert only after a blur, and Cmd/Ctrl+S on a refused value writes nothing.
+
+### Verification output (last lines)
+```
+$ npm ci                                   -> exit 0
+$ npm run lint && npm run typecheck        -> clean
+$ PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate   -> exit 0, 13 blocks, 68 icons, "contact card written"
+$ ls dist                                  -> _headers, site/ (8 files + contact.vcf), no edit
+$ find dist -name '*.svg' -path '*icons*'  -> empty
+$ grep -r "hello@example.com" dist | wc -l        -> 0
+$ grep -rl "Scheduled draft tile" dist | wc -l    -> 0
+$ E2E_STATIC_PORT=4431 E2E_DEV_PORT=3431 npx playwright test           (both projects, ONE run)
+  298 passed, 2 skipped   (static 222 passed + 2 skipped, dev 76 passed)
+$ E2E_STATIC_PORT=4431 E2E_DEV_PORT=3431 npx playwright test --project=static   -> 224 passed
+$ npm run check:icons                      -> OK  68 icons
+$ npm run check:links                      -> exit 0 (6 ok, 0 blocked, 4 broken: the example.com/* sample paths answer 404)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+$ npm run dev -- --port 3432 (25 s)        -> /, /edit, /api/profile, /api/images/pexels/status = 200, no ERROR line
+```
+The 2 skips of the one-run are the two "example only" tests (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before the static tests start, and they skip when that file exists. Alone, `static` runs them: 224 passed. Numbers: static 159 (main) + 39 (WP11) + 26 (WP12) = 224. dev 55 (main) + 9 (WP11) + 10 (WP12) + 2 (this branch) = 76.
+
+### Open
+- Review (Grok or OCR) of this branch: not run. Security-relevant: the merged `safeRequest()` in `content/unfurl.ts`.
+- `ImagePicker.vue` decides "is the alt text the owner's own?" from the draft (`block.alt`), not from the text in the field. A cleared alt field (refused, "Required") keeps the old alt in the draft, so a pick then does not replace it. Small; the owner can type the new alt.
+- Still open from WP11 / WP12: one live Pexels run with Ricardo's key, `npm run publish` with the link check against a real provider, Safari and Firefox.
+
+## Review pipeline
+
+Branch `chore/grok-review-pipeline` (from `origin/main`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged.
+
+Goal: the Grok review toolchain of app.condomera, ported to this repo (Nuxt 4, TypeScript, Vue, static). Why: on 2026-09-18 Grok "cancelled" on 8 of 13 reviews here, because it had to fetch the diff through its shell tool with every tool and MCP server enabled. How to use it: `docs/review-tools.md`.
+
+### What was built (`scripts/review/`)
+- `grok-review.sh` (`npm run review`): diff into the prompt file, intent, impact map, read-only tools, `--json-schema`, effort medium, 8 turns, watchdog, blind-run guard (exit 3), cache in `<git common dir>/grok-review/`, `--dry-run`, `--ledger`, untracked new files, 150,000 character cap. Exit 0 / 1 / 2 / 3 and the trailer line are the ones of the reference.
+- `impact-map.py` (python3, standard library): importers (relative, `~/`, `@/`, `~~/`, `@@/`, `#alias` from `nuxt.config.ts`), importers of an alias the changed file feeds (`#profile`), Nuxt component tags (`<EditorTextField>`, kebab, `Lazy`), auto-imported exports of `app/composables`, `app/utils`, `server/utils`, exported symbols the diff touches (changed lines, the hunk header, the nearest export above the change), npm script names (hooks, README, docs, workflows), `/api` routes, schema keys. 40 references per file, tests last and marked, 12 `<caller>` blocks of 25 lines, one per 25-line window. With `graphify-out/graph.json` and the `graphify` CLI it adds `graphify affected`; else it says the graph is unavailable. It states that it is not exhaustive.
+- `grok-review.prompt.md`, `grok-review.schema.json`: the rules point at `docs/invariants.md` (new), `CLAUDE.md`, `PLAN.md` section 0, `docs/security.md`. Nine shapes to hunt, each with a real example from this file. Categories: second-code-path, bundled-path, privacy-leak, untrusted-input, editor-state, test-green-wrong-reason, schema-drift, runtime-network, dev-route-guard, a11y, docs, other.
+- `findings-ledger.sh` (`npm run review:ledger`) + `findings-ledger.jsonl`: sources `grok|ocr|agent|human`, `--branch` next to `--pr`, no duplicate (source, pr-or-branch, id).
+- `grok-review.test.sh` (`npm run test:review`, in the CI build job): 94 assertions, a fake `grok` and a fake `graphify` on `PATH`, no network.
+
+### Deviations from the reference and why
+1. The impact map is a text search in Python, not the PHP code graph. This repo has no graph for TypeScript or Vue, and Nuxt auto-imports leave no import line to follow.
+2. `grok 1.0.30` flags: every flag of the reference exists with the same name (`--prompt-file`, `--json-schema`, `--tools`, `--disallowed-tools`, `--deny`, `--effort` = alias of `--reasoning-effort`, `--max-turns`, `--output-format json`, `--cwd`). New use: `--session-id`, `--resume`, and the `grok usage <id>` command.
+3. **The conclude step (new).** At `--max-turns` grok 1.0.30 exits 1 with `max turns reached` and prints no envelope. The model does not count its turns: see the two blind runs below. The script gives the review call its own `--session-id`; at the cap it resumes that session once with "no more tools, write the verdict from what you have read" (`--max-turns 2`, 3 minutes). `--conclude <session id>` does that step alone for a session a blind run printed. The report says `verdict forced at the turn cap`.
+4. Watchdog default 8 minutes (reference: 6). A turn takes 30 to 60 s here; run (c) finished on its own after 357 s.
+5. Tokens, turns and model in the trailer come from `grok usage <session>` (both calls of a concluded run); the envelope is the fallback.
+6. Intent: no PR in this repo most of the time, so the commit messages of the range are the description when `gh pr view` gives nothing.
+7. The script notes in the prompt and on stderr when the head of `--range` differs from the checkout, because Grok and the map read the checkout.
+8. The ledger report never names `other` as the next check: it is not a shape a script can catch.
+9. The prompt render replaces all placeholders in one pass, so a `{{DIFF}}` inside a diff (this very script) is never substituted.
+10. ESLint: no change. `eslint .` does not pick up `.sh`, `.py`, `.md`, `.json` or `.jsonl`.
+
+### Real runs (Grok Build 1.0.30, `grok-4.6-build`, effort medium)
+| Run | Command | Result | Wall | Turns | Tokens in / out | Trailer |
+|---|---|---|---|---|---|---|
+| a | `--dry-run --range origin/main~1..origin/main` | prompt printed: 17 files, the diff (108,436 chars), the impact map with 34 `<caller>` blocks, the commit messages as intent. No call | 1 s | 0 | 0 | `grok-review: scope=pr files=17 diff_chars=108436 cached=0 turns=0 elapsed_s=0 tokens_in=0 tokens_out=0 critical=0 warning=0 suggestion=0 verdict=DRY-RUN` |
+| b1 | `--range 39f6970..origin/fix/editor-inputs --files app/utils/field-draft.ts app/composables/useFieldDraft.ts app/components/editor/TextField.vue --scope block` | BLIND, exit 3: `Error: max turns reached`. Session `01a0b565-a17a-7283-b6ad-50e80cfa1f29`: 8 inferences, all with tool calls (24 `read_file`, 13 `grep`), no tool denial, no verdict | 252 s | 8 | 360,266 / 14,434 (297,984 cached) | none |
+| b2 | the same, with a smaller budget named in the prompt (6) under a cap of 10 | BLIND, exit 3: the watchdog (6 min) killed it in inference 9. Session `01a0b56b-3118-7641-957d-39964105e153`: 25 `read_file`, 21 `grep`. Every assistant message was the stub `{"passed": false, "summary": "placeholder", "findings": []}` plus tool calls. Naming a budget does not stop this model | 360 s | 9+ | not recorded (killed) | none |
+| b | the same + `--conclude 01a0b565-a17a-7283-b6ad-50e80cfa1f29 --ledger --branch fix/editor-inputs` | FAIL, exit 1, 2 warnings. This is what made it work: resume the session of b1, forbid tools, ask for the verdict | 66 s (+252 s of b1) | 9 | 425,768 / 17,975 (359,936 cached) | `grok-review: scope=block files=3 diff_chars=14754 cached=0 turns=9 elapsed_s=66 tokens_in=425768 tokens_out=17975 critical=0 warning=2 suggestion=0 verdict=FAIL` |
+| c | `--range origin/wp/10-final..wp/10-secure --files content/unfurl.ts server/api/unfurl.post.ts --scope block --ledger --branch wp/10-secure` (`wp/10-secure` is a local branch; it is not on origin) | FAIL, exit 1, 2 warnings + 1 suggestion. Ended on its own (`end_turn`), no conclude step | 357 s | 6 | 441,589 / 20,120 (338,688 cached) | `grok-review: scope=block files=2 diff_chars=27302 cached=0 turns=6 elapsed_s=357 tokens_in=441589 tokens_out=20120 critical=0 warning=2 suggestion=1 verdict=FAIL` |
+| d | run b again, without `--conclude` | cache hit: no Grok call (0 new lines in `~/.grok/logs/unified.jsonl`), the ledger stayed at the same row count | 1 s | - | - | `grok-review: scope=block files=3 diff_chars=14754 cached=1 turns=9 elapsed_s=66 tokens_in=425768 tokens_out=17975 critical=0 warning=2 suggestion=0 verdict=FAIL` |
+
+Cost from `grok usage`: `costUsdTicks` 1,426,238,800 (b, both calls) and 1,685,944,400 (c). If a tick is 1e-10 dollar, that is about 14 and 17 cents. Four model calls in total: b1, b2, the conclude call of b, and c.
+How the blind runs were read: `~/.grok/logs/unified.jsonl` filtered by the session id (`shell.turn.inference_done` per turn, `shell.tool.exec_done` per tool call, no `warn` or `error` line, no denial), then `grok export <session id>` for the tool arguments.
+Note: the prompt template was edited once after run d (the schema-drift example), so a re-run of b today is a new hash and a fresh call. That is the cache rule, not a fault.
+
+### The findings, judged
+| Id | Grok says | Judgement |
+|---|---|---|
+| `blur-skips-stored-form` (warning, editor-state, `app/utils/field-draft.ts:87`) | After a debounced commit, a blur does not show the stored form: `commit()` returns early because the value equals the model, so `modelChanged()` / `take()` never run. A Site URL keeps its trailing slash in the input | REAL, read in the code (`commit()`, `blur()`, `modelChanged()`). The draft holds the right value; only the input text is stale. It contradicts "after the blur the input shows the stored form" in "Editor input fix". Low impact. NOT fixed here: the code belongs to another branch |
+| `stored-form-test-misses-debounce-blur` (warning, test-green-wrong-reason, `tests/e2e/field-draft.spec.ts:144`) | The test named for that behavior types more text before the blur, so it never checks the case above | REAL. The test "the stored form shows only after the field lost the focus" never asserts a stripped text after a blur. NOT fixed here |
+| `save-image-no-pixel-limit` (warning, second-code-path, `content/unfurl.ts:755`) | `saveImage()` decodes the website's image with sharp twice with no `limitInputPixels` / `failOn`, while `rasterizeIcon()` (607) and `fetchPicture()` (786) got the 4096x4096 limit in the security round | REAL, read in the code. sharp's own default limit (about 268 million pixels) still applies, so it is a memory-pressure gap, not an open door. The shape of S1 / S1c again: the fix reached two of three decode sites. NOT fixed here |
+| `force-still-honors-304` (warning, untrusted-input, `content/unfurl.ts:946`) | `force` sends no conditional headers (C3), but a 304 answer is still accepted when a cache entry exists, so a hostile site keeps its old data through a refresh | REAL, low impact (the owner sees old text after "Refresh"). The C3 test asserts the request headers only. NOT fixed here |
+| `save-image-hashes-remote-bytes` (suggestion, schema-drift, `content/unfurl.ts:762`) | The thumb file name is the hash of the REMOTE bytes; icons use the hash of the OUTPUT (`docs/security.md` layer 3) | REAL as a drift between the two paths. `writeOnce` would also keep an old WebP after a sharp upgrade. NOT fixed here |
+
+5 findings: 5 real, 0 false positives, 0 already fixed. Both blocks had passed the review of their own branch before.
+
+### Ledger backfill and report
+`scripts/review/findings-ledger.jsonl`: 87 rows from this file (WP0 to WP10 reviews, the security round S1 to S6 and C1 to C5, the two release bugs, the `/edit` regression, the input bug) + the 5 Grok rows of today. Owner-reported bugs are `human`. The WP1 to WP3 findings (listed under WP5) carry no tool name in this file; they are split between `grok` and `ocr` by the "best catches" row of the old `docs/review-tools.md`. Every `line` is `null` but three: the notes name files, not lines.
+```
+# Findings ledger: 92 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 23
+- untrusted-input: 20
+- second-code-path: 10
+- editor-state: 9
+- test-green-wrong-reason: 8
+- a11y: 7
+- schema-drift: 6
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- ocr: 35
+- grok: 30
+- agent: 19
+- human: 8
+
+## By severity
+- warning: 69
+- suggestion: 12
+- critical: 11
+
+## By area
+- app/components: 14
+- content/unfurl.ts: 9
+- server/api: 8
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- .github/workflows: 5
+- app/pages: 5
+- scripts/publish.mjs: 5
+
+findings-ledger: rows=92 top_category=untrusted-input top_count=20 grok=30 ocr=35 agent=19 human=8
+```
+Reading: `untrusted-input` leads (20), and its scripted checks exist since the security round (`unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`). Next without a scripted check: `second-code-path` (10). Candidate: a test that fails when a `sharp(` call in `content/` has no `limitInputPixels`, or when `content/`, `scripts/` or `server/` call `fetch(` outside `content/unfurl.ts` and `content/gravatar.ts`.
+
+### Verification output (last lines)
+```
+$ npm run lint                                  -> exit 0
+$ npm run typecheck                             -> exit 0
+$ npm run test:review
+grok-review.test: passed=94 failed=0 total=94 expected=94
+$ bash scripts/review/grok-review.sh --help     -> prints the usage (options, exit codes, the trailer)
+```
+
+### Open
+- The 5 real findings above are not fixed. Two small fix branches: `fix/field-draft-stored-form` (one `take()` after a passed check without focus + the missing test) and `fix/unfurl-image-limits` (the sharp limits in `saveImage()`, refuse a 304 under `force`, hash the WebP).
+- The case "the conclude call fails too" did not happen in a real run. Only the fake covers it.
+- Resuming a session that the watchdog KILLED (run b2) was not tried. `--conclude` on a session that ended at the turn cap works (run b).
+- The Grok CLI reads `~/.grok` of the user. CI runs the suite with the fake binary only; no real review runs in CI.
+
+
+## WP14 review round
+
+Branch `wp/14-reviewed` (from `origin/wp/13-integration`, plus the merge of `origin/chore/grok-review-pipeline`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged into `main`, no tag. Goal: review the new code of WP11 second wave, WP12 Pexels and the WP13 integration with the pipeline, block by block (the author was not Grok), and fix what is real.
+
+### The merge
+Conflicts: `NOTES.md` (both sections kept whole, "WP13 integration" then "Review pipeline") and `README.md` > "More docs" (the union; `docs/security.md` keeps the Pexels words). `package.json`, `CLAUDE.md`, `PLAN.md` and `.github/workflows/ci.yml` merged by git: one Scripts table, each script once; `ci.yml` has the `npm run test:review` step AND the Pexels canary env on the generate step.
+
+### Blocks (range `origin/main..HEAD`, `--scope block --ledger --branch wp/13-integration`)
+| Block | Files of the block | files | diff_chars | turns | elapsed_s | tokens in / out | Verdict | Cost |
+|---|---|---|---|---|---|---|---|---|
+| B1 network core | `content/unfurl.ts content/link-check.ts content/pexels.ts` | 3 | 27,907 | 9 | 353 | 687,768 / 17,172 | PASS, 0 findings. Verdict forced at the turn cap (8) by the automatic conclude call | $0.20 |
+| B3 public data | `types/profile.ts types/site.ts modules/public-profile.ts content/site-extras.ts content/site-files.ts app/utils/{vcard,site-head,schedule,utm,networks}.ts scripts/validate-profile.ts` | 11 | 39,327 | 2 | 150 | 83,814 / 7,782 | FAIL, 1 warning. **Diff-only verdict**: the run ended on a 1-turn stub, `--conclude` wrote the verdict from the pasted diff and the impact map, no file was read (the summary says so) | $0.05 |
+| B2 + B6 dev routes and scripts | `server/api/images/pexels server/api/links server/api/site server/api/save.post.ts server/utils/pexels.ts server/utils/editor.ts scripts/{check-links.ts,publish.mjs,fetch-links.ts,build-site-assets.ts}` | 11 | 20,177 | 14 | 400 | 2,088,169 / 19,187 | FAIL, 2 warnings. A full run | $0.49 |
+| B4 public UI | `app/components/{BentoGrid,ProfileHeader,ShareButton}.vue app/components/blocks app/pages/index.vue` | 11 | 19,422 | 8 | 537 | 699,970 / 28,372 | PASS, 0 findings. A full run | $0.31 |
+| B5a editor UI, Pexels | `app/components/editor/{PexelsPicker,ImagePicker,TextField,BlockForm,PreviewTile}.vue` | 5 | no trailer | 1 | - | - | **NOT REVIEWED.** Blind (1-turn stub), then the conclude call was killed by its 3 minute watchdog | $0.03 + the killed call |
+| B5b editor UI, WP11 panels | the rest of `app/components/editor/` + `app/composables/` | - | - | - | - | - | **NOT REVIEWED.** The budget of 9 calls was spent | - |
+
+Trailer lines, as printed:
+```
+grok-review: scope=block files=3 diff_chars=27907 cached=0 turns=9 elapsed_s=353 tokens_in=687768 tokens_out=17172 critical=0 warning=0 suggestion=0 verdict=PASS
+grok-review: scope=block files=11 diff_chars=39327 cached=0 turns=2 elapsed_s=150 tokens_in=83814 tokens_out=7782 critical=0 warning=1 suggestion=0 verdict=FAIL
+grok-review: scope=block files=11 diff_chars=20177 cached=0 turns=14 elapsed_s=400 tokens_in=2088169 tokens_out=19187 critical=0 warning=2 suggestion=0 verdict=FAIL
+grok-review: scope=block files=11 diff_chars=19422 cached=0 turns=8 elapsed_s=537 tokens_in=699970 tokens_out=28372 critical=0 warning=0 suggestion=0 verdict=PASS
+```
+
+B2 and B6 ran as one block (20,177 characters: the link check route and `check-links.ts` share one engine) to save a call. B5 (67,299 characters) was split before the first try. From B3 on the runs used `--max-turns 14 --timeout 12`: with 8 turns B1 hit the cap and paid for a conclude call; with 14 no run hit the cap. B3 was reviewed at the merge commit; B2, B4 and B5a at later heads that already held the first fixes (the range is `origin/main..HEAD`).
+
+### Blind runs
+| Run | What happened | What was done |
+|---|---|---|
+| B1, try 1 | exit 3. Grok ended after ONE turn with the progress stub (`"passed": false`, "Starting independent review...", no finding) and no tool call (`stopReason: end_turn`, 41k tokens in, $0.03) | Started again: a conclude on a session that read nothing is a diff-only verdict. Try 2 gave the verdict. This is a deviation from "conclude first" |
+| B3, try 1 | the same stub after one turn | `--conclude 8af7e8e6-fa21-4e6f-80e3-eb441b48172a`: a schema-valid verdict with 1 real warning, but from the diff only |
+| B5a, try 1 | the same stub after one turn | `--conclude 3b4cfd26-cb8b-4055-b847-00af90937609`: killed by the 3 minute watchdog of the conclude step, exit 3. First real case of "the conclude call fails too". Given up: the budget was spent |
+
+Pipeline finding (ledger `review-run-ends-on-first-progress-stub`, OPEN): 3 of 6 fresh calls ended on a 1-turn stub. The guard catches it (exit 3, never green). But it prints no session id for this case (it is in `<hash>.raw.json` > `sessionId`), and the conclude prompt forbids tools, so the verdict that follows read nothing. Next step for the pipeline: resume a 1-turn stub once WITH tools ("continue the review") before the no-tools conclude.
+
+Grok calls: 9 of 9 (3 stubs, 4 review runs, 2 conclude calls by hand; the automatic conclude of B1 is inside its run and its cost). Cost: about $1.15 ($0.20 + $0.05 + $0.49 + $0.31 + 3 stubs at $0.03 + the killed conclude).
+
+### Findings and triage
+| Finding | Source | Triage | Fix |
+|---|---|---|---|
+| `utm-panel-ignores-env-site-url` (warning, second-code-path, `UtmPanel.vue:56`) | Grok B3 | REAL. `resolveSiteUrl('', site)` in the panel. And `toPublicProfile` used `build.envSiteUrl or site.url`, a second definition: an env value that is not a URL (`ada.example`) switched the "same site, no tags" rule off | `d7fc86f`: both use `resolveSiteUrl(env, site)`. Test in `second-wave.spec.ts` (fails before) |
+| `draft-assets-deletes-saved-contact-and-qr` (warning, editor-state, `server/api/site/assets.post.ts:29`) | Grok B2 | REAL. `buildSiteExtras()` removes `contact.vcf` and `qr.svg` when the profile does not want them, and the route passes the DRAFT (invariant 8) | `2b33a7e`: option `draft: true`, a draft writes and never removes. Test (fails before) |
+| `publish-skipped-link-check-reported-clean` (warning, other, `scripts/publish.mjs:698`) | Grok B2 | REAL. Checked by hand: an invalid `content/profile.json` gives `links: check skipped`, exit 0, and publish printed "No broken link found." | `e2b9469`: `--broken-only` ends with `links checked: N` (`brokenOnlyReport()`), publish asks for that line. A test compares the two copies of the text |
+| F1 `blur-skips-stored-form` + `stored-form-test-misses-debounce-blur` (`app/utils/field-draft.ts`) | Grok, earlier run | REAL | `bfcec78`: a passed check without the focus shows the stored form. 2 tests ("debounced commit, then blur" fails before) |
+| F2 `save-image-no-pixel-limit` (`content/unfurl.ts`, `saveImage`) | Grok, earlier run | REAL | `9d12326`: `limitInputPixels` 4096x4096 + `failOn: 'error'`, and the output is sniffed. Test with a 5000x5000 PNG of a few KB (fails before: the thumb was written) |
+| F3 `save-image-hashes-remote-bytes` | Grok, earlier run | REAL | `5d3a8b6`: the name is the hash of the stored WebP. Test (fails before) |
+| F4 `force-still-honors-304` | Grok, earlier run | REAL | `8743b44`: a 304 counts only when OUR condition was sent. Else `http 304`, the old entry stays, the editor gets `ok: false`. Test with a server that always answers 304 (fails before) |
+| F5 `pexels-pick-keeps-refused-alt` (`ImagePicker.vue`) | integration report | REAL | `22a00ad`: the text in the FIELD decides (`EditorTextField` exposes `text()` and `sync()`). Dev test, also "the same photo again" (fails before) |
+| F6 `site-assets-decodes-without-pixel-limit` | agent | REAL, small. `avatarArt`, `avatarDataUri` and the og image upload decoded files with no limit; `uploadArt` and `site-upload.ts` had 8192x8192 | `68f3d19`. No test: it needs an 81 megapixel file |
+| F6 `gravatar-stores-remote-bytes` (`content/gravatar.ts:103`) | agent | REAL, **OPEN**. The Gravatar body is stored as it came (Content-Type only, raw `fetch`, no magic bytes, no re-encode): invariants 10 and 12. Not in the diff of this branch. The fix (through `fetchPicture()`) changes what Nitro bundles for a route with a static import, and needs a live check | not fixed |
+
+F6, what was checked. `content/pexels.ts`: pixel limit (8192x8192, documented), `failOn: 'error'`, magic bytes before the decode and on the output, temp file + rename; the name is `pexels-<id>.webp` from the validated number id, never from remote data. No drift. `content/site-upload.ts`: limits on every decode, the format is checked against the extension, random name; a raster upload of the owner is stored as it came by design (not remote bytes). `content/site-assets.ts`: fixed above.
+
+Grok findings of this round: 3, all real, 0 false positives, no critical.
+
+### Ledger report
+```
+# Findings ledger: 99 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 25
+- untrusted-input: 21
+- second-code-path: 12
+- editor-state: 11
+- test-green-wrong-reason: 8
+- a11y: 7
+- schema-drift: 6
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- ocr: 35
+- grok: 33
+- agent: 23
+- human: 8
+
+## By severity
+- warning: 75
+- suggestion: 13
+- critical: 11
+
+## By area
+- app/components: 16
+- server/api: 9
+- content/unfurl.ts: 9
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- scripts/publish.mjs: 6
+- .github/workflows: 5
+- app/pages: 5
+
+findings-ledger: rows=99 top_category=untrusted-input top_count=21 grok=33 ocr=35 agent=23 human=8
+```
+
+### Verification
+```
+$ npm ci                                   -> ok
+$ npm run lint                             -> ok
+$ npm run typecheck                        -> ok
+$ npm run test:review                      -> passed=94 failed=0 total=94 expected=94
+$ PEXELS_API_KEY=<canary> npm run generate -> ok; dist/_headers, dist/site/contact.vcf; no dist/edit; 0 svg under dist/icons
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ E2E_STATIC_PORT=4441 E2E_DEV_PORT=3441 npx playwright test   (ONE run, both projects)
+    static: 229 passed, 2 skipped   dev: 77 passed   total: 306 passed, 2 skipped
+$ npm run check:icons                      -> exit 0
+$ npm run check:links                      -> exit 0 (6 ok, 4 broken: links of the sample profile)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the two "example only" tests (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start. New tests: static +7 (field-draft 2, unfurl 2, second-wave 3; 1 unfurl test extended), dev +1.
+
+### Open
+- B5 (the editor UI of WP11 and WP12, 67,299 diff characters) has NO Grok verdict. Run it again in two halves with `--max-turns 14 --timeout 12`.
+- B3 has a diff-only verdict. The reviewer did not read `modules/public-profile.ts` and `app/utils/schedule.ts`. The privacy tests (`privacy.spec.ts`, `second-wave.spec.ts`) are green.
+- `content/gravatar.ts` (above).
+- The pipeline: resume a 1-turn stub with tools; print the session id for every blind run.

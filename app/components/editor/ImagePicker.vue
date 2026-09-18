@@ -4,8 +4,17 @@
   blocks; pass `require-alt` to show that field, and `require-src` when the
   path may not be empty. Both text fields are `EditorTextField`: an empty
   required value stays in the input, shows "Required" and is never emitted.
+  With `stock-size` (image blocks only, WP12) the field has two tabs: "Upload" (the same controls as
+  before) and "Pexels" (PexelsPicker.vue). A picked stock photo is ONE `stock` event with `src`, `alt`
+  and `source` together, so the form saves them in one step. An upload still emits `update:src`, and
+  the form clears `source` then (a local file has no stock credit). After a pick the alt field follows
+  the new `alt` of the block (a change from outside, the field has no focus). "Is the alt the owner's
+  own?" is decided from the text in the FIELD: an emptied, refused field is not the owner's text.
 -->
 <script setup lang="ts">
+import type { PickResult } from '~~/content/pexels'
+import type { Size } from '~/utils/sizes'
+
 const src = defineModel<string | null | undefined>('src')
 const alt = defineModel<string | undefined>('alt')
 
@@ -14,7 +23,54 @@ const props = defineProps<{
   label?: string
   requireSrc?: boolean
   requireAlt?: boolean
+  /** The tile size of an image block. Set = the "Pexels" tab shows. Thumbnails have no credit field, so they get no stock tab. */
+  stockSize?: Size
 }>()
+
+const emit = defineEmits<{
+  stock: [picked: { src: string, alt: string, source: PickResult['source'] }]
+}>()
+
+type PickerTab = 'upload' | 'pexels'
+const TABS: { id: PickerTab, label: string }[] = [{ id: 'upload', label: 'Upload' }, { id: 'pexels', label: 'Pexels' }]
+const tab = ref<PickerTab>('upload')
+const tabButtons = useTemplateRef<HTMLButtonElement[]>('tabButtons')
+
+function onTabKey(event: KeyboardEvent) {
+  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+  event.preventDefault()
+  const next: PickerTab = tab.value === 'upload' ? 'pexels' : 'upload'
+  tab.value = next
+  void nextTick(() => tabButtons.value?.find(button => button.dataset.tab === next)?.focus())
+}
+
+/** The alt text field (EditorTextField): its text may differ from the draft while a value is refused. */
+const altField = useTemplateRef<{ text: () => string, sync: (value: string) => void }>('altField')
+
+/** The alt text this field filled in from a stock photo. Still the same = the owner did not write their own. */
+const prefilledAlt = ref<string | null>(null)
+
+// The form component is used again for the next block: start on "Upload" with no memory of the last one.
+watch(() => props.id, () => {
+  tab.value = 'upload'
+  prefilledAlt.value = null
+})
+
+/**
+ * The alt text of the stock photo is used when the owner has none of their own: empty, the sample
+ * text of a new block, or the text of the stock photo picked before. A text the owner wrote stays.
+ */
+function onStockPick(result: PickResult) {
+  // The text in the FIELD decides, not only the draft: a cleared field is refused ("Required"), so the
+  // draft still holds the old alt, and that old alt is not what the owner wants for the new photo.
+  const current = (altField.value?.text() ?? alt.value ?? '').trim()
+  const replace = current === '' || current.startsWith('Sample image') || current === prefilledAlt.value
+  const nextAlt = replace ? result.alt : current
+  if (replace) prefilledAlt.value = result.alt
+  emit('stock', { src: result.src, alt: nextAlt, source: result.source })
+  // The same alt as the draft has = no change of the model: the field is told by hand.
+  if (replace) void nextTick(() => altField.value?.sync(nextAlt))
+}
 
 const uploading = ref(false)
 const error = ref<string | null>(null)
@@ -58,6 +114,8 @@ async function onFile(event: Event) {
   }
 }
 
+const tabId = (name: PickerTab) => `${props.id}-tab-${name}`
+const panelId = (name: PickerTab) => `${props.id}-panel-${name}`
 const fileId = computed(() => `${props.id}-file`)
 const srcId = computed(() => `${props.id}-src`)
 const altId = computed(() => `${props.id}-alt`)
@@ -72,7 +130,39 @@ const altId = computed(() => `${props.id}-alt`)
       {{ label ?? 'Image' }}
     </legend>
 
-    <div class="flex items-start gap-3">
+    <div
+      v-if="stockSize"
+      role="tablist"
+      aria-label="Image source"
+      class="flex border-b border-line"
+      @keydown="onTabKey"
+    >
+      <button
+        v-for="t in TABS"
+        :id="tabId(t.id)"
+        ref="tabButtons"
+        :key="t.id"
+        type="button"
+        role="tab"
+        :data-tab="t.id"
+        :aria-selected="tab === t.id"
+        :aria-controls="panelId(t.id)"
+        :tabindex="tab === t.id ? 0 : -1"
+        :class="[FOCUS_RING, tab === t.id ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink']"
+        class="min-h-11 flex-1 border-b-2 text-sm font-medium focus-visible:-outline-offset-2"
+        @click="tab = t.id"
+      >
+        {{ t.label }}
+      </button>
+    </div>
+
+    <div
+      v-show="tab === 'upload'"
+      :id="stockSize ? panelId('upload') : undefined"
+      :role="stockSize ? 'tabpanel' : undefined"
+      :aria-labelledby="stockSize ? tabId('upload') : undefined"
+      class="flex items-start gap-3"
+    >
       <span class="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-photo">
         <img
           v-if="src"
@@ -114,6 +204,19 @@ const altId = computed(() => `${props.id}-alt`)
       </div>
     </div>
 
+    <div
+      v-if="stockSize && tab === 'pexels'"
+      :id="panelId('pexels')"
+      role="tabpanel"
+      :aria-labelledby="tabId('pexels')"
+    >
+      <EditorPexelsPicker
+        :id="id"
+        :size="stockSize"
+        @pick="onStockPick"
+      />
+    </div>
+
     <p
       v-if="error"
       class="text-xs text-pop"
@@ -125,6 +228,7 @@ const altId = computed(() => `${props.id}-alt`)
     <EditorTextField
       v-if="requireAlt"
       :id="altId"
+      ref="altField"
       label="Alt text"
       required
       required-mark

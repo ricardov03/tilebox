@@ -63,6 +63,18 @@ export default defineEventHandler(async (event) => {
     restartNeeded = true
   }
 
+  // WP11: the contact card and the QR code follow the saved profile (no network, no sharp). BEFORE the
+  // write: the profile change refreshes `#profile`, which keeps a `contact` / `qr` block only when its file exists.
+  if (import.meta.dev) {
+    try {
+      const { buildSiteExtras } = await import('~~/content/site-extras')
+      await buildSiteExtras({ profile: next, envSiteUrl: process.env.NUXT_PUBLIC_SITE_URL })
+    }
+    catch {
+      // Never stops a save. `npm run build:site-assets` makes the files again and says why it could not.
+    }
+  }
+
   await writeAtomic(PROFILE_WRITE_PATH, `${JSON.stringify(next, null, 2)}\n`)
   return { ok: true as const, restartNeeded }
 })

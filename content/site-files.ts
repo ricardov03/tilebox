@@ -30,6 +30,12 @@ export const SITE_FILES = {
   manifest: 'manifest.webmanifest',
 } as const
 
+/** WP11 extras, written by ./site-extras.ts. Not part of `SITE_FILES`: the favicon builder owns that set. */
+export const SITE_EXTRA_FILES = {
+  contactCard: 'contact.vcf',
+  qrCode: 'qr.svg',
+} as const
+
 export type SiteFileKey = keyof typeof SITE_FILES
 
 /**
@@ -45,6 +51,9 @@ export function siteAssetsIfPresent(dir: string = SITE_DIR): SiteAssets {
   for (const key of keys) {
     const value = path(key)
     if (value) assets[key] = value
+  }
+  for (const key of ['contactCard', 'qrCode'] as const) {
+    if (existsSync(resolve(dir, SITE_EXTRA_FILES[key]))) assets[key] = `${SITE_PUBLIC_DIR}/${SITE_EXTRA_FILES[key]}`
   }
   return assets
 }

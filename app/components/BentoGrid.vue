@@ -10,6 +10,8 @@ const props = defineProps<{
   blocks: Block[]
   layout: Layout
   profile: PublicProfileInfo
+  /** The share button of the profile tile (WP11). */
+  share?: boolean
 }>()
 
 interface Tile {
@@ -68,7 +70,10 @@ const tiles = computed<Tile[]>(() => {
       :class="ROW_2"
       style="--i: 0"
     >
-      <ProfileHeader :profile="profile" />
+      <ProfileHeader
+        :profile="profile"
+        :share="share"
+      />
     </li>
     <li
       v-for="tile in tiles"
@@ -76,6 +81,7 @@ const tiles = computed<Tile[]>(() => {
       class="tile-in max-lg:[order:var(--order-m)]"
       :class="[tile.spanClass, tile.heightClass]"
       :style="{ '--i': tile.index, '--order-m': tile.mobileOrder }"
+      :data-ends-at="tile.block.endsAt"
     >
       <BlockRenderer
         :block="tile.block"

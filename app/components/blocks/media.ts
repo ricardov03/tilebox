@@ -5,6 +5,46 @@
 import { LOCAL_ICON_PATH as LOCAL_FAVICON, LOCAL_THUMB_PATH as LOCAL_THUMB } from '../../../types/local-paths'
 import { brandIconFor } from '../../utils/brand-icons'
 
+/** The `source` of an image block, as far as the credit line needs it. */
+export interface ImageCreditSource {
+  provider: 'pexels' | 'unsplash' | 'r2'
+  url?: string
+  author?: string
+  authorUrl?: string
+}
+
+/** "Photo by {author} on {provider}". A `null` URL renders as plain text. */
+export interface ImageCredit {
+  author: string | null
+  authorUrl: string | null
+  provider: string | null
+  providerUrl: string | null
+}
+
+const STOCK_PROVIDERS: Partial<Record<ImageCreditSource['provider'], { label: string, home: string }>> = {
+  pexels: { label: 'Pexels', home: 'https://www.pexels.com' },
+  unsplash: { label: 'Unsplash', home: 'https://unsplash.com' },
+}
+
+/**
+ * The credit line of a photo tile (WP12). Pexels asks for a credit to the photographer and a link to
+ * Pexels where possible, so a `pexels` source ALWAYS gives a line, also without an author, and there is
+ * no switch to hide it. The provider link is the photo page (`source.url`), else the provider's home.
+ * Only http(s) URLs become links. The URLs are used as they are: no tracking parameters are added.
+ */
+export function imageCredit(source: ImageCreditSource | null | undefined): ImageCredit | null {
+  if (!source) return null
+  const stock = STOCK_PROVIDERS[source.provider]
+  const author = source.author?.trim() || null
+  if (!stock && !author) return null
+  return {
+    author,
+    authorUrl: author && source.authorUrl && isHttpUrl(source.authorUrl) ? source.authorUrl : null,
+    provider: stock?.label ?? null,
+    providerUrl: stock ? (source.url && isHttpUrl(source.url) ? source.url : stock.home) : null,
+  }
+}
+
 /** Tile chrome variants. `accent` and `pop` have no border. */
 export type TileVariant = 'tile' | 'accent' | 'pop'
 

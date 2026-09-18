@@ -107,6 +107,8 @@ export interface TransportResponse {
 }
 
 export interface TransportInit {
+  /** Default `GET`. `HEAD` is for the link checker (WP11, content/link-check.ts). */
+  method?: 'GET' | 'HEAD'
   headers: Record<string, string>
   signal: AbortSignal
   /** The address that passed the check. The connection must use it. `null` for an allowed test host. */
@@ -181,6 +183,7 @@ const defaultTransport: Transport = async (url, init) => {
   try {
     const response = await undiciFetch(url, {
       dispatcher: agent,
+      method: init.method ?? 'GET',
       redirect: 'manual',
       headers: init.headers,
       signal: init.signal,
@@ -259,7 +262,9 @@ export async function checkTarget(url: URL, options: Pick<UnfurlOptions, 'allowH
   return first
 }
 
-interface RequestOptions {
+export interface RequestOptions {
+  /** Default `GET`. With `HEAD` no body is read. */
+  method?: 'GET' | 'HEAD'
   accept: string
   maxBytes: number
   /** `cut`: keep the first `maxBytes`. `fail`: a larger body is an error. */
@@ -268,6 +273,13 @@ interface RequestOptions {
   stopAtHeadEnd?: boolean
   etag?: string
   lastModified?: string
+  /**
+   * A host allow-list (WP12, content/pexels.ts). When set, EVERY hop must be `https:` and its host must be
+   * in the list, else "blocked host". The address check of `checkTarget()` still runs after it.
+   */
+  onlyHosts?: readonly string[]
+  /** More request headers (an API key). Sent on the FIRST hop only: a redirect target never gets them. */
+  headers?: Readonly<Record<string, string>>
 }
 
 export interface SafeResponse {
@@ -336,7 +348,7 @@ function stopReason(options: UnfurlOptions): string {
 }
 
 /**
- * One GET through the guard. Follows redirects by hand. Throws `UnfurlError` only.
+ * One GET (or HEAD, for the link checker) through the guard. Follows redirects by hand. Throws `UnfurlError` only.
  * It spends from `options.budget` (one request, and one redirect per hop), so all
  * requests of one `unfurl()` share the 20 s, the 8 requests and the 8 redirects.
  */
@@ -349,13 +361,14 @@ export async function safeRequest(target: string | URL, request: RequestOptions,
   let url = new URL(target)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (budget.signal.aborted) throw new UnfurlError(stopReason(options))
+    if (request.onlyHosts && (url.protocol !== 'https:' || !request.onlyHosts.includes(bareHost(url)))) throw new UnfurlError('blocked host')
     const pinned = await checkTarget(url, options)
-    const headers: Record<string, string> = { 'user-agent': USER_AGENT, 'accept': request.accept }
+    const headers: Record<string, string> = { ...(hop === 0 ? request.headers : undefined), 'user-agent': USER_AGENT, 'accept': request.accept }
     if (hop === 0 && request.etag) headers['if-none-match'] = request.etag
     if (hop === 0 && request.lastModified) headers['if-modified-since'] = request.lastModified
     let response: TransportResponse
     try {
-      response = await transport(url, { headers, signal: AbortSignal.any([budget.signal, AbortSignal.timeout(TIMEOUT_MS)]), pinned })
+      response = await transport(url, { method: request.method ?? 'GET', headers, signal: AbortSignal.any([budget.signal, AbortSignal.timeout(TIMEOUT_MS)]), pinned })
     }
     catch (error) {
       throw new UnfurlError(budget.signal.aborted ? stopReason(options) : networkReason(error))
@@ -752,14 +765,18 @@ async function saveImage(candidate: ImageCandidate, options: UnfurlOptions, dirs
   if (!kind || !['png', 'jpeg', 'webp', 'gif', 'avif'].includes(kind)) return undefined
   try {
     const { default: sharp } = await import('sharp')
-    const meta = await sharp(response.body).metadata()
+    // The same limits as the icons and the Pexels picture: a small file that decodes to a huge picture is refused.
+    const limits = { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' as const }
+    const meta = await sharp(response.body, limits).metadata()
     if (!meta.width || !meta.height || meta.width < MIN_IMAGE_PX || meta.height < MIN_IMAGE_PX) return undefined
-    const webp = await sharp(response.body)
+    const webp = await sharp(response.body, limits)
       .rotate()
       .resize({ width: MAX_IMAGE_WIDTH, withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer()
-    const name = hashName(response.body, 'webp')
+    if (sniffImage(webp) !== 'webp') return undefined
+    // The name is the hash of the OUTPUT, as for the icons: the stored bytes are the only thing the name vouches for.
+    const name = hashName(webp, 'webp')
     await writeOnce(dirs.thumbs, name, webp)
     return `/thumbs/${name}`
   }
@@ -935,15 +952,18 @@ async function run(input: string, caller: UnfurlOptions): Promise<UnfurlResult> 
 
   if (!found && !remembered) {
     try {
+      // Refresh (`force`) asks for the whole page: with `If-None-Match` a 304 would keep the old data.
+      const conditional = entry !== undefined && usable && !options.force
       const response = await safeRequest(pageUrl, {
         accept: HTML_ACCEPT,
         maxBytes: MAX_HTML_BYTES,
         overflow: 'cut',
         stopAtHeadEnd: true,
-        // Refresh (`force`) asks for the whole page: with `If-None-Match` a 304 would keep the old data.
-        ...(entry && usable && !options.force ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
+        ...(conditional ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
       }, options)
-      if (response.status === 304 && entry) {
+      // A 304 counts only as the answer to OUR condition. A server that sends one to a full request
+      // (`force`, or an entry whose files are gone) did not refresh anything: `http 304`, the old entry stays.
+      if (response.status === 304 && conditional) {
         const data: UnfurlData = { ...entry.data, fetchedAt }
         await updateCache(key, { ...entry, data }, ctx.dirs)
         return answer(data, showImage, true)

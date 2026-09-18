@@ -105,6 +105,8 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0
 let server: Server
 let base = ''
 let realPng: Buffer
+/** A small file that decodes to 25 million pixels: over the 4096 x 4096 limit of the engine, under the default limit of sharp. */
+let bombPng: Buffer
 const hits = new Map<string, number>()
 const seenHeaders = new Map<string, IncomingMessage['headers']>()
 
@@ -184,6 +186,12 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
       return
     case '/fake-image':
       return html(PAGE.replace('/real.png', '/fake.png'))
+    case '/bomb-image':
+      return html(PAGE.replace('/real.png', '/bomb.png'))
+    case '/bomb.png':
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(bombPng)
+      return
     case '/big':
       // The description comes after 600 KB of padding and there is no </head> before it.
       return html(`<html><head><title>Big page</title><!--${'x'.repeat(600 * 1024)}--><meta name="description" content="too far"></head></html>`)
@@ -194,6 +202,14 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
         return
       }
       return html('<html><head><title>Etag page</title></head></html>', { etag: '"v1"' })
+    case '/always-304':
+      // A broken server or proxy: a full page once, then 304 for ever, also to a request with no condition.
+      if ((hits.get(path) ?? 0) > 1) {
+        res.writeHead(304)
+        res.end()
+        return
+      }
+      return html('<html><head><title>Old title</title></head></html>', { etag: '"v1"' })
     case '/pdf':
       res.writeHead(200, { 'content-type': 'application/pdf' })
       res.end('%PDF-1.4')
@@ -226,6 +242,7 @@ let options: UnfurlOptions
 
 test.beforeAll(async () => {
   realPng = await sharp({ create: { width: 300, height: 240, channels: 3, background: { r: 200, g: 30, b: 30 } } }).png().toBuffer()
+  bombPng = await sharp({ create: { width: 5000, height: 5000, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png({ compressionLevel: 9 }).toBuffer()
   server = createServer(handle)
   await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
@@ -442,6 +459,10 @@ test.describe('fetching (local server, allowHosts)', () => {
     const file = readFileSync(join(dirs.thumbs, result.image!.slice('/thumbs/'.length)))
     expect(sniffImage(file)).toBe('webp')
     expect((await sharp(file).metadata()).width).toBe(300)
+    // The name is the hash of the stored file (the new webp), never of the bytes the website sent.
+    const sha1 = (body: Buffer) => createHash('sha1').update(body).digest('hex').slice(0, 16)
+    expect(result.image).toBe(`/thumbs/${sha1(file)}.webp`)
+    expect(result.image).not.toBe(`/thumbs/${sha1(realPng)}.webp`)
 
     const fake = await unfurl(`${base}/fake-image`, { ...options, showImage: true })
     expect(fake.ok).toBe(true)
@@ -449,6 +470,16 @@ test.describe('fetching (local server, allowHosts)', () => {
     expect(hits.get('/fake.png')).toBe(1)
     expect(fake.image).toBeUndefined()
     expect(readdirSync(dirs.thumbs)).toHaveLength(1)
+  })
+
+  test('showImage: a small file that decodes to a huge picture is refused (the pixel limit of the icons)', async () => {
+    expect(bombPng.byteLength).toBeLessThan(1024 * 1024)
+    const result = await unfurl(`${base}/bomb-image`, { ...options, showImage: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(hits.get('/bomb.png')).toBe(1)
+    expect(result.image).toBeUndefined()
+    expect(existsSync(dirs.thumbs) ? readdirSync(dirs.thumbs) : []).toEqual([])
   })
 
   test('follows 5 redirects and stops at 6', async () => {
@@ -600,6 +631,22 @@ test.describe('S2: one budget for the whole unfurl', () => {
     expect(Date.now() - again).toBeLessThan(200)
     expect([...hits.keys()].filter(path => path.startsWith('/slow-hop/')).length).toBe(3)
     expect(TOTAL_TIMEOUT_MS).toBe(20_000)
+  })
+
+  test('force: a 304 to a request with no condition is a failed refresh, and the old data stays', async () => {
+    const url = `${base}/always-304`
+    expect(await unfurl(url, options)).toMatchObject({ ok: true, cached: false, title: 'Old title' })
+    const before = readCacheSync(dirs)[url]
+
+    const forced = await unfurl(url, { ...options, force: true })
+    expect(hits.get('/always-304')).toBe(2)
+    expect(seenHeaders.get('/always-304')?.['if-none-match']).toBeUndefined()
+    // Not "refreshed": the editor must not show the old data as new.
+    expect(forced).toEqual({ ok: false, reason: 'http 304' })
+    // The entry of the last good read is untouched, and a normal read still answers from it.
+    expect(readCacheSync(dirs)[url]).toEqual(before)
+    expect(await unfurl(url, options)).toMatchObject({ ok: true, cached: true, title: 'Old title' })
+    expect(hits.get('/always-304')).toBe(2)
   })
 
   test('a failure is remembered for 10 minutes, `force` asks again, and a good read forgets it', async () => {
