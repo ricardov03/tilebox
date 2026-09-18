@@ -34,6 +34,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
 - Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
+- Remove a block from the list, from the tile, or with the Delete key. Every delete asks first, and Undo stays for 8 seconds.
 - Static output. No backend, no database, no runtime network calls on the public page.
 - Private by default: `content/profile.json` and your images are ignored by git. The repo ships a sample profile.
 - One-command publish: `npm run publish` logs you in with the browser, checks that the site name is free, creates the project and uploads. Cloudflare Pages or Netlify.
@@ -186,7 +187,7 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
 | `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once

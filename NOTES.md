@@ -748,3 +748,27 @@ $ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/n
 would commit "chore(release): v0.1.1" and tag v0.1.1
 working tree: still clean
 ```
+
+### Feature E: visible delete
+
+Branch: `wp/9e-delete-block` (from `wp/9-profile-extras`). Date: 2026-09-18. Asked by Ricardo: "Removing a block must be easy to find". Before, delete was one small text button at the top of `BlockForm.vue`, visible only after a block was selected.
+
+- One action, one confirm. `useEditor.ts`: `deleteTarget` (`{ id, where: 'list' | 'tile' | 'form' }`, one at a time), `requestDelete`, `cancelDelete`, `deleteBlock` (the same action as before, now also keeps what Undo needs), `undoDelete`, `notice`, `canUndo`, `UNDO_MS = 8000`. `app/components/editor/DeleteConfirm.vue` is the only confirm: `role="group"` named `Delete <label>?`, text "Delete?", buttons "Yes" (`bg-pop`) and "No". Focus goes to "No" on mount. Escape or "No" cancels. No `window.confirm`.
+- 1. `BlockList.vue`: each row ends with an icon-only button (`aria-label="Delete <label>"`, 44px, `text-muted`, `hover:text-pop`). A click swaps the arrows and the button for the confirm. After a cancel the focus goes back to the delete button (`nextTick`, the button is re-created). After a delete `edit.vue` focuses the next row's select button (the last row when the deleted one was last), or `[data-add-block]` when the list is empty.
+- 2. `PreviewTile.vue`: a third control between Edit and the grip. Visible on hover, `focus-within`, when selected, and always with `@media (hover: none)` (the whole control group, so touch users also get Edit and the grip). The confirm is a small overlay at the top of the tile; on tiles it is stacked (question on line 1, buttons on line 2) because a 1x1 preview tile is about 150px wide inside. The button and the overlay carry `data-editor-control` (the capture click handler in `edit.vue` leaves them alone, so no select) and `data-no-drag`; both grids pass `filter="[data-no-drag]"` + `:prevent-on-filter="false"` to Sortable. The button also has `@click.stop`.
+- 3. Keys (`edit.vue`, in the same dev-only `keydown` handler as Cmd/Ctrl+S): `Delete` or `Backspace` with a selected block, no modifier, no open confirm, and the target not inside `input, textarea, select, [contenteditable]` opens the confirm on the tile (`where: 'tile'`). It never deletes directly. Escape with the focus outside the confirm also cancels.
+- 4. `BlockForm.vue`: the top button is gone. The last control is a full-width secondary "Delete this block" under a rule. Same confirm, in place.
+- 5. Undo: `deleteBlock` stores the block, its index in `blocks`, in `layout.desktop` and in `layout.mobile`, and if it was selected. The save bar shows "Block deleted." in an always-present `aria-live="polite"` span plus an Undo button next to it (outside the live region). It goes away after 8 s or on the next draft change (a watcher compares the draft text with the text right after the delete; selecting a block is not a change). `undoDelete` puts the block back at the 3 old indexes (clamped), restores the selection, and the region says "Block restored.". Delete then Undo leaves the draft equal to the saved file, so Save is disabled again. Memory only: a reload, and the page remount after a save (WP3 deviation 2), forget it.
+- Icon: `line-md:trash` (exists in `@iconify-json/line-md`; `line-md:remove` and `line-md:close` also exist, the trash reads best). Added as `UI_ICONS.trash`, so `check:icons` checks it and `nuxt.config.ts` puts it in the client bundle (27 icons now).
+- Tests (`tests/e2e/editor.spec.ts`, dev project, same backup and restore): "No" and Escape keep the block and return the focus; Delete on a selected tile opens the confirm, Backspace and Delete inside a field do not; the tile button deletes without selecting; Undo restores the order in desktop and mobile and Save is disabled again; the next change ends the Undo offer; delete from the list row + save removes the id from `blocks`, `layout.desktop` and `layout.mobile`; focus lands on the next row. The test reads the block's name from the row's `aria-label`: importing `useEditor.ts` into the spec puts it under the node tsconfig (no Nuxt auto-imports) and `nuxt typecheck` fails. There is no axe check in the dev project and none was added.
+- Not done: no 8-second expiry test (it would add 8 s to the run; the timer is one `setTimeout`). `line-md` icons draw themselves in, so the trash animates once when a row is re-created after a cancel.
+
+Verification (last lines):
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run check:icons     -> OK  27 icons found in installed Iconify packs
+$ npm run generate        -> exit 0
+$ E2E_STATIC_PORT=4391 E2E_DEV_PORT=3391 npx playwright test      (both projects)
+38 passed, 1 skipped      (the skip is the known "example email" guard, see WP9 deviations)
+```
