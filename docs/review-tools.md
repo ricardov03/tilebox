@@ -68,7 +68,7 @@ The raw output stays next to the cache as `<hash>.raw.json`, the session id is p
 npm run review:ledger -- add --source human --branch fix/x --category editor-state --severity warning --file app/pages/edit.vue --claim "what was wrong"
 npm run review:ledger -- report
 ```
-Duplicates of (source, branch or PR, id) are refused. **The top category of the report becomes the next scripted check**: a test or a script that catches that shape for free, every time. Today the top is `untrusted-input` (21 of 99), then `second-code-path` (12) and `editor-state` (11). The scripted checks that exist for them: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`, `editor-inputs.spec.ts`.
+Duplicates of (source, branch or PR, id) are refused. **The top category of the report becomes the next scripted check**: a test or a script that catches that shape for free, every time. Today the top is `untrusted-input` (22 of 108), then `editor-state` (15) and `second-code-path` (13). A finding that was OPEN and is fixed later gets a second row on the fixing branch (`FIXED in <commit>`): the ledger has no status field and old rows are never rewritten. The scripted checks that exist for them: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`, `editor-inputs.spec.ts`.
 
 ## When to use something else
 - **OCR (open-code-review, DeepSeek) when Grok is not available** (no login, quota, outage). Range review of the branch, generated files excluded. It never died silently, it gives diff suggestions, it is cheap (260k to 560k tokens). About 55 percent of its findings were useful against about 75 percent for Grok, and it timed out on 3 of 5 large ranges. Never both tools on the same diff.

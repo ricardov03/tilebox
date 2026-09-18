@@ -1630,3 +1630,122 @@ The 2 skips are the two "example only" tests (`privacy.spec.ts` "the example ema
 - B3 has a diff-only verdict. The reviewer did not read `modules/public-profile.ts` and `app/utils/schedule.ts`. The privacy tests (`privacy.spec.ts`, `second-wave.spec.ts`) are green.
 - `content/gravatar.ts` (above).
 - The pipeline: resume a 1-turn stub with tools; print the session id for every blind run.
+
+
+## WP15 review follow-up
+
+Branch `wp/15-review-followup` (from `origin/main`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged into `main`, no tag. Goal: harden the review pipeline against the 1-turn stub, finish the review of the WP11 / WP12 editor UI that WP14 skipped for budget, review B3 again with full evidence, and close the open drift `gravatar-stores-remote-bytes`.
+
+### A. The pipeline (`scripts/review/`, commit `25aec54`)
+- **A1, stub retry.** `grok-verdict.py is-stub`: `stopReason` `end_turn`, and `num_turns` 1 or less (or 0 tool calls in `grok export`), and no valid verdict (nothing schema-shaped, or `passed: false` with no finding). Then ONE automatic call: `--resume <session>`, the same read-only tools, `--max-turns` = the rest of the budget, the prompt "You stopped after announcing your plan. Continue now: use your tools, then return ONLY the JSON verdict." A second stub is exit 3. `retries=N` in the trailer and in `_meta`.
+- **A2, the session id.** `grok-review: session <id>` on stderr at the start of every call. Every exit 3 goes through one function (`blind_exit`): raw output kept as `<hash>.raw.json`, the session id with the command that resumes it, and a trailer on stdout with `verdict=BLIND session=<id>`.
+- **A3, conclude.** `--conclude <id>` counts the tool calls of the session with `grok export <id>` (Markdown: one `## Tools` section per tool turn, one `- Read:` / `- Search:` / `- List:` line per call; only sections after the first `## Assistant` count, because the prompt pastes source that can hold any heading). 0 calls = refused, exit 3, with the advice `--conclude-tools` (resume WITH tools, `--max-turns` turns, the `--timeout` watchdog) or a new run. `grok usage` has no tool count and the JSON envelope has none either, so the export is the source. `evidence=full|diff-only` in the trailer and in `_meta`; without an export the fallback is the turn count.
+- **A4, defaults.** `--max-turns 14`, `--timeout 12`, conclude watchdog 5 minutes (was 3: WP14 lost a conclude call to it).
+- **A5, fewer stubs at the source.** `grok --help` (1.0.30) has `--no-plan` ("Disable plan mode") and `--rules` ("Extra rules to append to the system prompt"); no `--append-system-prompt`. All calls now pass `--no-plan` and a `--rules` line, and the prompt opens with "Do not announce a plan. Your FIRST action must be a tool call; your LAST message must be only the JSON verdict." **Measured: 1 stub in 4 fresh calls (B5a, B5b1, B3 no stub; B5b2 stub after 14 s). Before: 3 in 6.** The sample is too small to say that it helped, and the three changes were not measured one by one. What is certain: the stub still happens with all three in place, so the retry (A1) is the part that matters. It worked on its first real case: B5b2, stub, automatic retry with 13 turns, a verdict with `evidence=full`. Cost of that stub: $0.027.
+- **A6, the suite.** `grok-review.test.sh`: 130 assertions (was 94). New: stub then a good retry (same session, continue prompt, tool allowlist, 13 turns, `retries=1`, `evidence=full`, `session=`, turns of both calls, the cache keeps the fields), the text form of the stub, stub twice = exit 3 after two calls with the session id and a BLIND trailer as the last line, a diff-only verdict and its report label, the refused tool-less conclude, `--conclude-tools`, no `grok export` (fallback), the new defaults, `--no-plan`, the first line of the prompt, `--help`.
+- Also: the envelope checks moved from a heredoc to `scripts/review/grok-verdict.py` (two modes). `GROK_REVIEW_CACHE_DIR` moves the cache: a worktree agent may not read `<git common dir>`. The runs of this round used `/tmp/wp15-grok-cache`, so they are not in the shared cache.
+
+### B. The blocks (range `df09fa4..origin/main`, `--scope block --ledger --branch main`, defaults 14 turns / 12 minutes)
+| Block | Files | diff_chars | Grok calls | turns | elapsed_s | tokens in / out | Verdict | Cost |
+|---|---|---|---|---|---|---|---|---|
+| B5a editor UI, Pexels | `PexelsPicker.vue ImagePicker.vue TextField.vue` | 23,804 | 1 | 6 | 423 | 385,379 / 21,067 | FAIL, 2 warnings. Ended on its own | $0.19 |
+| B5b1 site panels | `ContactPanel QrPanel SharePanel SiteExtras SitePanel UtmPanel` + `useSiteDraft.ts` | 20,856 | 2 (review + conclude at the cap of 14) | 15 | 580 | 1,154,221 / 28,584 | FAIL, 2 warnings | $0.34 |
+| B5b2 block fields | `BlockAdvanced BlockExtraFields BlockForm BlockList BlockRowBadges LinkCheckButton PreviewTile` + `useEditor.ts useLinkCheck.ts` (`useFieldDraft.ts` has no change in the range) | 24,504 | 3 (stub, automatic retry, conclude at the cap) | 15 | 464 | 1,317,545 / 21,782 | FAIL, 2 warnings | $0.38 |
+| B3 public data, again | `types/profile.ts types/site.ts modules/public-profile.ts content/site-extras.ts app/utils/{vcard,schedule,site-head}.ts` | 32,030 | 1 | 8 | 454 | 761,497 / 23,349 | FAIL, 1 warning. Ended on its own | $0.24 |
+
+B5b was one block of 45,360 diff characters (a prompt of 183,542 characters). It was split in two before the first call: the B3 session of WP14 had its prompt partly offloaded at that size. The 19 editor files that WP11 and WP12 changed are all in B5a, B5b1 or B5b2. All four verdicts have `evidence=full`.
+
+Trailer lines, as printed:
+```
+grok-review: scope=block files=3 diff_chars=23804 cached=0 turns=6 elapsed_s=423 tokens_in=385379 tokens_out=21067 retries=0 evidence=full session=f745f3b4-2854-4b1c-b84a-e323a84588c7 critical=0 warning=2 suggestion=0 verdict=FAIL
+grok-review: scope=block files=7 diff_chars=20856 cached=0 turns=15 elapsed_s=580 tokens_in=1154221 tokens_out=28584 retries=0 evidence=full session=87ff0d56-0e7d-4e76-96f7-8e88e8498c6e critical=0 warning=2 suggestion=0 verdict=FAIL
+grok-review: scope=block files=9 diff_chars=24504 cached=0 turns=15 elapsed_s=464 tokens_in=1317545 tokens_out=21782 retries=1 evidence=full session=7664a9a9-d061-4c65-b353-df1ed886b501 critical=0 warning=2 suggestion=0 verdict=FAIL
+grok-review: scope=block files=7 diff_chars=32030 cached=0 turns=8 elapsed_s=454 tokens_in=761497 tokens_out=23349 retries=0 evidence=full session=5ed00220-f780-4f81-b6ef-2bb1b384bfda critical=0 warning=1 suggestion=0 verdict=FAIL
+```
+Grok calls: 7 of 7 (4 review calls, 1 automatic retry, 2 conclude calls). Cost from `grok usage`: $1.15. Two of four blocks hit the cap of 14 turns and paid about 3 cents for the conclude call: 14 is not "never hit" any more.
+
+### Findings and triage
+| Finding | Block | Triage | Fix |
+|---|---|---|---|
+| `pexels-pick-lost-on-tab-switch` (warning, editor-state, `ImagePicker.vue:207`) | B5a | REAL. The Pexels panel had `v-if`; Vue drops `emit` of an unmounted component (`runtime-core`: `if (instance.isUnmounted) return`). The new dev test failed first: the file was "saved" and the block kept `/blocks/sample.jpg` | `94b2f8f`: the panel mounts on its first open and stays under `v-show`, keyed by the block id (another block starts again, so a late answer never patches the wrong block) |
+| `load-more-focus-clamped-to-old-grid` (warning, a11y, `PexelsPicker.vue:187`) | B5a | FALSE POSITIVE. `photos.value` is set inside `search()`, so Vue's flush is queued before the continuation of `await search()` in `loadMore()`: the new buttons exist when `focusPhoto()` reads them. The existing test asserts the exact repro and is green (`pexels-editor.spec.ts`, "Load more adds page 2 and moves the focus to its first photo", 3 photos then `444444` focused) | none |
+| `qr-caption-mismatches-file` (warning, editor-state, `QrPanel.vue:97`) | B5b1 | REAL. The caption showed the site URL of the draft under a file made for another URL. The new dev test failed first ("Received: https://new.example/") | `6e41c25`: three states. `current` = "Opens <url>" (made in this session for this URL), `stale` = says both URLs and hides the downloads, `unknown` = a file of the last build, no claim |
+| `qr-make-leaves-site-previews-stale` (warning, second-code-path, `QrPanel.vue:47`) | B5b1 | REAL, small. `POST /api/site/assets` writes every file of `public/site/`, and each panel had its own `?v=` stamp | `6e41c25` (the same commit: the caption needs the shared `qrUrl`): `app/composables/useSiteAssets.ts`, one stamp and one `qrUrl` for both panels. Same test |
+| `draft-extras-overwrite-saved-files` (warning, editor-state, `content/site-extras.ts:80`) | B3 | REAL for the contact card, BY DESIGN for the QR code. WP14 (`2b33a7e`) only stopped the deletes. A typed, unsaved public email went into `public/site/contact.vcf`, the file the dev page hands out. The QR code from the draft is what "Make the QR code" is for; favicons and the social image are drawn from the draft since WP10b. Nothing unsaved reaches `dist/`: `pregenerate` draws all of them again from the saved file | `420a5c7`: a draft never writes `contact.vcf` (test fails before). `docs/invariants.md` 8 now states the exception for the generated previews. **For the architect:** this narrows an invariant in words; say no if the QR code should also wait for the save |
+| `schedule-datetime-local-value-overwrite` (warning, editor-state, `BlockAdvanced.vue:143`) | B5b2 | FALSE POSITIVE. Two reasons. The 30 s clock does not render the form again: the template reads the computed `state`, a string that stays the same (Vue 3.5 does not trigger then). And a half-typed `datetime-local` has the value `''` and the browser fires `change` for that, so `local` equals `el.value` and a new render writes nothing back. Checked with a new dev test that passed WITHOUT a code change | `4092213` keeps that test as a guard |
+| `qr-size-select-disagrees-with-schema` (warning, schema-drift, `BlockForm.vue:161`) | B5b2 | REAL. The select listed the 4 `SIZES`, `QrBlockSchema` takes `QR_SIZES` (1x1, 2x2). Dev test fails before | `4092213`: the options come from `QR_SIZES` for a `qr` block |
+
+7 Grok findings: 5 real (all fixed), 2 false positives, 0 already fixed, no critical. The fixes of this branch have NO Grok verdict of their own: the budget of 7 calls was spent. Next review: `npm run review -- --range origin/main..wp/15-review-followup --files app/components/editor app/composables content/site-extras.ts` and `--files content/gravatar.ts content/gravatar-fetch.ts server/api/avatar scripts/fetch-avatar.ts`.
+
+### C. `gravatar-stores-remote-bytes` (commit `0db06fd`)
+- Before: raw `fetch` with `redirect: 'follow'`, a Content-Type check, the body stored as it came as `public/avatar.gravatar.jpg`.
+- Now, the same rules as the icons and images (invariants 10 and 12): `safeRequest()` of `content/unfurl.ts` with `onlyHosts` = `gravatar.com`, `www.gravatar.com`, `secure.gravatar.com` (`https` on every hop), 2 MB while reading, magic bytes (JPEG, PNG, WebP) BEFORE the decode, sharp with `limitInputPixels` 4096x4096 and `failOn: 'error'`, `rotate()`, inside 512x512 without enlargement, a new WebP with no metadata, the output sniffed again, one budget of 8 s. The hosts were measured with `curl -sIL`: all three answer 200 (`image/png`) or 404 directly. No redirect and no image CDN host, so no other host is allowed.
+- The file is `public/avatar.gravatar.webp` (`GRAVATAR_PUBLIC_PATH` in `types/profile.ts`; the sanitizer, `content/site-assets.ts`, the editor preview and the module watcher all read that constant or `GRAVATAR_FILE`). `.gitignore` `public/avatar.*` covers it (`repo.spec.ts`). A good download removes the old `avatar.gravatar.jpg`; so does a 404 that may delete. Kept: `allowDelete`, the atomic write, the three one-line messages, never a throw.
+- **The WP7 lesson.** The download moved to `content/gravatar-fetch.ts`. `content/gravatar.ts` stays light (names, hash, "is the file there?") because `GET /api/avatar/gravatar`, `modules/public-profile.ts` and `content/site-assets.ts` import it statically. `POST /api/avatar/gravatar` loads the download with `import.meta.dev ? await import(...) : null`, as `/api/unfurl` does. Checked live: `npm run dev -- --port 3452`, after 25 s `GET /api/avatar/gravatar` 200 `{ "exists": false }`, `GET /api/profile` 200, `POST /api/avatar/gravatar` with an unknown email 200 `avatar: no gravatar for this email` (a real request through the pinned connection), 0 lines with `error` in the log. `npx nuxt build`: `grep -rl tilebox-unfurl .output/server` = 0 files.
+- `tests/e2e/gravatar.spec.ts`: 13 tests with a mocked `transport` and `lookup` (was 5 with a `globalThis.fetch` stub). Run first against the OLD logic behind the new seam: 7 failed (SVG body with an `image/jpeg` header stored, fake JPEG stored, text stored, a good PNG stored byte for byte, 5000x5000 stored, a redirect to `evil.example` followed, the old-name file left). All 13 pass now.
+- Ledger: a new row `gravatar-stores-remote-bytes` on this branch, "FIXED in 0db06fd" (the ledger has no status field; the OPEN row stays). The same for `review-run-ends-on-first-progress-stub` ("FIXED in 25aec54").
+
+### Ledger report
+```
+# Findings ledger: 108 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 26
+- untrusted-input: 22
+- editor-state: 15
+- second-code-path: 13
+- test-green-wrong-reason: 8
+- a11y: 8
+- schema-drift: 7
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- grok: 40
+- ocr: 35
+- agent: 25
+- human: 8
+
+## By severity
+- warning: 84
+- suggestion: 13
+- critical: 11
+
+## By area
+- app/components: 22
+- server/api: 9
+- content/unfurl.ts: 9
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- scripts/publish.mjs: 6
+- .github/workflows: 5
+- app/pages: 5
+
+findings-ledger: rows=108 top_category=untrusted-input top_count=22 grok=40 ocr=35 agent=25 human=8
+```
+
+### Verification
+```
+$ npm ci                                   -> ok
+$ npm run lint                             -> ok
+$ npm run typecheck                        -> ok
+$ npm run test:review                      -> passed=130 failed=0 total=130 expected=130
+$ npm run generate                         -> ok (avatar: placeholder email, gravatar skipped)
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ E2E_STATIC_PORT=4451 E2E_DEV_PORT=3451 npx playwright test   (ONE run, both projects)
+    static: 238 passed, 2 skipped   dev: 81 passed   total: 319 passed, 2 skipped
+$ npm run check:icons                      -> exit 0
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+$ npx nuxt build; grep -rl tilebox-unfurl .output/server | wc -l -> 0
+```
+
+### Open
+- The fixes of this branch are not reviewed by another model yet (see the two commands above).
+- A5 is not proven. To measure it: count `retries=` over the next 20 trailers.
+- `docs/invariants.md` 8 got one stated exception. The architect decides if it stays.
+- The dev server prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. They were already in the first dev run of this branch, before any editor change. Not looked into.
+- Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport (the live check was a 404).
+The 2 skips are the two "example only" tests of WP14 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start. New tests: static +9 (gravatar 13 for 5, second-wave +1), dev +4 (pexels-editor +1, second-wave-editor +3).
