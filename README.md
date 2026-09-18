@@ -1,4 +1,4 @@
-# tilebox
+# Tilebox
 
 Bento-style personal link page. One profile, a grid of tiles you arrange yourself.
 Edit locally in the browser, commit a JSON file, host it static on Cloudflare Pages.
