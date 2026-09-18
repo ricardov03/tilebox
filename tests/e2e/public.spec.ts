@@ -5,6 +5,7 @@ import { expect, test } from '@playwright/test'
 import { siteTitle } from '../../app/utils/site-head'
 import { columnsOf, profileIsPersonal, readProfile, THEME_KEY, tileLefts } from './helpers'
 import { brandIconFor } from '../../app/utils/brand-icons'
+import { COLOR_PRESETS } from '../../app/utils/presets'
 
 const profile = readProfile()
 /** What the build ships: hidden blocks are dropped (WP10a). */
@@ -193,6 +194,31 @@ test('theme toggle cycles system -> light -> dark and persists', async ({ page }
 
   await page.locator(TOGGLE).click()
   expect(await page.evaluate(key => localStorage.getItem(key), THEME_KEY)).toBe('system')
+})
+
+test('hydration and the toggle keep exactly 2 theme-color metas, 1 color-scheme meta, 1 inline script', async ({ page }) => {
+  const counts = () => page.evaluate(() => ({
+    themeColor: document.querySelectorAll('meta[name="theme-color"]').length,
+    colorScheme: document.querySelectorAll('meta[name="color-scheme"]').length,
+    inlineScript: [...document.querySelectorAll('head script')].filter(el => el.textContent?.includes('tilebox:theme')).length,
+  }))
+  const contents = () => page.evaluate(() =>
+    [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].map(meta => meta.content.toLowerCase()))
+
+  await page.goto('/')
+  // The toggle answers only after hydration: its label follows the client state.
+  const toggle = page.locator(TOGGLE)
+  await expect(toggle).toHaveAttribute('aria-label', 'Theme: system. Switch to light.')
+  await page.waitForLoadState('networkidle')
+  expect(await counts()).toEqual({ themeColor: 2, colorScheme: 1, inlineScript: 1 })
+
+  await toggle.click()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  expect(await counts()).toEqual({ themeColor: 2, colorScheme: 1, inlineScript: 1 })
+  // A fixed mode: the two metas carry the same color, the ground of that mode.
+  const light = COLOR_PRESETS[profile.profile.theme.colors].light.ground.toLowerCase()
+  await expect.poll(contents).toEqual([light, light])
+  await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute('content', 'light')
 })
 
 test.describe('dark OS, mode system', () => {

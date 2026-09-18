@@ -5,6 +5,8 @@
  * - A visitor's choice is stored in localStorage under `tilebox:theme`.
  * - The resolved mode (`light | dark`) is written to `<html data-theme>`.
  * - For `system`, `prefers-color-scheme` decides and changes are followed.
+ * - `theme-color`: two metas (light and dark media), rendered by the server and
+ *   updated in place on the client, so there are 2 before and after hydration.
  *
  * No flash on load: the prerendered HTML carries `data-theme` only when the
  * mode is fixed. A tiny inline script in `<head>` sets the attribute from
@@ -30,6 +32,25 @@ const MEDIA_DARK = '(prefers-color-scheme: dark)'
 /** Runs before paint. Keep under 300 bytes. Same rules as `readStoredMode` + `resolve`. */
 const INLINE_SCRIPT = `!function(){var m,d=document.documentElement;try{m=localStorage.getItem("${THEME_STORAGE_KEY}")}catch(e){}`
   + `d.dataset.theme=m==="light"||m==="dark"?m:m==="system"||!d.dataset.theme?matchMedia("${MEDIA_DARK}").matches?"dark":"light":d.dataset.theme}()`
+
+const THEME_COLOR_SCHEMES = ['light', 'dark'] as const
+
+function themeColorMedia(scheme: ResolvedTheme): string {
+  return `(prefers-color-scheme: ${scheme})`
+}
+
+/** Client: update the server-rendered meta. A page with no server HTML (the SPA fallback) gets a new one. */
+function syncThemeColorMeta(scheme: ResolvedTheme, content: string): void {
+  const media = themeColorMedia(scheme)
+  let meta = [...document.head.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].find(el => el.media === media)
+  if (!meta) {
+    meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    meta.media = media
+    document.head.append(meta)
+  }
+  if (meta.content !== content) meta.content = content
+}
 
 function isMode(value: unknown): value is ThemeMode {
   return value === 'system' || value === 'light' || value === 'dark'
@@ -89,19 +110,32 @@ export function useTheme() {
   if (!installed.has(nuxtApp)) {
     installed.add(nuxtApp)
 
-    // Head: inline script, color-scheme and theme-color. Reactive to the mode.
+    // Head: the inline script and color-scheme go through unhead. No `key` on the meta:
+    // unhead then finds the server tag by its name and updates it (a key made a second tag).
     useHead(computed(() => ({
-      meta: [
-        { key: 'color-scheme', name: 'color-scheme', content: mode.value === 'system' ? 'light dark' : mode.value },
-        ...(mode.value === 'system'
-          ? [
-              { key: 'theme-color-light', name: 'theme-color', media: '(prefers-color-scheme: light)', content: preset.light.ground },
-              { key: 'theme-color-dark', name: 'theme-color', media: '(prefers-color-scheme: dark)', content: preset.dark.ground },
-            ]
-          : [{ key: 'theme-color', name: 'theme-color', content: preset[mode.value].ground }]),
-      ],
+      meta: [{ name: 'color-scheme', content: mode.value === 'system' ? 'light dark' : mode.value }],
       script: [{ key: 'tilebox-theme', innerHTML: INLINE_SCRIPT, tagPosition: 'head' as const }],
     })))
+
+    // theme-color: ALWAYS two metas, one per `prefers-color-scheme`. A fixed mode puts the
+    // same color in both. The server renders them (the keys keep the two apart: unhead
+    // dedupes metas by name). The client never gives them to unhead: it cannot match a
+    // keyed meta with the server tag and would append a second pair. It updates the
+    // two DOM nodes instead.
+    const themeColors = computed(() => THEME_COLOR_SCHEMES.map(scheme => ({
+      scheme,
+      content: preset[mode.value === 'system' ? scheme : mode.value].ground,
+    })))
+    if (import.meta.server) {
+      useServerHead({
+        meta: themeColors.value.map(({ scheme, content }) => ({
+          key: `theme-color-${scheme}`,
+          name: 'theme-color',
+          media: themeColorMedia(scheme),
+          content,
+        })),
+      })
+    }
 
     // Server only: a fixed mode is prerendered. `system` leaves the attribute to the inline script.
     if (import.meta.server && theme.mode !== 'system') {
@@ -126,6 +160,9 @@ export function useTheme() {
       // that no vnode owns, so the inline script's value is never reverted.
       watch(resolved, (value) => {
         document.documentElement.dataset.theme = value
+      }, { immediate: true })
+      watch(themeColors, (colors) => {
+        colors.forEach(({ scheme, content }) => syncThemeColorMeta(scheme, content))
       }, { immediate: true })
     }
   }
