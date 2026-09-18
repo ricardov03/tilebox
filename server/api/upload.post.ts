@@ -10,6 +10,8 @@ import { extname, resolve } from 'node:path'
 import { assertDev } from '../utils/editor'
 
 const MAX_BYTES = 8 * 1024 * 1024
+/** Multipart boundaries and field headers add a little on top of the file. */
+const MULTIPART_OVERHEAD = 64 * 1024
 const ALLOWED_EXT = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 /** MIME types that match one of the allowed extensions. `image/jpg` is a common non-standard value. */
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
@@ -29,9 +31,10 @@ function tooLarge(filename: string, bytes: number): never {
 export default defineEventHandler(async (event) => {
   assertDev()
 
-  // Refuse an oversized request before reading its body.
+  // Refuse a clearly oversized request before reading its body. The exact
+  // check is on the file bytes below; this one allows the multipart overhead.
   const declared = Number(getHeader(event, 'content-length') ?? 0)
-  if (declared > MAX_BYTES) tooLarge('The upload', declared)
+  if (declared > MAX_BYTES + MULTIPART_OVERHEAD) tooLarge('The upload', declared)
 
   const parts = await readMultipartFormData(event)
   const file = parts?.find(p => p.name === 'file' && p.filename)
