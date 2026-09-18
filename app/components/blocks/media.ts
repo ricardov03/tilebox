@@ -2,6 +2,7 @@
  * Pure helpers shared by the block components and the build scripts.
  * No Vue imports here: `scripts/*.ts` run this file with tsx.
  */
+import { brandIconFor } from '../../utils/brand-icons'
 
 /** Tile chrome variants. `accent` and `pop` have no border. */
 export type TileVariant = 'tile' | 'accent' | 'pop'
@@ -16,11 +17,11 @@ export function hostOf(url: string): string {
   }
 }
 
-/** Text shown as the "domain" line on a link tile. `mailto:` shows the address. */
+/** Text shown as the "domain" line on a link tile. `mailto:` shows the address, `tel:` the number. */
 export function domainLabel(url: string): string {
   const host = hostOf(url)
   if (host) return host
-  return url.replace(/^mailto:/i, '').split('?')[0] ?? ''
+  return url.replace(/^(mailto|tel):/i, '').split('?')[0] ?? ''
 }
 
 /** True only for http(s) links. Those open in a new tab. */
@@ -28,9 +29,9 @@ export function isHttpUrl(url: string): boolean {
   return /^https?:\/\//i.test(url)
 }
 
-/** True for the schemes a tile may link to: http(s) and mailto:. */
+/** True for the schemes a tile may link to: http(s), mailto: and tel:. */
 export function isSafeHref(url: string): boolean {
-  return isHttpUrl(url) || /^mailto:/i.test(url)
+  return isHttpUrl(url) || /^(mailto|tel):/i.test(url)
 }
 
 /** YouTube video id for watch, shorts, embed, live and youtu.be URLs. `null` otherwise. */
@@ -58,10 +59,41 @@ export function youtubeEmbedUrl(id: string): string {
   return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`
 }
 
-/** Public URL of the fetched favicon for a host, or `null` when the build did not fetch one. */
-export function faviconPath(host: string, manifest: Readonly<Record<string, string>>): string | null {
-  const file = manifest[host]
-  return file ? `/icons/${file}` : null
+/** The icon a link tile shows. `source` says where it came from: only `manual` was picked by the owner. */
+export type LinkIcon
+  = | { kind: 'icon', name: string, source: 'manual' | 'brand' | 'fallback' }
+    | { kind: 'favicon', src: string }
+
+const FALLBACK_LINK_ICON = 'line-md:link'
+/** Only local files the unfurl engine wrote. A remote URL here would be a runtime network call. */
+const LOCAL_FAVICON = /^\/icons\/[a-z0-9]+\.(png|jpg|webp|gif|svg)$/
+const LOCAL_THUMB = /^\/thumbs\/[a-z0-9]+\.webp$/
+
+/**
+ * Icon of a link tile, in order (WP10a): the owner's `icon`, the brand icon
+ * from the URL (no network), the local favicon file, then `line-md:link`.
+ */
+export function resolveLinkIcon(block: { url: string, icon?: string, favicon?: string }): LinkIcon {
+  if (block.icon) return { kind: 'icon', name: block.icon, source: 'manual' }
+  const brand = brandIconFor(block.url)
+  if (brand) return { kind: 'icon', name: brand, source: 'brand' }
+  if (block.favicon && LOCAL_FAVICON.test(block.favicon)) return { kind: 'favicon', src: block.favicon }
+  return { kind: 'icon', name: FALLBACK_LINK_ICON, source: 'fallback' }
+}
+
+/** Where the website's image sits on a featured link tile. */
+export type LinkImageLayout = 'top' | 'side'
+
+/**
+ * The featured look. `null` = a plain tile. The image shows only when the owner
+ * turned `showImage` on, a local `/thumbs/*.webp` file is set, and the tile is
+ * larger than 1x1: `2x2` and `1x2` put it on top, `2x1` on the right third.
+ */
+export function linkImageLayout(block: { size: string, showImage?: boolean, image?: string }): LinkImageLayout | null {
+  if (!block.showImage || !block.image || !LOCAL_THUMB.test(block.image)) return null
+  if (block.size === '2x2' || block.size === '1x2') return 'top'
+  if (block.size === '2x1') return 'side'
+  return null
 }
 
 /** Public URL of the fetched YouTube thumbnail, or `null` when the build did not fetch one. */

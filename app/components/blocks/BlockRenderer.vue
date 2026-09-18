@@ -14,7 +14,7 @@ import VideoBlock from './VideoBlock.vue'
 
 withDefaults(defineProps<{
   block: Block
-  /** Image tiles near the top of the page load eagerly (LCP). Other types ignore it. */
+  /** Image tiles and featured link tiles near the top of the page load their image eagerly (LCP). Other types ignore it. */
   priority?: boolean
 }>(), { priority: false })
 </script>
@@ -23,6 +23,7 @@ withDefaults(defineProps<{
   <LinkBlock
     v-if="block.type === 'link'"
     :block="block"
+    :priority="priority"
   />
   <SocialBlock
     v-else-if="block.type === 'social'"
