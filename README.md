@@ -170,11 +170,15 @@ If you have more than one Cloudflare account or Netlify team, the script asks wh
 | `--name <site-name>` | Skip the name prompt. Must match the saved name |
 | `--account <id-or-slug>` | Cloudflare account id or Netlify team slug |
 | `--preview` | Upload to a preview URL, not production |
-| `--site-url https://...` | `NUXT_PUBLIC_SITE_URL` for this build only. Use it after you set a custom domain. `NUXT_PUBLIC_SITE_URL` in your shell works too. Default: the saved live URL |
+| `--site-url https://...` | `NUXT_PUBLIC_SITE_URL` for this build only. Must start with `https://`. Use it after you set a custom domain. `NUXT_PUBLIC_SITE_URL` in your shell works too. Default: the saved live URL |
 | `--no-build` | Skip `npm run generate`, upload `dist/` as it is |
-| `--yes` | Never ask. Fails when an answer is needed (no login, name taken, more than one account) |
+| `--yes` | Never ask. Fails with exit 2 when an answer is needed: no `--provider` or no `--name` on the first run, more than one account. Fails with exit 1 for no login or a taken name |
 | `--reset` | Forget `.tilebox/publish.json` and set up again. The project on the provider stays; delete it in the dashboard if you do not need it |
 | `--help` | Print the flags |
+
+Before the build the script prints which profile it uses, with the same rule as `content/resolve.ts`: `content/profile.json (personal)` when the file exists, else `content/profile.example.json (example)`. A production publish of the **sample** profile asks first: `You are about to publish the sample profile. Continue? [y/N]`. With `--yes` it prints a warning and goes on. `--preview` does not ask.
+
+A broken `.tilebox/publish.json` (bad JSON, no `provider`, `name` or `url`, no `accountId` for Cloudflare, no `siteId` for Netlify) stops the run with exit 1. Fix the file or run `npm run publish -- --reset`.
 
 Exit codes: 0 ok, 1 error, 2 wrong usage. Every command the script runs is printed before it runs (`$ wrangler ...`). The upload stops after 10 minutes, the checks after 30 seconds.
 
