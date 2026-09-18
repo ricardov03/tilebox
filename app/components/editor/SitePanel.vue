@@ -440,11 +440,11 @@ const buttonClass = `min-h-11 rounded-full border border-line px-4 text-sm font-
           for="s-favicon-file"
           :class="uploadClass"
         >
-          {{ busy === 'favicon' ? 'Working...' : 'Upload a square png, svg or jpg' }}
+          {{ busy === 'favicon' ? 'Working...' : 'Upload a square png, jpg or svg (an svg is saved as a png)' }}
           <input
             id="s-favicon-file"
             type="file"
-            accept="image/png,image/svg+xml,image/jpeg"
+            accept="image/png,image/svg+xml,image/jpeg,image/webp"
             class="sr-only"
             :disabled="busy !== null"
             @change="onUpload('favicon', $event)"

@@ -41,8 +41,8 @@ export const SiteSchema = z.object({
   noindex: z.boolean().optional(),
   /** An uploaded social preview image. It wins over the generated one. */
   ogImage: localPath('png|jpg|jpeg|webp').optional(),
-  /** An uploaded square favicon source. It wins over the avatar and the initials. */
-  favicon: localPath('png|svg|jpg|jpeg').optional(),
+  /** An uploaded square favicon source. It wins over the avatar and the initials. No `svg`: the upload route stores an SVG as a PNG. */
+  favicon: localPath('png|jpg|jpeg|webp').optional(),
   /** X (Twitter) user name without the @. */
   xHandle: z.string().regex(/^[a-z0-9_]{1,15}$/i, 'Must be an X user name without the @').optional(),
   jobTitle: z.string().min(1).max(100).optional(),

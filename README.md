@@ -246,7 +246,7 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 | `noindex` | boolean | `false` | `<meta name="robots" content="noindex, nofollow">` |
 | `xHandle` | X user name, no `@` | none | `twitter:site`, `twitter:creator` |
 | `jobTitle`, `location` | text, max 100 | none | JSON-LD only. Not shown on the page |
-| `favicon` | local path, png, svg or jpg, square | none | source of the favicon set |
+| `favicon` | local path, png, jpg or webp, square (the editor saves an SVG upload as a PNG) | none | source of the favicon set |
 | `ogImage` | local path, png, jpg or webp | none | source of `/site/og.png` |
 
 **Site URL precedence.** Absolute URLs need to know where the page lives. The order is: the build env `NUXT_PUBLIC_SITE_URL` (`npm run publish` sets it to the live URL) > `site.url` > unknown. Unknown means: no canonical link, no `og:url`, and `og:image` stays the path `/site/og.png`. Most link previews need an absolute image URL, so set one of the two.
@@ -256,7 +256,7 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 | File | What |
 |---|---|
 | `favicon.ico` | 32x32 PNG inside an ICO |
-| `icon.svg` | Only for the initials tile (with a dark-mode variant inside) or an SVG upload |
+| `icon.svg` | Only for the initials tile (with a dark-mode variant inside). This repo draws that file itself. An upload never becomes `icon.svg` |
 | `icon-192.png`, `icon-512.png` | Manifest icons |
 | `icon-mask.png` | 512, maskable: the content stays inside the safe zone |
 | `apple-touch-icon.png` | 180, opaque, on the ground color of your color preset |

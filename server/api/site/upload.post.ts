@@ -3,29 +3,24 @@
  * `POST /api/site/upload?kind=favicon|og`, multipart field `file`.
  * Writes `public/site-uploads/<kind>-<6 hex>.<ext>` (ignored by git) and
  * answers `{ src }`, the value for `site.favicon` or `site.ogImage`.
- * favicon: png, svg, jpg, jpeg. og: png, jpg, jpeg, webp. Up to 8 MB.
+ * favicon: png, svg, jpg, jpeg, webp. og: png, jpg, jpeg, webp. Up to 8 MB.
+ *
+ * An SVG is never written to disk: it is drawn as a 512x512 PNG and `src` is
+ * that `.png` (content/site-upload.ts, which also checks the real format of a
+ * raster file). The store function is imported behind the dev check, so a
+ * production build drops it and sharp with it.
  */
-import { mkdir, writeFile } from 'node:fs/promises'
-import { randomBytes } from 'node:crypto'
-import { extname, resolve } from 'node:path'
-import { SITE_UPLOADS_DIR, SITE_UPLOADS_PUBLIC_DIR } from '~~/content/site-files'
-
-const MAX_BYTES = 8 * 1024 * 1024
-const MULTIPART_OVERHEAD = 64 * 1024
-const ALLOWED: Record<'favicon' | 'og', readonly string[]> = {
-  favicon: ['png', 'svg', 'jpg', 'jpeg'],
-  og: ['png', 'jpg', 'jpeg', 'webp'],
-}
-
 export default defineEventHandler(async (event) => {
-  if (!import.meta.dev) throw createError({ statusCode: 404, statusMessage: 'Not found' })
+  const store = import.meta.dev ? await import('~~/content/site-upload') : null
+  if (!store) throw createError({ statusCode: 404, statusMessage: 'Not found' })
 
   const kind = getQuery(event).kind
   if (kind !== 'favicon' && kind !== 'og') {
     throw createError({ statusCode: 400, statusMessage: 'Set ?kind=favicon or ?kind=og.' })
   }
+  const MULTIPART_OVERHEAD = 64 * 1024
   const declared = Number(getHeader(event, 'content-length') ?? 0)
-  if (declared > MAX_BYTES + MULTIPART_OVERHEAD) {
+  if (declared > store.SITE_UPLOAD_MAX_BYTES + MULTIPART_OVERHEAD) {
     throw createError({ statusCode: 413, statusMessage: 'The upload is too large. The limit is 8 MB.' })
   }
 
@@ -34,16 +29,11 @@ export default defineEventHandler(async (event) => {
   if (!file || !file.filename) {
     throw createError({ statusCode: 400, statusMessage: 'No file in the request. Send multipart form data with a "file" field.' })
   }
-  const ext = extname(file.filename).slice(1).toLowerCase()
-  if (!ALLOWED[kind].includes(ext)) {
-    throw createError({ statusCode: 415, statusMessage: `"${file.filename}" is not allowed. Use ${ALLOWED[kind].join(', ')}.` })
+  try {
+    return await store.storeSiteUpload({ kind, filename: file.filename, data: file.data })
   }
-  if (file.data.byteLength > MAX_BYTES) {
-    throw createError({ statusCode: 413, statusMessage: `"${file.filename}" is ${(file.data.byteLength / 1024 / 1024).toFixed(1)} MB. The limit is 8 MB.` })
+  catch (error) {
+    if (error instanceof store.SiteUploadError) throw createError({ statusCode: error.statusCode, statusMessage: error.message })
+    throw error
   }
-
-  await mkdir(SITE_UPLOADS_DIR, { recursive: true })
-  const name = `${kind}-${randomBytes(3).toString('hex')}.${ext}`
-  await writeFile(resolve(SITE_UPLOADS_DIR, name), file.data)
-  return { src: `${SITE_UPLOADS_PUBLIC_DIR}/${name}` }
 })

@@ -86,7 +86,7 @@ test.describe('the built page', () => {
     const hrefs = await page.locator('head link[rel="icon"], head link[rel="apple-touch-icon"]').evaluateAll(
       links => links.map(link => link.getAttribute('href') ?? ''),
     )
-    // ico + png 192 + apple-touch-icon always, plus icon.svg when the source is the initials or an SVG upload.
+    // ico + png 192 + apple-touch-icon always, plus icon.svg when the source is the initials.
     const expected = existsSync(resolve(ROOT, 'dist/site/icon.svg')) ? 4 : 3
     expect(hrefs).toHaveLength(expected)
     expect(hrefs).toContain('/site/favicon.ico')
@@ -255,7 +255,8 @@ test.describe('SiteSchema', () => {
     expect(SiteSchema.safeParse({ xHandle: '@ada' }).success).toBe(false)
     expect(SiteSchema.safeParse({ lang: 'english!' }).success).toBe(false)
     expect(SiteSchema.safeParse({ lang: 'es-CO', xHandle: 'ada_1' }).success).toBe(true)
-    expect(SiteSchema.safeParse({ favicon: '/site-uploads/a.svg', ogImage: '/site-uploads/b.webp' }).success).toBe(true)
+    expect(SiteSchema.safeParse({ favicon: '/site-uploads/a.png', ogImage: '/site-uploads/b.webp' }).success).toBe(true)
+    expect(SiteSchema.safeParse({ favicon: '/site-uploads/a.svg' }).success).toBe(false)
     expect(SiteSchema.safeParse({ favicon: '/site-uploads/../../a.png' }).success).toBe(false)
     expect(SiteSchema.safeParse({ ogImage: 'https://example.com/a.png' }).success).toBe(false)
   })
@@ -347,8 +348,8 @@ test.describe('buildSiteAssets', () => {
 
   test('uploads win: the favicon and the social image come from site-uploads', async () => {
     writeFileSync(join(publicDir, 'site-uploads/og.jpg'), await photo(2000, 900, '#00aa55'))
-    writeFileSync(join(publicDir, 'site-uploads/icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#ff00ff"/></svg>')
-    const result = await build({ ...BASE, site: { ogImage: '/site-uploads/og.jpg', favicon: '/site-uploads/icon.svg' } })
+    writeFileSync(join(publicDir, 'site-uploads/icon.png'), await sharp({ create: { width: 64, height: 64, channels: 4, background: '#ff00ff' } }).png().toBuffer())
+    const result = await build({ ...BASE, site: { ogImage: '/site-uploads/og.jpg', favicon: '/site-uploads/icon.png' } })
     expect(result.messages).toEqual([])
     expect(result.faviconSource).toBe('upload')
     expect(result.ogSource).toBe('upload')
@@ -357,7 +358,11 @@ test.describe('buildSiteAssets', () => {
     expect({ width: meta.width, height: meta.height }).toEqual({ width: 1200, height: 630 })
     const { dominant } = await og.stats()
     expect(dominant.g).toBeGreaterThan(dominant.r) // the green upload, not the generated card
-    expect(readFileSync(join(outDir, SITE_FILES.iconSvg), 'utf8')).toContain('#ff00ff')
+    // An upload never becomes icon.svg: that file is only the initials tile this repo draws itself.
+    expect(existsSync(join(outDir, SITE_FILES.iconSvg))).toBe(false)
+    const icon = await sharp(join(outDir, SITE_FILES.icon192)).stats()
+    expect(icon.dominant.r).toBeGreaterThan(200)
+    expect(icon.dominant.g).toBeLessThan(50)
   })
 
   test('broken uploads fall back without throwing', async () => {

@@ -192,7 +192,7 @@ interface FaviconArt {
   source: Exclude<FaviconSource, 'none'>
   /** 512x512 PNG, transparent outside the shape. */
   master: Buffer
-  /** Written as `icon.svg` when set. */
+  /** Written as `icon.svg` when set. Only the initials tile sets it: text this module made, never an upload. */
   svg?: string
   /** Full-bleed 512 PNG for the Apple icon, when the art has one (initials). */
   bleed?: Buffer
@@ -204,14 +204,18 @@ interface FaviconArt {
 const resizeTo = (input: Buffer, size: number) =>
   sharp(input).resize(size, size, { fit: 'contain', background: TRANSPARENT }).png().toBuffer()
 
+/**
+ * Your upload as the 512 master. The file is only ever DRAWN (sharp), never copied:
+ * `icon.svg` is written for the initials tile alone, the one SVG this module makes itself.
+ * (The upload route already turns an SVG into a PNG, content/site-upload.ts.)
+ */
 async function uploadArt(file: string): Promise<FaviconArt> {
   const isSvg = extname(file).toLowerCase() === '.svg'
-  const raw = await readFile(file)
-  const master = await sharp(raw, isSvg ? { density: 300 } : {})
+  const master = await sharp(await readFile(file), { limitInputPixels: 8192 * 8192, ...(isSvg ? { density: 300 } : {}) })
     .resize(MASTER_SIZE, MASTER_SIZE, { fit: 'contain', background: TRANSPARENT })
     .png()
     .toBuffer()
-  return { source: 'upload', master, shape: 'square', ...(isSvg ? { svg: raw.toString('utf8') } : {}) }
+  return { source: 'upload', master, shape: 'square' }
 }
 
 async function avatarArt(file: string): Promise<FaviconArt> {
