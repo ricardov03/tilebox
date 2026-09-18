@@ -7,6 +7,7 @@ import { parseProfile } from './types/profile'
 import { FONT_PRESETS } from './app/utils/presets'
 import { NETWORKS, UI_ICONS } from './app/utils/networks'
 import { allBrandIcons, brandIconFor } from './app/utils/brand-icons'
+import { isAllowedIconName } from './app/utils/icon-sets'
 
 // The profile is read here at config time (PLAN.md 5.4). content/resolve.ts
 // picks content/profile.json (yours, not tracked) or the tracked example.
@@ -60,6 +61,7 @@ function fontsFor(presetId: typeof profile.profile.theme.fonts) {
  * A link block without `icon` gets its brand icon from the URL (app/utils/brand-icons.ts):
  * only the brands this profile uses go in the bundle, not the whole map.
  * Hidden blocks are skipped: the build drops them (`toPublicProfile`).
+ * WP18: a name outside the two supported sets (`app/utils/icon-sets.ts`) is never bundled.
  */
 function iconsIn(data: typeof profile, withHidden = false): string[] {
   const icons = new Set<string>()
@@ -74,7 +76,7 @@ function iconsIn(data: typeof profile, withHidden = false): string[] {
   }
   Object.values(NETWORKS).forEach(n => icons.add(n.icon))
   Object.values(UI_ICONS).forEach(i => icons.add(i))
-  return [...icons].sort()
+  return [...icons].filter(isAllowedIconName).sort()
 }
 
 /**
@@ -93,7 +95,7 @@ export default defineNuxtConfig({
   // `nuxt dev` only: the editor previews any pasted URL and hidden blocks at once, so every
   // brand icon is bundled there. The built site gets only the icons of its own profile.
   $development: {
-    icon: { clientBundle: { icons: [...allBrandIcons(), ...iconsIn(profile, true)] } },
+    icon: { clientBundle: { icons: [...allBrandIcons().filter(isAllowedIconName), ...iconsIn(profile, true)] } },
   },
   devtools: { enabled: true },
 
@@ -122,6 +124,8 @@ export default defineNuxtConfig({
     '/api/**': { prerender: false },
     // The same headers as `public/_headers` (the static host reads that file), for `nuxt dev`.
     ...Object.fromEntries(UNTRUSTED_ASSET_DIRS.map(dir => [`/${dir}/**`, { headers: UNTRUSTED_ASSET_HEADERS }])),
+    // WP18, `nuxt dev` only: the icon previews of the editor are SVG files. Same sandbox as the asset folders.
+    '/api/icons/svg': { headers: UNTRUSTED_ASSET_HEADERS },
   },
 
   features: {
