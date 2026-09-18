@@ -445,7 +445,8 @@ const netlify = {
     const host = `${name}.netlify.app`
     log(`    https HEAD https://${host}/`)
     return new Promise((resolve) => {
-      const req = httpsRequest({ host, method: 'HEAD', path: '/', timeout: CHECK_TIMEOUT_MS }, (res) => {
+      // agent: false = no keep-alive socket, so nothing holds the process open at the end.
+      const req = httpsRequest({ host, method: 'HEAD', path: '/', agent: false, timeout: CHECK_TIMEOUT_MS }, (res) => {
         res.resume()
         resolve(res.statusCode === 404)
       })
@@ -497,6 +498,8 @@ const netlify = {
 
 // ---------------------------------------------------------------- flow
 
+// A bad flag gives `opts.usageFailed`. The script never calls process.exit():
+// it sets process.exitCode and lets Node end, so a piped stdout is never cut.
 const { values: opts } = (() => {
   try {
     return parseArgs({
@@ -517,7 +520,7 @@ const { values: opts } = (() => {
   }
   catch (error) {
     log(`Error: ${error.message}\n\n${USAGE}`)
-    process.exit(2)
+    return { values: { usageFailed: true } }
   }
 })()
 
@@ -684,14 +687,22 @@ async function main() {
   deploy(state)
 }
 
-main().then(
-  () => process.exit(0),
-  (error) => {
-    if (error instanceof PublishError) {
-      log(`\nError: ${error.message}`)
-      process.exit(error.code)
-    }
-    log(`\nError: ${error?.stack ?? error}`)
-    process.exit(1)
-  },
-)
+if (opts.usageFailed) {
+  process.exitCode = 2
+}
+else {
+  main().then(
+    () => {
+      process.exitCode = 0
+    },
+    (error) => {
+      if (error instanceof PublishError) {
+        log(`\nError: ${error.message}`)
+        process.exitCode = error.code
+        return
+      }
+      log(`\nError: ${error?.stack ?? error}`)
+      process.exitCode = 1
+    },
+  )
+}
