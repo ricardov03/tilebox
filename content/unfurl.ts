@@ -765,13 +765,16 @@ async function saveImage(candidate: ImageCandidate, options: UnfurlOptions, dirs
   if (!kind || !['png', 'jpeg', 'webp', 'gif', 'avif'].includes(kind)) return undefined
   try {
     const { default: sharp } = await import('sharp')
-    const meta = await sharp(response.body).metadata()
+    // The same limits as the icons and the Pexels picture: a small file that decodes to a huge picture is refused.
+    const limits = { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' as const }
+    const meta = await sharp(response.body, limits).metadata()
     if (!meta.width || !meta.height || meta.width < MIN_IMAGE_PX || meta.height < MIN_IMAGE_PX) return undefined
-    const webp = await sharp(response.body)
+    const webp = await sharp(response.body, limits)
       .rotate()
       .resize({ width: MAX_IMAGE_WIDTH, withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer()
+    if (sniffImage(webp) !== 'webp') return undefined
     const name = hashName(response.body, 'webp')
     await writeOnce(dirs.thumbs, name, webp)
     return `/thumbs/${name}`
