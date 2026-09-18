@@ -202,7 +202,9 @@ test('edits email, email visibility and highlights, and saves them', async ({ pa
   // The live preview shows the highlights, the email link and the pinging dot.
   const preview = page.locator('li[data-profile]')
   await expect(preview.locator('ul[aria-label="Highlights"] > li')).toHaveText(['First highlight', 'Third input, second highlight'])
-  await expect(preview.locator('a[href="mailto:me@tilebox.test"]')).toBeVisible()
+  // WP17: the email line is a shield control. It shows the human form until a visitor moves.
+  await expect(preview.locator('[data-profile-email]')).toBeVisible()
+  await expect(preview.locator('[data-profile-email]')).toHaveAttribute('aria-label', /^Email /)
   await expect(preview.locator('[data-status-dot] .animate-ping')).toHaveCount(1)
 
   await save(page)
@@ -215,7 +217,14 @@ test('edits email, email visibility and highlights, and saves them', async ({ pa
 
   // The public page gets the new sanitized profile without a restart.
   await page.goto('/')
+  // WP17: the page ships a button with no address. One mouse move makes it a real mail link.
+  const emailLine = page.locator('[data-profile-email]')
+  await expect(emailLine).toBeVisible({ timeout: 15_000 })
+  await expect(emailLine).toHaveAttribute('data-protected-email', 'button')
+  expect(await page.content()).not.toContain('me@tilebox.test')
+  await page.mouse.move(30, 30)
   await expect(page.locator('a[href="mailto:me@tilebox.test"]')).toBeVisible({ timeout: 15_000 })
+  await expect(emailLine).toHaveText('me@tilebox.test')
   await expect(page.locator('ul[aria-label="Highlights"] > li')).toHaveCount(2)
 })
 
@@ -575,6 +584,7 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
   const envelope = await tileIcon(page, socialId)
 
   // A new link block. The URL alone decides the icon: no manual step.
+  await page.getByRole('button', { name: 'All blocks' }).click()
   await page.getByRole('button', { name: 'Add block' }).click()
   await page.getByRole('button', { name: 'Link', exact: true }).click()
   const linkId = (await page.locator('li[data-id]').last().getAttribute('data-id')) ?? ''
@@ -592,7 +602,7 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
   await expect(picker.getByPlaceholder('Search icons')).toHaveCount(1)
   // The name is still the accessible name of a result button, for screen readers.
   await picker.getByPlaceholder('Search icons').fill('line-md:home')
-  await expect(picker.getByRole('button', { name: 'line-md:home' })).toBeVisible({ timeout: 10_000 })
+  await expect(picker.getByRole('button', { name: 'line-md:home', exact: true })).toBeVisible({ timeout: 10_000 })
 
   // Another URL, another automatic icon, live.
   await url.fill('https://github.com/nuxt')
@@ -601,7 +611,7 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
 
   // "Back to auto" shows only with an own icon. It removes it, and the automatic one comes back.
   await expect(picker.getByRole('button', { name: 'Back to auto' })).toHaveCount(0)
-  await picker.getByRole('button', { name: 'line-md:home' }).click()
+  await picker.getByRole('button', { name: 'line-md:home', exact: true }).click()
   await expect(picker.locator('[data-icon-caption]')).toHaveText('Custom')
   await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Ahome')
   await picker.getByRole('button', { name: 'Back to auto' }).click()

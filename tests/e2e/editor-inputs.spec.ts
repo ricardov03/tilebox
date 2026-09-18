@@ -162,7 +162,8 @@ test('WP17: a cleared URL is no error: the block is "Incomplete", Save works, th
   expect('url' in savedLink(block.id)).toBe(false)
 
   // The public page of the dev server is made by the same sanitizer as the build: the tile is gone.
-  await expect.poll(async () => (await (await page.request.get('/')).text()).includes(block.title), { timeout: 20_000 }).toBe(false)
+  // The URL, not the title: a title may also be a word of the bio or the status line.
+  await expect.poll(async () => (await (await page.request.get('/')).text()).includes(block.url), { timeout: 20_000 }).toBe(false)
 
   // The list row carries the badge too. A URL again: complete again.
   await openEditor(page)
@@ -243,6 +244,15 @@ test('WP17: cleared title, bio, handle and email are saved as absent keys', asyn
   expect('email' in saved.profile).toBe(false)
   expect('title' in savedLink(block.id)).toBe(false)
   expect(savedLink(block.id).url).toBeTruthy()
+
+  // Put the title back, so the next test of this serial file still finds a complete link.
+  // The Blocks tab comes back with this block's form already open, so the field is there.
+  await page.getByRole('tab', { name: 'Blocks' }).click()
+  await expect(title).toBeVisible()
+  await title.fill(block.title)
+  await title.blur()
+  await page.keyboard.press('ControlOrMeta+s')
+  await expect.poll(() => savedLink(block.id).title, { timeout: 15_000 }).toBe(block.title)
 })
 
 test('WP17: an emptied name never blocks: Save works, the last name stays, a soft note says so', async ({ page }) => {
