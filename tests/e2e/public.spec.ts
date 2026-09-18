@@ -84,18 +84,31 @@ test.describe('dark OS, mode system', () => {
   })
 })
 
-test('never calls api.iconify.design', async ({ page }) => {
-  const iconify: string[] = []
+test('never requests another origin or an /api/ path', async ({ page, baseURL }) => {
+  const origin = new URL(baseURL!).host
+  const foreign: string[] = []
+  const api: string[] = []
   page.on('request', (request) => {
-    if (request.url().includes('api.iconify.design')) iconify.push(request.url())
+    const url = new URL(request.url())
+    if (url.host !== origin) foreign.push(request.url())
+    if (url.pathname.startsWith('/api/')) api.push(request.url())
   })
   await page.goto('/', { waitUntil: 'networkidle' })
   await page.locator(TOGGLE).click()
   await page.locator(TOGGLE).click()
   await page.waitForLoadState('networkidle')
-  expect(iconify).toEqual([])
+  // Icons and fonts are inline or local. api.iconify.design is one of the hosts this catches.
+  expect(foreign).toEqual([])
+  expect(api).toEqual([])
   // Icons are inline SVG in the prerendered HTML.
   await expect(page.locator('a[href*="github.com"] svg').first()).toBeVisible()
+})
+
+test('the editor and its API do not exist in the static output', async ({ request }) => {
+  for (const path of ['/edit', '/api/profile']) {
+    const response = await request.get(path)
+    expect(response.status(), path).toBe(404)
+  }
 })
 
 test('video tile loads its iframe only after the play button', async ({ page }) => {
