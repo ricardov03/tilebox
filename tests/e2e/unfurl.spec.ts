@@ -488,8 +488,13 @@ test.describe('fetching (local server, allowHosts)', () => {
     expect(await unfurl(url, timed)).toMatchObject({ cached: true })
     expect(hits.get('/etag')).toBe(2)
 
-    await unfurl(url, { ...timed, force: true })
+    // C3: Refresh (`force`) is a full read. No `If-None-Match`, no `If-Modified-Since`: a 304 would keep the old data.
+    seenHeaders.clear()
+    const forced = await unfurl(url, { ...timed, force: true })
     expect(hits.get('/etag')).toBe(3)
+    expect(seenHeaders.get('/etag')?.['if-none-match']).toBeUndefined()
+    expect(seenHeaders.get('/etag')?.['if-modified-since']).toBeUndefined()
+    expect(forced).toMatchObject({ ok: true, cached: false, title: 'Etag page' })
   })
 })
 

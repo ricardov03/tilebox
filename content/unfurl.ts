@@ -932,7 +932,8 @@ async function run(input: string, caller: UnfurlOptions): Promise<UnfurlResult> 
         maxBytes: MAX_HTML_BYTES,
         overflow: 'cut',
         stopAtHeadEnd: true,
-        ...(entry && usable ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
+        // Refresh (`force`) asks for the whole page: with `If-None-Match` a 304 would keep the old data.
+        ...(entry && usable && !options.force ? { etag: entry.etag, lastModified: entry.lastModified } : {}),
       }, options)
       if (response.status === 304 && entry) {
         const data: UnfurlData = { ...entry.data, fetchedAt }
