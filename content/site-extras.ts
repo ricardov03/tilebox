@@ -15,7 +15,7 @@
  *
  * Paths come from `ROOT` in ./resolve.ts, never from this file's location.
  */
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { renderSVG } from 'uqr'
 import { COLOR_PRESETS } from '../app/utils/presets'
@@ -102,16 +102,23 @@ export async function buildSiteExtras(options: BuildSiteExtrasOptions): Promise<
   const siteUrl = resolveSiteUrl(options.envSiteUrl, profile.site)
   let qrUrl = ''
   if (siteUrl && isSiteUrl(siteUrl)) {
+    // Draw, write a scratch file, rename: a draw that throws (a URL with more data than a code can hold) or
+    // a write that fails never leaves a half-written `qr.svg`.
+    const scratch = `${qrFile}.${process.pid}.tmp`
     try {
       const colors = COLOR_PRESETS[profile.profile.theme.colors].light
       qrUrl = `${siteUrl}/`
-      await writeFile(qrFile, `${qrSvg(qrUrl, colors)}\n`, 'utf8')
+      await writeFile(scratch, `${qrSvg(qrUrl, colors)}\n`, 'utf8')
+      await rename(scratch, qrFile)
       files.push(SITE_EXTRA_FILES.qrCode)
       messages.push(`site: QR code written for ${qrUrl}`)
     }
     catch (error) {
       qrUrl = ''
-      await rm(qrFile, { force: true }).catch(() => undefined)
+      await rm(scratch, { force: true }).catch(() => undefined)
+      // A save or a build: the old code is for another URL now, so it goes. A DRAFT never removes the file of
+      // the saved profile (docs/invariants.md 8), the same rule as the no-URL branch below.
+      if (!options.draft) await rm(qrFile, { force: true }).catch(() => undefined)
       messages.push(`site: QR code not written (${reasonOf(error)})`)
     }
   }

@@ -5,7 +5,7 @@
  * 2. The built page (`dist/`, run `npm run generate` first): the end-date script,
  *    the share button, the contact tile, no foreign request.
  */
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -446,6 +446,31 @@ test('a DRAFT never removes the contact card or the QR code of the saved profile
     // The same profile SAVED (or built) removes them.
     await buildSiteExtras({ profile: draft, outDir: dir })
     expect(existsSync(join(dir, 'contact.vcf'))).toBe(false)
+    expect(existsSync(join(dir, 'qr.svg'))).toBe(false)
+  }
+  finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a DRAFT whose QR code cannot be drawn keeps the QR code of the saved profile; a save removes it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tilebox-draft-qr-fail-'))
+  try {
+    const blocks: Parameters<typeof profileOf>[0] = [{ id: 'q', type: 'qr', size: '1x1' }]
+    await buildSiteExtras({ profile: profileOf(blocks, { site: { url: 'https://ada.example' } }), outDir: dir })
+    const code = readFileSync(join(dir, 'qr.svg'), 'utf8')
+
+    // A valid https URL that holds more data than a QR code can carry: the draw throws ("Data too long").
+    const tooLong = profileOf(blocks, { site: { url: `https://ada.example/${'a'.repeat(3000)}` } })
+    const result = await buildSiteExtras({ profile: tooLong, outDir: dir, draft: true })
+    expect(result.qrUrl).toBe('')
+    expect(result.messages.join('\n')).toContain('QR code not written')
+    // The file on disk is the one of the SAVED profile, byte for byte. No half-written file, no scratch file.
+    expect(readFileSync(join(dir, 'qr.svg'), 'utf8')).toBe(code)
+    expect(readdirSync(dir)).toEqual(['qr.svg'])
+
+    // The same profile saved (or built): the old code would now point at the wrong URL, so it goes.
+    await buildSiteExtras({ profile: tooLong, outDir: dir })
     expect(existsSync(join(dir, 'qr.svg'))).toBe(false)
   }
   finally {
