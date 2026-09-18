@@ -1509,3 +1509,124 @@ $ bash scripts/review/grok-review.sh --help     -> prints the usage (options, ex
 - The case "the conclude call fails too" did not happen in a real run. Only the fake covers it.
 - Resuming a session that the watchdog KILLED (run b2) was not tried. `--conclude` on a session that ended at the turn cap works (run b).
 - The Grok CLI reads `~/.grok` of the user. CI runs the suite with the fake binary only; no real review runs in CI.
+
+
+## WP14 review round
+
+Branch `wp/14-reviewed` (from `origin/wp/13-integration`, plus the merge of `origin/chore/grok-review-pipeline`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged into `main`, no tag. Goal: review the new code of WP11 second wave, WP12 Pexels and the WP13 integration with the pipeline, block by block (the author was not Grok), and fix what is real.
+
+### The merge
+Conflicts: `NOTES.md` (both sections kept whole, "WP13 integration" then "Review pipeline") and `README.md` > "More docs" (the union; `docs/security.md` keeps the Pexels words). `package.json`, `CLAUDE.md`, `PLAN.md` and `.github/workflows/ci.yml` merged by git: one Scripts table, each script once; `ci.yml` has the `npm run test:review` step AND the Pexels canary env on the generate step.
+
+### Blocks (range `origin/main..HEAD`, `--scope block --ledger --branch wp/13-integration`)
+| Block | Files of the block | files | diff_chars | turns | elapsed_s | tokens in / out | Verdict | Cost |
+|---|---|---|---|---|---|---|---|---|
+| B1 network core | `content/unfurl.ts content/link-check.ts content/pexels.ts` | 3 | 27,907 | 9 | 353 | 687,768 / 17,172 | PASS, 0 findings. Verdict forced at the turn cap (8) by the automatic conclude call | $0.20 |
+| B3 public data | `types/profile.ts types/site.ts modules/public-profile.ts content/site-extras.ts content/site-files.ts app/utils/{vcard,site-head,schedule,utm,networks}.ts scripts/validate-profile.ts` | 11 | 39,327 | 2 | 150 | 83,814 / 7,782 | FAIL, 1 warning. **Diff-only verdict**: the run ended on a 1-turn stub, `--conclude` wrote the verdict from the pasted diff and the impact map, no file was read (the summary says so) | $0.05 |
+| B2 + B6 dev routes and scripts | `server/api/images/pexels server/api/links server/api/site server/api/save.post.ts server/utils/pexels.ts server/utils/editor.ts scripts/{check-links.ts,publish.mjs,fetch-links.ts,build-site-assets.ts}` | 11 | 20,177 | 14 | 400 | 2,088,169 / 19,187 | FAIL, 2 warnings. A full run | $0.49 |
+| B4 public UI | `app/components/{BentoGrid,ProfileHeader,ShareButton}.vue app/components/blocks app/pages/index.vue` | 11 | 19,422 | 8 | 537 | 699,970 / 28,372 | PASS, 0 findings. A full run | $0.31 |
+| B5a editor UI, Pexels | `app/components/editor/{PexelsPicker,ImagePicker,TextField,BlockForm,PreviewTile}.vue` | 5 | no trailer | 1 | - | - | **NOT REVIEWED.** Blind (1-turn stub), then the conclude call was killed by its 3 minute watchdog | $0.03 + the killed call |
+| B5b editor UI, WP11 panels | the rest of `app/components/editor/` + `app/composables/` | - | - | - | - | - | **NOT REVIEWED.** The budget of 9 calls was spent | - |
+
+Trailer lines, as printed:
+```
+grok-review: scope=block files=3 diff_chars=27907 cached=0 turns=9 elapsed_s=353 tokens_in=687768 tokens_out=17172 critical=0 warning=0 suggestion=0 verdict=PASS
+grok-review: scope=block files=11 diff_chars=39327 cached=0 turns=2 elapsed_s=150 tokens_in=83814 tokens_out=7782 critical=0 warning=1 suggestion=0 verdict=FAIL
+grok-review: scope=block files=11 diff_chars=20177 cached=0 turns=14 elapsed_s=400 tokens_in=2088169 tokens_out=19187 critical=0 warning=2 suggestion=0 verdict=FAIL
+grok-review: scope=block files=11 diff_chars=19422 cached=0 turns=8 elapsed_s=537 tokens_in=699970 tokens_out=28372 critical=0 warning=0 suggestion=0 verdict=PASS
+```
+
+B2 and B6 ran as one block (20,177 characters: the link check route and `check-links.ts` share one engine) to save a call. B5 (67,299 characters) was split before the first try. From B3 on the runs used `--max-turns 14 --timeout 12`: with 8 turns B1 hit the cap and paid for a conclude call; with 14 no run hit the cap. B3 was reviewed at the merge commit; B2, B4 and B5a at later heads that already held the first fixes (the range is `origin/main..HEAD`).
+
+### Blind runs
+| Run | What happened | What was done |
+|---|---|---|
+| B1, try 1 | exit 3. Grok ended after ONE turn with the progress stub (`"passed": false`, "Starting independent review...", no finding) and no tool call (`stopReason: end_turn`, 41k tokens in, $0.03) | Started again: a conclude on a session that read nothing is a diff-only verdict. Try 2 gave the verdict. This is a deviation from "conclude first" |
+| B3, try 1 | the same stub after one turn | `--conclude 8af7e8e6-fa21-4e6f-80e3-eb441b48172a`: a schema-valid verdict with 1 real warning, but from the diff only |
+| B5a, try 1 | the same stub after one turn | `--conclude 3b4cfd26-cb8b-4055-b847-00af90937609`: killed by the 3 minute watchdog of the conclude step, exit 3. First real case of "the conclude call fails too". Given up: the budget was spent |
+
+Pipeline finding (ledger `review-run-ends-on-first-progress-stub`, OPEN): 3 of 6 fresh calls ended on a 1-turn stub. The guard catches it (exit 3, never green). But it prints no session id for this case (it is in `<hash>.raw.json` > `sessionId`), and the conclude prompt forbids tools, so the verdict that follows read nothing. Next step for the pipeline: resume a 1-turn stub once WITH tools ("continue the review") before the no-tools conclude.
+
+Grok calls: 9 of 9 (3 stubs, 4 review runs, 2 conclude calls by hand; the automatic conclude of B1 is inside its run and its cost). Cost: about $1.15 ($0.20 + $0.05 + $0.49 + $0.31 + 3 stubs at $0.03 + the killed conclude).
+
+### Findings and triage
+| Finding | Source | Triage | Fix |
+|---|---|---|---|
+| `utm-panel-ignores-env-site-url` (warning, second-code-path, `UtmPanel.vue:56`) | Grok B3 | REAL. `resolveSiteUrl('', site)` in the panel. And `toPublicProfile` used `build.envSiteUrl or site.url`, a second definition: an env value that is not a URL (`ada.example`) switched the "same site, no tags" rule off | `d7fc86f`: both use `resolveSiteUrl(env, site)`. Test in `second-wave.spec.ts` (fails before) |
+| `draft-assets-deletes-saved-contact-and-qr` (warning, editor-state, `server/api/site/assets.post.ts:29`) | Grok B2 | REAL. `buildSiteExtras()` removes `contact.vcf` and `qr.svg` when the profile does not want them, and the route passes the DRAFT (invariant 8) | `2b33a7e`: option `draft: true`, a draft writes and never removes. Test (fails before) |
+| `publish-skipped-link-check-reported-clean` (warning, other, `scripts/publish.mjs:698`) | Grok B2 | REAL. Checked by hand: an invalid `content/profile.json` gives `links: check skipped`, exit 0, and publish printed "No broken link found." | `e2b9469`: `--broken-only` ends with `links checked: N` (`brokenOnlyReport()`), publish asks for that line. A test compares the two copies of the text |
+| F1 `blur-skips-stored-form` + `stored-form-test-misses-debounce-blur` (`app/utils/field-draft.ts`) | Grok, earlier run | REAL | `bfcec78`: a passed check without the focus shows the stored form. 2 tests ("debounced commit, then blur" fails before) |
+| F2 `save-image-no-pixel-limit` (`content/unfurl.ts`, `saveImage`) | Grok, earlier run | REAL | `9d12326`: `limitInputPixels` 4096x4096 + `failOn: 'error'`, and the output is sniffed. Test with a 5000x5000 PNG of a few KB (fails before: the thumb was written) |
+| F3 `save-image-hashes-remote-bytes` | Grok, earlier run | REAL | `5d3a8b6`: the name is the hash of the stored WebP. Test (fails before) |
+| F4 `force-still-honors-304` | Grok, earlier run | REAL | `8743b44`: a 304 counts only when OUR condition was sent. Else `http 304`, the old entry stays, the editor gets `ok: false`. Test with a server that always answers 304 (fails before) |
+| F5 `pexels-pick-keeps-refused-alt` (`ImagePicker.vue`) | integration report | REAL | `22a00ad`: the text in the FIELD decides (`EditorTextField` exposes `text()` and `sync()`). Dev test, also "the same photo again" (fails before) |
+| F6 `site-assets-decodes-without-pixel-limit` | agent | REAL, small. `avatarArt`, `avatarDataUri` and the og image upload decoded files with no limit; `uploadArt` and `site-upload.ts` had 8192x8192 | `68f3d19`. No test: it needs an 81 megapixel file |
+| F6 `gravatar-stores-remote-bytes` (`content/gravatar.ts:103`) | agent | REAL, **OPEN**. The Gravatar body is stored as it came (Content-Type only, raw `fetch`, no magic bytes, no re-encode): invariants 10 and 12. Not in the diff of this branch. The fix (through `fetchPicture()`) changes what Nitro bundles for a route with a static import, and needs a live check | not fixed |
+
+F6, what was checked. `content/pexels.ts`: pixel limit (8192x8192, documented), `failOn: 'error'`, magic bytes before the decode and on the output, temp file + rename; the name is `pexels-<id>.webp` from the validated number id, never from remote data. No drift. `content/site-upload.ts`: limits on every decode, the format is checked against the extension, random name; a raster upload of the owner is stored as it came by design (not remote bytes). `content/site-assets.ts`: fixed above.
+
+Grok findings of this round: 3, all real, 0 false positives, no critical.
+
+### Ledger report
+```
+# Findings ledger: 99 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 25
+- untrusted-input: 21
+- second-code-path: 12
+- editor-state: 11
+- test-green-wrong-reason: 8
+- a11y: 7
+- schema-drift: 6
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- ocr: 35
+- grok: 33
+- agent: 23
+- human: 8
+
+## By severity
+- warning: 75
+- suggestion: 13
+- critical: 11
+
+## By area
+- app/components: 16
+- server/api: 9
+- content/unfurl.ts: 9
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- scripts/publish.mjs: 6
+- .github/workflows: 5
+- app/pages: 5
+
+findings-ledger: rows=99 top_category=untrusted-input top_count=21 grok=33 ocr=35 agent=23 human=8
+```
+
+### Verification
+```
+$ npm ci                                   -> ok
+$ npm run lint                             -> ok
+$ npm run typecheck                        -> ok
+$ npm run test:review                      -> passed=94 failed=0 total=94 expected=94
+$ PEXELS_API_KEY=<canary> npm run generate -> ok; dist/_headers, dist/site/contact.vcf; no dist/edit; 0 svg under dist/icons
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ E2E_STATIC_PORT=4441 E2E_DEV_PORT=3441 npx playwright test   (ONE run, both projects)
+    static: 229 passed, 2 skipped   dev: 77 passed   total: 306 passed, 2 skipped
+$ npm run check:icons                      -> exit 0
+$ npm run check:links                      -> exit 0 (6 ok, 4 broken: links of the sample profile)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the two "example only" tests (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start. New tests: static +7 (field-draft 2, unfurl 2, second-wave 3; 1 unfurl test extended), dev +1.
+
+### Open
+- B5 (the editor UI of WP11 and WP12, 67,299 diff characters) has NO Grok verdict. Run it again in two halves with `--max-turns 14 --timeout 12`.
+- B3 has a diff-only verdict. The reviewer did not read `modules/public-profile.ts` and `app/utils/schedule.ts`. The privacy tests (`privacy.spec.ts`, `second-wave.spec.ts`) are green.
+- `content/gravatar.ts` (above).
+- The pipeline: resume a 1-turn stub with tools; print the session id for every blind run.
