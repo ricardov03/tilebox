@@ -495,7 +495,8 @@ test('Hide dims the block, the save keeps it in the file and drops it from the p
   await save(page)
   expect(readProfile().blocks.find(b => b.id === block.id)).toMatchObject({ hidden: true, label: block.label })
   // The dev server rewrites the sanitized profile a moment after the save.
-  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).not.toContain(block.label)
+  // The URL, not the label: the sample's `site.location` (WP10b, public JSON-LD) is the same city as the map label.
+  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).not.toContain(block.url)
 
   // Back, this time with the control on the tile (next to Delete).
   await openEditor(page)
@@ -505,7 +506,7 @@ test('Hide dims the block, the save keeps it in the file and drops it from the p
   await save(page)
   const shown = readProfile().blocks.find(b => b.id === block.id)
   expect(shown && 'hidden' in shown).toBe(false)
-  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).toContain(block.label)
+  await expect.poll(async () => (await page.request.get('/')).text(), { timeout: 15_000 }).toContain(block.url)
 })
 
 test('Duplicate puts a selected copy right after the original in both layouts', async ({ page }) => {
