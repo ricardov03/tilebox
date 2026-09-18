@@ -25,6 +25,8 @@ export const GRAVATAR_FILE = resolve(ROOT, 'public/avatar.gravatar.jpg')
 const TIMEOUT_MS = 5000
 const MAX_BYTES = 2 * 1024 * 1024
 const SIZE_PX = 256
+/** Raster pictures only. An SVG can carry script, and the page serves this file from its own origin. */
+const RASTER_TYPE = /^image\/(jpeg|png|webp)(;|$)/i
 
 export type GravatarStatus = 'saved' | 'none' | 'offline'
 
@@ -89,7 +91,8 @@ export interface FetchGravatarOptions {
  * Downloads the Gravatar of `email`. Never throws.
  * - 200 + image + at most 2 MB: writes the file (tmp file, then rename). `saved`.
  * - 404: this email has no Gravatar. `none`. A stale file is removed only with `allowDelete`.
- * - anything else (network error, timeout, 5xx, odd body): the old file stays. `offline`.
+ * - anything else (network error, timeout, 5xx, a type that is not JPEG, PNG or WebP,
+ *   odd body): no usable picture, the old file stays. `offline`.
  */
 export async function fetchGravatar(email: string, options: FetchGravatarOptions): Promise<GravatarResult> {
   try {
@@ -99,7 +102,7 @@ export async function fetchGravatar(email: string, options: FetchGravatarOptions
       return { status: 'none', message: 'avatar: no gravatar for this email' }
     }
     const type = response.headers.get('content-type') ?? ''
-    if (!response.ok || !type.startsWith('image/')) return OFFLINE
+    if (!response.ok || !RASTER_TYPE.test(type.trim())) return OFFLINE
     if (Number(response.headers.get('content-length') ?? 0) > MAX_BYTES) return OFFLINE
     const body = Buffer.from(await response.arrayBuffer())
     if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return OFFLINE
