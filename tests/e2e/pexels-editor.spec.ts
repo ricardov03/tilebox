@@ -342,6 +342,38 @@ test('keyboard only: Enter searches, arrow keys move in the grid, Enter picks', 
   await expect(page.locator('[data-pexels]')).toContainText(`Saved as ${PICKED_SRC}`)
 })
 
+test('a pick that still runs when the owner goes back to "Upload" reaches the block, and the results stay', async ({ page }) => {
+  const id = imageBlockId()
+  const SLOW_SRC = '/blocks/pexels-111111.webp'
+  await mockPexels(page)
+  // The real pick downloads and re-encodes the photo: it takes a moment. Registered last = it wins over the mock above.
+  await page.route('**/api/images/pexels/pick', async (route) => {
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    await route.fulfill({ json: { ...pickAnswer(111111), src: SLOW_SRC } })
+  })
+  await openImageForm(page)
+  await openPexelsTab(page)
+  await page.getByLabel('Search Pexels').fill('desk')
+  await page.getByLabel('Search Pexels').press('Enter')
+  const buttons = page.locator('button[data-pexels-photo]')
+  await expect(buttons).toHaveCount(3)
+
+  await page.locator('button[data-photo-id="111111"]').click()
+  await expect(page.locator('[data-pexels]')).toContainText('Saving the photo on this machine')
+  await page.getByRole('tab', { name: 'Upload' }).click()
+  await expect(page.locator('[data-pexels]')).toBeHidden()
+
+  // The file is on disk by now. The block must get it, although the tab is not shown.
+  // (No file of that name exists in this test, so the tile shows no picture: the path field and the credit are the proof.)
+  await expect(page.locator('form input[id$="-src"]')).toHaveValue(SLOW_SRC, { timeout: 10_000 })
+  await expect(page.locator(`li[data-id="${id}"] [data-photo-credit]`)).toHaveText('Photo by Ada Example on Pexels')
+
+  // Back on the tab: the search and its results are still there, with the note about the saved file.
+  await page.getByRole('tab', { name: 'Pexels' }).click()
+  await expect(buttons).toHaveCount(3)
+  await expect(page.locator('[data-pexels]')).toContainText(`Saved as ${SLOW_SRC}`)
+})
+
 test('rate limit, wrong key, empty result and offline each say what to do', async ({ page }) => {
   let mode: 'rate' | 'key' | 'empty' | 'down' = 'rate'
   await mockPexels(page, {
