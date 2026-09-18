@@ -13,7 +13,7 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { rm, writeFile } from 'node:fs/promises'
+import { rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { ROOT } from './resolve'
 
@@ -58,6 +58,23 @@ export function gravatarPathIfPresent(): string | undefined {
 
 const OFFLINE: GravatarResult = { status: 'offline', message: 'avatar: offline, kept the old file' }
 
+/**
+ * Writes `${file}.tmp`, then renames it over `file`. A crash or a full disk
+ * never leaves a half picture at `file`. The tmp file is removed on failure.
+ * `public/avatar.gravatar.jpg.tmp` is not tracked either (rule `public/avatar.*`).
+ */
+async function writeAtomic(file: string, body: Buffer): Promise<void> {
+  const tmp = `${file}.tmp`
+  try {
+    await writeFile(tmp, body)
+    await rename(tmp, file)
+  }
+  catch (error) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw error
+  }
+}
+
 export interface FetchGravatarOptions {
   /**
    * May a 404 remove the file on disk? True only when `email` is the SAVED
@@ -70,7 +87,7 @@ export interface FetchGravatarOptions {
 
 /**
  * Downloads the Gravatar of `email`. Never throws.
- * - 200 + image + at most 2 MB: writes the file. `saved`.
+ * - 200 + image + at most 2 MB: writes the file (tmp file, then rename). `saved`.
  * - 404: this email has no Gravatar. `none`. A stale file is removed only with `allowDelete`.
  * - anything else (network error, timeout, 5xx, odd body): the old file stays. `offline`.
  */
@@ -86,7 +103,7 @@ export async function fetchGravatar(email: string, options: FetchGravatarOptions
     if (Number(response.headers.get('content-length') ?? 0) > MAX_BYTES) return OFFLINE
     const body = Buffer.from(await response.arrayBuffer())
     if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return OFFLINE
-    await writeFile(GRAVATAR_FILE, body)
+    await writeAtomic(GRAVATAR_FILE, body)
     return { status: 'saved', message: 'avatar: gravatar saved' }
   }
   catch {
