@@ -12,6 +12,7 @@ dist
 playwright-report
 test-results
 content/profile.json.e2e-backup
+content/profile.json.e2e-site-backup
 .wrangler/
 
 # Personal data. Never committed. See content/README.md

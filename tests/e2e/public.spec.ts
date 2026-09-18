@@ -2,6 +2,7 @@
  * Public page, prerendered `dist/`. Server: scripts/serve-dist.mjs.
  */
 import { expect, test } from '@playwright/test'
+import { siteTitle } from '../../app/utils/site-head'
 import { columnsOf, profileIsPersonal, readProfile, THEME_KEY, tileLefts } from './helpers'
 
 const profile = readProfile()
@@ -13,7 +14,8 @@ test('has one h1 with the profile name', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('h1')).toHaveCount(1)
   await expect(page.locator('h1')).toHaveText(profile.profile.name)
-  await expect(page).toHaveTitle(profile.profile.name)
+  // WP10b: the title is `site.title`, else the name plus the handle.
+  await expect(page).toHaveTitle(siteTitle(profile.profile, profile.site))
 })
 
 test('highlights render as a list under the bio', async ({ page }) => {
