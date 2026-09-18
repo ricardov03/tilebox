@@ -1,5 +1,6 @@
 <!--
   Social tile. Brand icon from the NETWORKS map. The whole tile is the link.
+  No aria-label: the visible text (network name + handle) is the accessible name.
 -->
 <script setup lang="ts">
 import type { SocialBlock } from '~~/types/profile'
@@ -12,10 +13,7 @@ const network = computed(() => NETWORKS[props.block.network])
 </script>
 
 <template>
-  <Tile
-    :href="block.url"
-    :aria-label="`${network.label} profile`"
-  >
+  <Tile :href="block.url">
     <Icon
       :name="network.icon"
       class="size-9 md:size-11"

@@ -4,9 +4,14 @@
 -->
 <script setup lang="ts">
 import type { ImageBlock } from '~~/types/profile'
+import { isHttpUrl } from './media'
 import Tile from './Tile.vue'
 
-const props = defineProps<{ block: ImageBlock }>()
+const props = withDefaults(defineProps<{
+  block: ImageBlock
+  /** True for a tile near the top of the page: eager load with high fetch priority (LCP). */
+  priority?: boolean
+}>(), { priority: false })
 
 /** Hide a broken image so the `bg-photo` placeholder shows instead. */
 const failed = ref(false)
@@ -18,9 +23,12 @@ onMounted(() => {
   if (el && el.complete && el.naturalWidth === 0) failed.value = true
 })
 
+/** Author credit. The link renders only for an http(s) author URL. */
 const credit = computed(() => {
   const source = props.block.source
-  return source?.author ? { author: source.author, url: source.authorUrl } : null
+  if (!source?.author) return null
+  const url = source.authorUrl && isHttpUrl(source.authorUrl) ? source.authorUrl : null
+  return { author: source.author, url }
 })
 </script>
 
@@ -38,7 +46,8 @@ const credit = computed(() => {
       ref="img"
       :src="block.src"
       :alt="block.alt"
-      loading="lazy"
+      :loading="priority ? 'eager' : 'lazy'"
+      :fetchpriority="priority ? 'high' : undefined"
       decoding="async"
       class="absolute inset-0 size-full object-cover"
       @error="failed = true"
@@ -60,7 +69,7 @@ const credit = computed(() => {
           v-if="credit.url"
           :href="credit.url"
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
           class="underline underline-offset-2"
         >{{ credit.author }}</a>
         <template v-else>{{ credit.author }}</template>

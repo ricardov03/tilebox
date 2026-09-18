@@ -17,20 +17,51 @@ const emit = defineEmits<{
 }>()
 
 const menuOpen = ref(false)
+const menuRoot = useTemplateRef<HTMLElement>('menuRoot')
+const menuButton = useTemplateRef<HTMLButtonElement>('menuButton')
 
 function add(type: BlockType) {
   emit('add', type)
   menuOpen.value = false
 }
+
+/** Escape closes the menu and returns focus to its button. */
+function onMenuKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !menuOpen.value) return
+  event.preventDefault()
+  menuOpen.value = false
+  menuButton.value?.focus()
+}
+
+/** A click outside the button and the menu closes it. */
+function onDocumentClick(event: MouseEvent) {
+  if (!menuOpen.value) return
+  const target = event.target
+  if (target instanceof Node && menuRoot.value?.contains(target)) return
+  menuOpen.value = false
+}
+
+onMounted(() => document.addEventListener('click', onDocumentClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
+
+const rowClass = `flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 text-left ${FOCUS_RING}`
+const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30 ${FOCUS_RING}`
 </script>
 
 <template>
   <div class="flex flex-col gap-3">
-    <div class="relative">
+    <div
+      ref="menuRoot"
+      class="relative"
+      @keydown="onMenuKeydown"
+    >
       <button
+        ref="menuButton"
         type="button"
         :aria-expanded="menuOpen"
+        aria-haspopup="true"
         aria-controls="add-block-menu"
+        :class="FOCUS_RING"
         class="flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-accent px-4 text-sm font-medium text-accent-ink hover:opacity-90"
         @click="menuOpen = !menuOpen"
       >
@@ -45,6 +76,7 @@ function add(type: BlockType) {
           v-for="type in BLOCK_TYPES"
           :key="type"
           type="button"
+          :class="FOCUS_RING"
           class="min-h-11 rounded-xl border border-line bg-tile px-3 text-left text-sm font-medium text-ink hover:border-accent"
           @click="add(type)"
         >
@@ -72,8 +104,7 @@ function add(type: BlockType) {
         <button
           type="button"
           :aria-pressed="block.id === selectedId"
-          :class="block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground'"
-          class="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 text-left"
+          :class="[rowClass, block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground']"
           @click="emit('select', block.id)"
         >
           <span class="w-14 shrink-0 font-mono text-xs text-muted">{{ block.type }}</span>
@@ -84,7 +115,7 @@ function add(type: BlockType) {
           type="button"
           :disabled="index === 0"
           :aria-label="`Move ${blockSummary(block)} up`"
-          class="size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30"
+          :class="arrowClass"
           @click="emit('move', block.id, -1)"
         >
           <span aria-hidden="true">↑</span>
@@ -93,7 +124,7 @@ function add(type: BlockType) {
           type="button"
           :disabled="index === blocks.length - 1"
           :aria-label="`Move ${blockSummary(block)} down`"
-          class="size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30"
+          :class="arrowClass"
           @click="emit('move', block.id, 1)"
         >
           <span aria-hidden="true">↓</span>

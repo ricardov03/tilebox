@@ -1,5 +1,6 @@
 <!--
-  Theme tab. Three color preset cards, three font preset cards, mode switch.
+  Theme tab. Three color preset cards, three font preset cards, mode switch
+  (the only place the mode is set; the Profile tab has no copy of it).
   Swatch colors come from COLOR_PRESETS (data, not hard-coded hex).
   Font labels render in the preset's display family when the browser has
   it; otherwise they fall back to the system stack.
@@ -51,7 +52,7 @@ function setMode(mode: Theme['mode']) {
           :key="id"
           type="button"
           :aria-pressed="model.colors === id"
-          :class="model.colors === id ? 'border-accent' : 'border-line hover:border-accent'"
+          :class="[FOCUS_RING, model.colors === id ? 'border-accent' : 'border-line hover:border-accent']"
           class="flex min-h-11 items-center gap-3 rounded-2xl border bg-ground p-2 text-left"
           @click="setColors(id)"
         >
@@ -82,7 +83,7 @@ function setMode(mode: Theme['mode']) {
           :key="id"
           type="button"
           :aria-pressed="model.fonts === id"
-          :class="model.fonts === id ? 'border-accent' : 'border-line hover:border-accent'"
+          :class="[FOCUS_RING, model.fonts === id ? 'border-accent' : 'border-line hover:border-accent']"
           class="flex min-h-11 items-center gap-3 rounded-2xl border bg-ground p-3 text-left"
           @click="setFonts(id)"
         >
@@ -106,7 +107,7 @@ function setMode(mode: Theme['mode']) {
         Mode
       </legend>
       <div
-        role="group"
+        role="radiogroup"
         aria-label="Color mode"
         class="inline-flex self-start rounded-full border border-line bg-ground p-1"
       >
@@ -114,8 +115,9 @@ function setMode(mode: Theme['mode']) {
           v-for="mode in modes"
           :key="mode.value"
           type="button"
-          :aria-pressed="model.mode === mode.value"
-          :class="model.mode === mode.value ? 'bg-accent text-accent-ink' : 'text-muted hover:text-ink'"
+          role="radio"
+          :aria-checked="model.mode === mode.value"
+          :class="[FOCUS_RING, model.mode === mode.value ? 'bg-accent text-accent-ink' : 'text-muted hover:text-ink']"
           class="min-h-11 rounded-full px-4 text-sm font-medium"
           @click="setMode(mode.value)"
         >

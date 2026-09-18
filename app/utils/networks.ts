@@ -58,4 +58,10 @@ export const UI_ICONS = {
   map: 'line-md:map-marker',
   play: 'line-md:play',
   home: 'line-md:home',
+  /** Editor: the Edit control on a preview tile. */
+  edit: 'line-md:edit',
+  /** ThemeToggle: system, light, dark. */
+  themeSystem: 'line-md:monitor',
+  themeLight: 'line-md:sunny',
+  themeDark: 'line-md:moon',
 } as const

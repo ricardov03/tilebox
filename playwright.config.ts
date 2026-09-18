@@ -1,0 +1,64 @@
+/**
+ * Two projects:
+ * - `static`: the prerendered site in `dist/` (run `npm run generate` first),
+ *   served by scripts/serve-dist.mjs on :4173. Runs in CI.
+ * - `dev`: the editor on `nuxt dev` at :3111. Writes content/profile.json and
+ *   public/blocks/, so it runs locally only.
+ * Only the servers of the selected projects start.
+ */
+import { defineConfig, devices } from '@playwright/test'
+
+const STATIC_URL = 'http://localhost:4173'
+const DEV_URL = 'http://localhost:3111'
+
+/** Project names passed as `--project=x` or `--project x`. Empty = all. */
+const selected = process.argv.flatMap((arg, i, all) => {
+  if (arg === '--project') return [all[i + 1] ?? '']
+  if (arg.startsWith('--project=')) return [arg.slice('--project='.length)]
+  return []
+})
+const wants = (name: string) => selected.length === 0 || selected.includes(name)
+
+export default defineConfig({
+  testDir: 'tests/e2e',
+  fullyParallel: false,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 1 : 0,
+  workers: 1,
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  use: {
+    ...devices['Desktop Chrome'],
+    trace: 'retain-on-failure',
+  },
+  projects: [
+    {
+      name: 'static',
+      testMatch: ['public.spec.ts', 'a11y.spec.ts'],
+      use: { baseURL: STATIC_URL },
+    },
+    {
+      name: 'dev',
+      testMatch: ['editor.spec.ts'],
+      timeout: 90_000,
+      use: { baseURL: DEV_URL },
+    },
+  ],
+  webServer: [
+    ...(wants('static')
+      ? [{
+          command: 'node scripts/serve-dist.mjs 4173',
+          url: STATIC_URL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 30_000,
+        }]
+      : []),
+    ...(wants('dev')
+      ? [{
+          command: 'npm run dev -- --port 3111',
+          url: DEV_URL,
+          reuseExistingServer: false,
+          timeout: 120_000,
+        }]
+      : []),
+  ],
+})

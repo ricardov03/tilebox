@@ -10,6 +10,28 @@ export type EditorTab = 'profile' | 'blocks' | 'theme'
 
 export const BLOCK_TYPES: readonly BlockType[] = ['link', 'social', 'image', 'text', 'section', 'map', 'video'] as const
 
+/**
+ * Grid columns, row height and gap for the preview. Same shape as BentoGrid
+ * (`--row`, `--gap`, `auto-rows-auto`, tiles carry their height). The desktop
+ * row shrinks with the pane so 4 columns fit next to the panel.
+ */
+export const PREVIEW_GRID_CLASSES: Record<2 | 4, string> = {
+  4: 'grid-cols-4 [--gap:16px] [--row:clamp(120px,13vw,240px)] xl:[--gap:20px]',
+  2: 'grid-cols-2 [--gap:12px] [--row:173px]',
+}
+
+/** Token focus ring for editor controls (same as the public page). */
+export const FOCUS_RING = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+export const INPUT_CLASS = `min-h-11 rounded-xl border border-line bg-ground px-3 text-sm text-ink ${FOCUS_RING}`
+export const LABEL_CLASS = 'text-sm font-medium text-ink'
+
+/** Narrow an event target to a form control. `null` for anything else. */
+export function formControl(event: Event): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null {
+  const target = event.target
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target
+  return null
+}
+
 export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
   link: 'Link',
   social: 'Social',
@@ -29,7 +51,7 @@ export function newBlock(type: BlockType): Block {
     case 'social':
       return { id, type, size: '1x1', network: 'github', url: 'https://github.com/' }
     case 'image':
-      return { id, type, size: '2x2', src: '/blocks/photo.jpg', alt: 'Photo', source: null }
+      return { id, type, size: '2x2', src: '/blocks/sample.jpg', alt: 'Sample image', source: null }
     case 'text':
       return { id, type, size: '1x2', title: 'Note', body: 'Write something.' }
     case 'section':

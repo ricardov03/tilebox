@@ -5,6 +5,7 @@
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
+import { z } from 'zod'
 import type { Profile } from '~~/types/profile'
 
 export const PROFILE_PATH = resolve(process.cwd(), 'content/profile.json')
@@ -16,9 +17,20 @@ export function assertDev(): void {
   }
 }
 
+/** Raw JSON of content/profile.json. 500 with the path when the file is not valid JSON. */
 export async function readProfileFile(): Promise<unknown> {
   const raw = await readFile(PROFILE_PATH, 'utf8')
-  return JSON.parse(raw) as unknown
+  try {
+    return JSON.parse(raw) as unknown
+  }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw createError({
+      statusCode: 500,
+      statusMessage: 'Profile is not valid JSON',
+      message: `${PROFILE_PATH}: ${reason}`,
+    })
+  }
 }
 
 /** Every `icon` field on a block, sorted and unique. */
@@ -30,27 +42,30 @@ export function iconsOf(profile: Profile): string[] {
   return [...icons].sort()
 }
 
-interface IconifyJson {
-  icons: Record<string, unknown>
-  aliases?: Record<string, unknown>
-}
+/** The parts of `@iconify-json/<prefix>/icons.json` this check needs. */
+const IconifyJsonSchema = z.object({
+  icons: z.record(z.string(), z.unknown()),
+  aliases: z.record(z.string(), z.unknown()).optional(),
+})
+type IconifyJson = z.infer<typeof IconifyJsonSchema>
 
-const packCache = new Map<string, IconifyJson | null>()
+/** Only successful loads are cached. A failed load is retried on the next call (the pack may get installed). */
+const packCache = new Map<string, IconifyJson>()
 
 async function loadPack(prefix: string): Promise<IconifyJson | null> {
   const cached = packCache.get(prefix)
-  if (cached !== undefined) return cached
-  let pack: IconifyJson | null
+  if (cached) return cached
   try {
     const require = createRequire(resolve(process.cwd(), 'package.json'))
     const file = require.resolve(`@iconify-json/${prefix}/icons.json`)
-    pack = JSON.parse(await readFile(file, 'utf8')) as IconifyJson
+    const parsed = IconifyJsonSchema.safeParse(JSON.parse(await readFile(file, 'utf8')))
+    if (!parsed.success) return null
+    packCache.set(prefix, parsed.data)
+    return parsed.data
   }
   catch {
-    pack = null
+    return null
   }
-  packCache.set(prefix, pack)
-  return pack
 }
 
 /** Returns one message per unknown icon. Empty array = all good. */
@@ -67,7 +82,7 @@ export async function checkIcons(icons: string[]): Promise<string[]> {
       errors.push(`Icon "${icon}": pack @iconify-json/${prefix} is not installed. Run: npm i -D @iconify-json/${prefix}`)
       continue
     }
-    if (!(name in pack.icons) && !(pack.aliases && name in pack.aliases)) {
+    if (!Object.hasOwn(pack.icons, name) && !(pack.aliases && Object.hasOwn(pack.aliases, name))) {
       errors.push(`Icon "${icon}" does not exist in ${prefix}. Browse https://icones.js.org/collection/${prefix}`)
     }
   }

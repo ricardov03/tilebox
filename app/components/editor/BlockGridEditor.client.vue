@@ -3,14 +3,17 @@
   dynamic import so the library never touches the public bundle.
   Reorders the ids of the CURRENT layout only (desktop or mobile).
   Options follow PLAN.md 4 (SortableJS #2335 mitigation).
+  The profile tile is the first <li>. It has no data-id, and `draggable`
+  is `li[data-id]`, so Sortable never moves it and never counts it.
 -->
 <script setup lang="ts">
 import type { Component } from 'vue'
-import type { Block } from '~~/types/profile'
+import type { Block, ProfileInfo } from '~~/types/profile'
 
 const props = defineProps<{
   blocks: Block[]
   columns: 2 | 4
+  profile: ProfileInfo
   selectedId: string | null
 }>()
 
@@ -19,8 +22,8 @@ const emit = defineEmits<{
   select: [id: string]
 }>()
 
+/** `null` until the dynamic import resolves, or when it fails. The static grid renders then. */
 const Draggable = shallowRef<Component | null>(null)
-const loadFailed = ref(false)
 
 onMounted(async () => {
   try {
@@ -28,17 +31,23 @@ onMounted(async () => {
     Draggable.value = mod.VueDraggable
   }
   catch {
-    loadFailed.value = true
+    Draggable.value = null
   }
 })
 
-/** v-model for VueDraggable. Set = the new order, sent up as ids. */
-const list = computed<Block[]>({
-  get: () => props.blocks,
-  set: (next) => {
-    emit('reorder', next.map(b => b.id))
-  },
+/**
+ * Local copy for VueDraggable's v-model. The `blocks` prop is never
+ * mutated: a drop replaces the copy and the new order goes up as ids.
+ */
+const list = ref<Block[]>([...props.blocks])
+watch(() => props.blocks, (next) => {
+  list.value = [...next]
 })
+
+function onReorder(next: Block[]) {
+  list.value = next
+  emit('reorder', next.map(b => b.id))
+}
 
 /**
  * From the SortableJS README (grid example): compare horizontally when both
@@ -49,19 +58,13 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
   if (target.dataset.full || dragEl.dataset.full) return 'vertical'
   return 'horizontal'
 }
-
-const gridClass = computed(() =>
-  props.columns === 4
-    ? 'grid-cols-4 auto-rows-[clamp(120px,13vw,240px)] gap-4 xl:gap-5'
-    : 'grid-cols-2 auto-rows-[173px] gap-4',
-)
 </script>
 
 <template>
   <component
     :is="Draggable"
     v-if="Draggable"
-    v-model="list"
+    :model-value="list"
     tag="ul"
     :animation="150"
     :swap-threshold="0.65"
@@ -69,14 +72,22 @@ const gridClass = computed(() =>
     :force-fallback="true"
     :fallback-tolerance="4"
     handle="[data-drag-handle]"
+    draggable="li[data-id]"
     :direction="direction"
     ghost-class="opacity-40"
     chosen-class="scale-[1.02]"
-    :class="gridClass"
-    class="grid list-none p-0"
+    :class="PREVIEW_GRID_CLASSES[columns]"
+    class="grid list-none auto-rows-auto gap-[var(--gap)] p-0"
+    @update:model-value="onReorder"
   >
+    <li
+      data-profile
+      class="col-span-2 row-span-2 h-[calc(var(--row)*2+var(--gap))]"
+    >
+      <ProfileHeader :profile="profile" />
+    </li>
     <EditorPreviewTile
-      v-for="block in blocks"
+      v-for="block in list"
       :key="block.id"
       :block="block"
       :selected="block.id === selectedId"
@@ -88,6 +99,7 @@ const gridClass = computed(() =>
     v-else
     :blocks="blocks"
     :columns="columns"
+    :profile="profile"
     :selected-id="selectedId"
     @select="emit('select', $event)"
   />

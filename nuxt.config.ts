@@ -51,9 +51,21 @@ export default defineNuxtConfig({
   },
   css: ['~/assets/css/main.css'],
 
+  runtimeConfig: {
+    public: {
+      /** Absolute site URL for og:image and og:url. Set `NUXT_PUBLIC_SITE_URL` in the host's build env. */
+      siteUrl: '',
+    },
+  },
+
   routeRules: {
     '/edit': { prerender: false },
     '/api/**': { prerender: false },
+  },
+
+  features: {
+    // One page, one CSS file: inline it and drop the render-blocking request.
+    inlineStyles: true,
   },
   compatibilityDate: '2025-07-15',
 
@@ -70,7 +82,7 @@ export default defineNuxtConfig({
     strict: true,
     // scripts/ and types/ are not app code. Typecheck them with the node project.
     nodeTsConfig: {
-      include: ['../scripts/**/*', '../types/**/*'],
+      include: ['../scripts/**/*', '../types/**/*', '../tests/**/*', '../playwright.config.ts'],
     },
   },
 

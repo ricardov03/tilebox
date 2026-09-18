@@ -70,7 +70,7 @@ Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/coll
 Brand icons that `line-md` lacks come from `simple-icons`.
 Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
-Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`. Avatar goes in `public/`.
+Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/`.
 
 ## Scripts
 
@@ -84,9 +84,30 @@ Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`.
 | `npm run check:contrast` | WCAG contrast check for every preset |
 | `npm run check:profile` | Validates `content/profile.json` |
 | `npm run check:icons` | Fails on an unknown icon name |
-| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` |
+| `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 
-`predev` runs presets and check:profile. `pregenerate` also runs check:contrast and check:icons.
+| `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
+
+`predev` runs presets and check:profile. `pregenerate` also runs check:contrast, check:icons and fetch:favicons.
+
+## Tests
+
+End-to-end tests run in headless Chromium with Playwright. Two projects:
+
+| Project | What it tests | Server | Runs in CI |
+|---|---|---|---|
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 serious or critical issues at 1280 and 390, light and dark) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+
+```sh
+npx playwright install chromium   # once
+npm run generate                  # the static project reads dist/
+npm run test:e2e                  # both projects
+npm run test:e2e -- --project=static
+npm run test:e2e -- --project=dev
+```
+
+Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` then `npx --yes lighthouse http://localhost:4173/ --chrome-flags="--headless=new"`. Scores are recorded in `NOTES.md` (WP5).
 
 ## Deploy
 
@@ -96,13 +117,14 @@ Images: put files in `public/blocks/` and reference them as `/blocks/photo.jpg`.
 2. Cloudflare dashboard: **Workers & Pages > Create > Pages > Connect to Git**. Pick the repo.
 3. Build settings: framework preset **None**. Build command `npm run generate`. Output directory `dist`.
 4. Environment variable `NODE_VERSION` = `24`. Cloudflare also reads `.node-version` in the repo root, which says `24`. Cloudflare's default Node is too old for Nuxt 4.
-5. Save and deploy. Add a custom domain under **Custom domains** after the first build.
+5. Environment variable `NUXT_PUBLIC_SITE_URL` = your site URL, for example `https://ricardov.dev` (no trailing slash). It makes `og:image` and `og:url` absolute, which link previews need. Leave it unset and the page uses `/og.png`.
+6. Save and deploy. Add a custom domain under **Custom domains** after the first build.
 
 No Nitro preset is set. The build is plain static files. `/edit` and `/api` are not in `dist/`.
 
 ### Netlify
 
-Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers.
+Connect the repo. `netlify.toml` sets the build command, output folder, Node 24 and cache headers. Add `NUXT_PUBLIC_SITE_URL` in the site's environment variables, same as above.
 
 ## Roadmap
 
