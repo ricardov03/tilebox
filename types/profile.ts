@@ -3,6 +3,7 @@
  * Frozen after WP0. Changes need a note in NOTES.md.
  */
 import { z } from 'zod'
+import { ICON_NAME_RE, ICON_SETS_MESSAGE } from '../app/utils/icon-sets'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
 import { endsBeforeStart, isOnPage } from '../app/utils/schedule'
@@ -15,8 +16,8 @@ import { PublicSiteSchema, SiteSchema, toPublicSite, type PublicSiteExtras } fro
 const id = z.string().min(1)
 const url = z.url()
 const size = z.enum(SIZES)
-/** Full Iconify name like `line-md:github`. */
-const iconName = z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Icon must be a full Iconify name like line-md:github')
+/** Full Iconify name like `line-md:github`, from one of the two supported sets only (WP18, `app/utils/icon-sets.ts`). */
+const iconName = z.string().regex(ICON_NAME_RE, ICON_SETS_MESSAGE)
 
 /** Optional on every block (WP10a). `true` = the build drops the block: it is in no file of `dist/`. */
 const hidden = z.boolean().optional()
