@@ -686,3 +686,65 @@ Symptom: `/edit` loaded but `GET /api/profile` answered 500 with `ENOENT ./.nuxt
 Cause: the review fix that anchored `ROOT` in `content/resolve.ts` on `import.meta.url`. The Nitro dev server bundles that module into `.nuxt/`, so `..` was not the repo.
 Fix: `ROOT` is now found by walking upward (from the module, then from `process.cwd()`) to the first folder that holds `content/profile.example.json`.
 Lesson: a change to the resolver or to `server/` must run the Playwright `dev` project, not only `static`. The `dev` project catches this (4 tests, green again).
+
+## WP9
+
+Branch: `wp/9-profile-extras`. Date: 2026-09-18. Node used: 22.23.1.
+
+Goal (decided by Ricardo): four profile extras. A pulsing status dot, up to 3 highlights, a required email that is private by default, the avatar from the email (Gravatar).
+
+### What was built
+- Contract change (`types/profile.ts`, frozen after WP0, so noted here): `profile.highlights` (`z.array(z.string().min(1).max(80)).max(3).default([])`), `profile.email` (`z.email()`, required), `profile.showEmail` (`z.boolean().default(false)`). New: `PublicProfileSchema`, `PublicProfile`, `PublicProfileInfo` (no `showEmail`, `email` optional, `avatar` a plain optional string), `toPublicProfile()` / `toPublicProfileInfo()` (the sanitizer, pure, no file access), `PLACEHOLDER_EMAILS`, `isPlaceholderEmail()`, `HIGHLIGHTS_MAX`, `HIGHLIGHT_MAX_CHARS`.
+- A. `ProfileHeader.vue`: the dot has `animate-pulse motion-reduce:animate-none` and was already `aria-hidden="true"`. The global reduced-motion rule in `main.css` covers it too (duration 0.01ms, 1 iteration); the Playwright test reads `animation-name: none` with `reducedMotion: 'reduce'`. `tests/e2e/helpers.ts` `settle()` now skips endless animations: an endless animation's `finished` promise never resolves, so the a11y spec would hang.
+- B. Highlights: a real `<ul aria-label="Highlights">` under the bio, above the email and the status. Bullet = 6px `bg-accent` dot, `aria-hidden`. Text `text-ink`, 15px/1.4 from `md`, 14px on phones. Nothing renders for an empty list.
+- C. Email privacy. `modules/public-profile.ts` (a local Nuxt module, auto-registered from `modules/`) adds a template `.nuxt/tilebox/public-profile.json` = `toPublicProfile(parsed profile, gravatar path when the file exists)`. `#profile` points at it (`nuxt.config.ts` alias + tsconfig path, and the module sets `nuxt.options.alias` to the template's `dst`). `useProfile.ts` parses it with `PublicProfileSchema`. The raw file never reaches the client bundle. `UI_ICONS.email = line-md:email` (always in the icon bundle).
+  - Why a template and not a file written at config time: `nuxt build` clears `.nuxt/` after the config is loaded. Templates are written after that, and `nuxt prepare` / `nuxt typecheck` write them too.
+  - Refresh in dev: the module watches the folders `content/` (names `profile.json`, `profile.example.json`) and `public/` (name `avatar.gravatar.jpg`) with `fs.watch`, debounced 50ms, then `updateTemplates()`. The folder, not the file: the save route replaces the file with a rename. Vite then hot-reloads the JSON. A file that does not parse keeps the last good copy. The save route no longer forces `restartNeeded` on the first personal save: the old reason (the alias was bound to the example) is gone.
+- D. Gravatar. `content/gravatar.ts` (node built-ins, paths from `ROOT` in `content/resolve.ts`, never from `import.meta.url`: the WP7 lesson) is shared by `scripts/fetch-avatar.ts` (tsx) and `server/api/avatar/gravatar.post.ts` (Nitro, `~~/content/gravatar`). sha256 of the trimmed lower-case email, `https://gravatar.com/avatar/<hash>?s=256&d=404`, 5 s timeout, image content-type, at most 2 MB. 200 -> writes `public/avatar.gravatar.jpg`. 404 -> removes a stale file. Anything else -> keeps the old file. One line each, never a non-zero exit. Skipped (one line) when `profile.avatar` is set or the email is a placeholder. `npm run fetch:avatar`, in `predev` and `pregenerate` right after `check:profile`.
+- Migration: `content/migrate.ts` `migrateProfileText()` + `scripts/ensure-profile.ts`. Text in, text out: the missing keys are inserted as new lines after the `"bio"` line in the file's own indent; the result is parsed and compared with the expected object, and only on a mismatch the file is rewritten as 2-space JSON. A file that has the 3 keys is never written.
+- `scripts/validate-profile.ts`: warning (not a failure) when a personal file still has a placeholder email.
+- `content/profile.example.json`: `email: hello@example.com`, `showEmail: false`, 3 highlights. Tile `b7` was `mailto:hello@example.com`; it is now `https://example.com/contact` (same icon), so the example has no `mailto:` link and the privacy grep can be 0.
+- Editor (Profile tab): Highlights (3 inputs, `n/80` counters, the model only gets the non-empty lines), Email (`type=email`, required, inline `role=alert` error from the schema, an invalid value never reaches the draft), "Show my email on the page" + the one-line explanation, "Use my Gravatar" (`POST /api/avatar/gravatar` with the draft's email; on `saved` it clears `profile.avatar`; the message shows inline). `GET /api/avatar/gravatar` tells the preview if the file exists. The preview gets `toPublicProfileInfo(draft.profile, gravatar path)`: the same sanitizer as the build.
+
+### Overflow handling (fixed 2x2 tile: 500px desktop, 358px phone)
+Measured with headless Playwright at 1280 and 390. Stress content: a 165-character bio, highlights of 78, 32 and 71 characters, a 38-character email shown, a status.
+- First pass (full scale): overflow at both widths. Desktop: the avatar was squashed to 57px and the text ran 29px into the padding. Phone: `scrollHeight` 425 > `clientHeight` 356.
+- Reducing gaps and the avatar on the phone was not enough: the worst case needs about 318px of text alone and the phone tile has 310px inside.
+- Decision: a **compact scale** whenever the profile has highlights or a visible email. Without them the header is exactly the old one. Compact: avatar 64px desktop / 40px phone, name 56px / 36px, bio 17px / 16px with `line-clamp-3` (the brief's last resort, needed on both widths), gaps 12px / 8px, each highlight `line-clamp-2`, but one line each on phones when there are 3 (the editor says so under the inputs), email and status `truncate`. Avatar `shrink-0`, the tile `overflow-hidden` as a safety net.
+- Result, same stress content: 1280: text block bottom 527 = the inner bottom (564 - 1 - 36), avatar 64px intact. 390: `scrollHeight` 356 = `clientHeight` 356.
+- Editor preview: its tiles are lower than the real desktop tile (the preview row is `clamp(120px,13vw,240px)`), so `ProfileHeader` has a `small` prop used only by the two preview grids: the compact scale stays at phone sizes there. Without it the bio collapsed to zero height in the preview.
+- Not covered: a name that needs 2 lines plus the full worst case. The clamps absorb most of it (the bio shrinks first), the tile clips the rest.
+
+### Deviations and why
+- Work was done in a separate git worktree (`/private/tmp/tilebox-wp9/wt`), not in the main checkout: Ricardo had `nuxt dev` open on the main checkout and was editing his real `content/profile.json`. The `dev` Playwright project and the migration checks back up and restore that file, which would have raced with his saves. The main checkout was put back on `main`, untouched.
+- `playwright.config.ts`: `E2E_STATIC_PORT` / `E2E_DEV_PORT` (defaults unchanged). Port 4173 was held by an older `npx serve dist` of the main checkout, and Playwright reuses an existing server locally, so the first static run tested the wrong `dist/`.
+- The example tile `b7` lost its `mailto:` URL (see above).
+- `PublicProfile` drops `showEmail` (an email in the public profile already means "show it").
+- In a full `npx playwright test` run the `dev` web server starts first and its `predev` creates `content/profile.json`, so the "example email" privacy test skips itself (`dist/` vs resolver mismatch guard) and the generic "hidden email" test covers the same string. `--project=static` alone (CI) runs all of them.
+- A known dev-only delay: after a save that hides the email, the dev server serves the old sanitized copy for a moment (watcher + HMR, 1 to 3 s). The editor test polls. A production build always starts from a fresh template.
+
+### Verified
+- Migration, old example shape (`git show main:content/profile.example.json`): one line printed, diff = only the 3 new lines after `bio`, compact one-line blocks untouched, trailing newline kept. Second run: no output, file untouched. Same on a 2-space pretty file and on a copy of a real personal file (with `avatar` set: `avatar: profile.avatar is set, gravatar skipped`).
+- Dev refresh: `POST /api/save` with a new bio and `showEmail: true` -> `restartNeeded: false`, the SSR HTML and an already open page show the new bio and the `mailto:` link without a restart or a manual reload. `showEmail: false` again -> the address is gone from the HTML and from `.nuxt/tilebox/public-profile.json`.
+- Gravatar: a random address -> `avatar: no gravatar for this email` and a stale file is removed. The URL form answers 200 `image/png` for the hash in Gravatar's own docs (so the format is not fixed; the `.jpg` name is kept, browsers read the bytes). No real personal email was sent anywhere.
+- `git check-ignore -v public/avatar.gravatar.jpg` -> `.gitignore:19:public/avatar.*`.
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+avatar: placeholder email, gravatar skipped
+OK  26 icons found in installed Iconify packs
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist/ | wc -l
+0
+$ E2E_STATIC_PORT=4188 npx playwright test --project=static
+28 passed
+$ E2E_STATIC_PORT=4188 E2E_DEV_PORT=3144 npx playwright test      (both projects)
+35 passed, 1 skipped
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null
+would commit "chore(release): v0.1.1" and tag v0.1.1
+working tree: still clean
+```
