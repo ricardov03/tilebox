@@ -19,6 +19,8 @@ export const COLOR_ROLES = [
   'dot',
   'photo',
   'hover',
+  'danger',
+  'danger-ink',
 ] as const
 
 export type ColorRole = (typeof COLOR_ROLES)[number]
@@ -51,6 +53,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#0EA5E9',
       'photo': '#C7DEEC',
       'hover': '#0369A1',
+      'danger': '#C81E1E',
+      'danger-ink': '#FFFFFF',
     },
     dark: {
       'ground': '#081726',
@@ -66,6 +70,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#38BDF8',
       'photo': '#16324B',
       'hover': '#7DD3FC',
+      'danger': '#F87171',
+      'danger-ink': '#081726',
     },
   },
   lunchbox: {
@@ -84,6 +90,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#F0C24B',
       'photo': '#C9D3C2',
       'hover': '#3E6B3B',
+      'danger': '#B42318',
+      'danger-ink': '#FFFFFF',
     },
     dark: {
       'ground': '#161A17',
@@ -99,6 +107,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#F0C24B',
       'photo': '#2A332C',
       'hover': '#8FBF8B',
+      'danger': '#F97066',
+      'danger-ink': '#161A17',
     },
   },
   night: {
@@ -117,6 +127,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#F3B33D',
       'photo': '#232B40',
       'hover': '#855400',
+      'danger': '#B42318',
+      'danger-ink': '#FFFFFF',
     },
     dark: {
       'ground': '#131826',
@@ -132,6 +144,8 @@ export const COLOR_PRESETS: Record<ColorPresetId, ColorPreset> = {
       'dot': '#F3B33D',
       'photo': '#232B40',
       'hover': '#F3B33D',
+      'danger': '#F87171',
+      'danger-ink': '#131826',
     },
   },
 }

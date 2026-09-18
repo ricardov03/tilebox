@@ -22,6 +22,8 @@
   --color-dot: var(--color-dot);
   --color-photo: var(--color-photo);
   --color-hover: var(--color-hover);
+  --color-danger: var(--color-danger);
+  --color-danger-ink: var(--color-danger-ink);
 
   --font-display: var(--font-display);
   --font-sans: var(--font-sans);

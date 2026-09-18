@@ -47,6 +47,11 @@ const PAIRS: Pair[] = [
   { fg: 'pop-ink', bg: 'pop', min: 4.5 },
   { fg: 'hover', bg: 'ground', min: 4.5 },
   { fg: 'hover', bg: 'tile', min: 4.5 },
+  // The editor's delete control: the trash icon and its 1px border sit on a tile and on the ground.
+  { fg: 'danger', bg: 'tile', min: 4.5 },
+  { fg: 'danger', bg: 'ground', min: 4.5 },
+  // "Yes" of the delete confirm: text on a filled danger button.
+  { fg: 'danger-ink', bg: 'danger', min: 4.5 },
 ]
 
 interface Row { preset: string, mode: 'light' | 'dark', pair: string, ratio: number, min: number, pass: boolean }

@@ -149,7 +149,7 @@ theme = { colors: <color preset>, fonts: <font preset>, mode: system | light | d
 Reference boards on the canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ
 (board A = `lunchbox` colors + `lunchbox` fonts. Board B = `night` colors + `night` fonts.)
 
-### 5.1 Color roles (same 13 slots in every preset)
+### 5.1 Color roles (same 15 slots in every preset)
 
 Same idea as PowerPoint theme colors. Every component uses only these names.
 
@@ -168,6 +168,8 @@ Same idea as PowerPoint theme colors. Every component uses only these names.
 | dot | `--color-dot` | status dot |
 | photo | `--color-photo` | image tile placeholder while loading |
 | hover | `--color-hover` | link hover color |
+| danger | `--color-danger` | editor only (WP16): the outlined trash button (icon + 1px border), the filled "Yes" of the delete confirm. Not used by the public page |
+| danger-ink | `--color-danger-ink` | editor only (WP16): text on a filled `danger` background |
 
 ### 5.2 Color presets (3 for v1)
 
@@ -188,6 +190,8 @@ Canvas sync 2026-09-17: the design tool reworked both boards. Board A is now the
 | dot | `#0EA5E9` (sky-500) | `#F0C24B` | `#F3B33D` |
 | photo | `#C7DEEC` | `#C9D3C2` | `#232B40` |
 | hover | `#0369A1` (sky-700) | `#3E6B3B` | `#F3B33D` |
+| danger | `#C81E1E` | `#B42318` | `#F87171` |
+| danger-ink | `#FFFFFF` | `#FFFFFF` | `#131826` |
 
 Dark mode of each preset (`[data-theme=dark]`):
 
@@ -206,11 +210,14 @@ Dark mode of each preset (`[data-theme=dark]`):
 | dot | `#38BDF8` | `#F0C24B` | `#F3B33D` |
 | photo | `#16324B` | `#2A332C` | `#232B40` |
 | hover | `#7DD3FC` (sky-300) | `#8FBF8B` | `#F3B33D` |
+| danger | `#F87171` | `#F97066` | `#F87171` |
+| danger-ink | `#081726` (the ground) | `#161A17` (the ground) | `#131826` (the ground) |
 
 `accent-soft` is the small text on top of the accent tile (the domain label). `pop-ink` is text on the pop tile.
+`danger` and `danger-ink` (WP16) are the only red in the system and only the editor uses them. `npm run check:contrast` holds `danger` on `tile` and on `ground` at 4.5:1 (the icon and its border sit on both) and `danger-ink` on `danger` at 4.5:1. The 12% hover fill is `color-mix` of the token (`bg-danger/12`), so there is no `danger-soft` role.
 
 `condomera` matches `landing-condomera/DESIGN.md`: sky primary, slate neutral. Keep it in sync if the brand changes.
-`night` light mode: `#F2F3F6` ground, `#FFFFFF` tile, `#DDE1EA` line, `#131826` ink, `#5B6478` muted, amber accent, `#131826` accent-ink, hover `#855400` (dark amber; the bright amber fails contrast on light).
+`night` light mode: `#F2F3F6` ground, `#FFFFFF` tile, `#DDE1EA` line, `#131826` ink, `#5B6478` muted, amber accent, `#131826` accent-ink, hover `#855400` (dark amber; the bright amber fails contrast on light), danger `#B42318`, danger-ink `#FFFFFF`.
 
 Layout note: board B shows a left-rail layout. That is NOT the dark mode layout. Dark mode keeps the hero-tile layout of board A. The rail layout can become a `layout` preset later (section 13).
 

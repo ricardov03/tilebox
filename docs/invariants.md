@@ -5,7 +5,7 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 ## The public page
 1. **Static.** `npm run generate` writes plain files to `dist/`. No server code, no `/edit`, no `/api` in `dist/`.
 2. **No runtime network call.** The public page never asks another host for anything: no font, icon API, image URL, embed, analytics or third-party script. Fonts, icons, favicons and thumbnails are fetched at BUILD time and served as local files. `api.iconify.design` is allowed in the editor only.
-3. **Color and font tokens only.** Components use the tokens of `app/assets/css/main.css` and the presets. No literal color, no literal font family. Every text pair keeps 4.5:1 (`npm run check:contrast`).
+3. **Color and font tokens only.** Components use the tokens of `app/assets/css/main.css` and the presets. No literal color, no literal font family. Every text pair keeps 4.5:1 (`npm run check:contrast`). The only red is the role pair `danger` / `danger-ink` (WP16), and only the editor uses it (the delete controls).
 
 ## Personal data
 4. **Personal data and generated files are git-ignored and never tracked:** `content/profile.json`, `public/avatar.*`, `public/blocks/*` (but the sample), `public/icons/*`, `public/thumbs/*`, `public/site/`, `public/site-uploads/`, `.tilebox/`. The tracked sample is `content/profile.example.json`. A release zip comes from the pipeline only, never from a local `dist/`.

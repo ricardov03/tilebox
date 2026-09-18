@@ -15,6 +15,8 @@
   --color-dot: #0EA5E9;
   --color-photo: #C7DEEC;
   --color-hover: #0369A1;
+  --color-danger: #C81E1E;
+  --color-danger-ink: #FFFFFF;
 }
 [data-colors="condomera"][data-theme="dark"] {
   --color-ground: #081726;
@@ -30,6 +32,8 @@
   --color-dot: #38BDF8;
   --color-photo: #16324B;
   --color-hover: #7DD3FC;
+  --color-danger: #F87171;
+  --color-danger-ink: #081726;
 }
 [data-colors="lunchbox"] {
   --color-ground: #E8EBE4;
@@ -45,6 +49,8 @@
   --color-dot: #F0C24B;
   --color-photo: #C9D3C2;
   --color-hover: #3E6B3B;
+  --color-danger: #B42318;
+  --color-danger-ink: #FFFFFF;
 }
 [data-colors="lunchbox"][data-theme="dark"] {
   --color-ground: #161A17;
@@ -60,6 +66,8 @@
   --color-dot: #F0C24B;
   --color-photo: #2A332C;
   --color-hover: #8FBF8B;
+  --color-danger: #F97066;
+  --color-danger-ink: #161A17;
 }
 [data-colors="night"] {
   --color-ground: #F2F3F6;
@@ -75,6 +83,8 @@
   --color-dot: #F3B33D;
   --color-photo: #232B40;
   --color-hover: #855400;
+  --color-danger: #B42318;
+  --color-danger-ink: #FFFFFF;
 }
 [data-colors="night"][data-theme="dark"] {
   --color-ground: #131826;
@@ -90,6 +100,8 @@
   --color-dot: #F3B33D;
   --color-photo: #232B40;
   --color-hover: #F3B33D;
+  --color-danger: #F87171;
+  --color-danger-ink: #131826;
 }
 
 /* Font presets. */
