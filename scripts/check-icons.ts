@@ -1,12 +1,12 @@
 /**
  * Checks that every icon name the site can render exists in an installed Iconify pack.
- * Sources: `icon` fields in content/profile.json, the NETWORKS map and UI_ICONS
+ * Sources: `icon` fields in the profile (content/resolve.ts picks the file), the NETWORKS map and UI_ICONS
  * (the block components and ThemeToggle take every icon from UI_ICONS).
  * Prints the missing ones and exits 1 if any. `npm run check:icons`, runs in `pregenerate`.
  */
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
+import { PROFILE_PATH } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 import { NETWORKS, UI_ICONS } from '../app/utils/networks'
 
@@ -72,8 +72,7 @@ async function iconExists(name: string): Promise<'ok' | 'no-pack' | 'missing'> {
   return Object.hasOwn(pack.icons, icon) || (pack.aliases !== undefined && Object.hasOwn(pack.aliases, icon)) ? 'ok' : 'missing'
 }
 
-const profileFile = resolve(process.cwd(), 'content/profile.json')
-const sources = collectIcons(JSON.parse(await readFile(profileFile, 'utf8')))
+const sources = collectIcons(JSON.parse(await readFile(PROFILE_PATH, 'utf8')))
 const problems: string[] = []
 
 for (const [name, from] of [...sources.entries()].sort(([a], [b]) => a.localeCompare(b))) {
