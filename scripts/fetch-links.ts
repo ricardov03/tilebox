@@ -14,6 +14,10 @@
  * Existing files are kept. A network error prints one line and never fails the build.
  * The fetched files are not tracked (they come from your profile).
  *
+ * Last step: files in `public/icons/` and `public/thumbs/` that no block of the
+ * profile and no fresh cache entry uses are removed (`pruneLinkFiles`), so the
+ * folders do not grow for ever and no orphan ships with the site.
+ *
  * Debug one link: `npm run fetch:links -- --url https://nuxt.com [--image] [--force]`
  * prints the engine's answer as JSON and changes nothing else.
  */
@@ -21,7 +25,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { profilePath, ROOT } from '../content/resolve'
 import { unfurl } from '../content/unfurl'
-import { linkNeedsFetch } from '../content/unfurl-cache'
+import { linkNeedsFetch, pruneLinkFiles } from '../content/unfurl-cache'
 import { parseProfile } from '../types/profile'
 import { youtubeId } from '../app/components/blocks/media'
 
@@ -112,7 +116,10 @@ async function run(): Promise<void> {
   const thumbs = new Map(results.filter(([, ok]) => ok).map(([job]) => [job.key, job.file]))
   await writeManifest(THUMBS_DIR, thumbs)
 
-  process.stdout.write(`OK  link previews ${linksOk}/${links.length}, thumbnails ${thumbs.size}/${thumbJobs.size}\n`)
+  // Housekeeping: what nothing uses any more goes. The thumbnails of the video tiles stay, also when today's download failed.
+  const removed = await pruneLinkFiles(profile, { keepThumbs: [...thumbJobs.values()].map(job => job.file) })
+
+  process.stdout.write(`OK  link previews ${linksOk}/${links.length}, thumbnails ${thumbs.size}/${thumbJobs.size}${removed.length ? `, ${removed.length} unused files removed` : ''}\n`)
 }
 
 /** `--url <link> [--image] [--force]`: print the engine's answer for one link. */

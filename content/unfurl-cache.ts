@@ -8,7 +8,7 @@
  * Nitro bundles this module into `.nuxt/` (NOTES.md, WP7 regression fix).
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { z } from 'zod'
 import { brandIconFor } from '../app/utils/brand-icons'
@@ -280,4 +280,74 @@ export function withLocalLinkFiles(profile: Profile, dirs: UnfurlDirs = DEFAULT_
   const cache = readCacheSync(dirs)
   const blocks: Block[] = profile.blocks.map(block => (block.type === 'link' ? withLocalFiles(block, cache, dirs) : block))
   return { ...profile, blocks }
+}
+
+/** Files the pruning never touches, whatever the profile says. */
+const PRUNE_KEEP = new Set(['.gitkeep', 'manifest.json'])
+
+export interface PruneOptions {
+  dirs?: UnfurlDirs
+  /** The clock, in ms. */
+  now?: number
+  /** File names in `dirs.thumbs` that are in use for another reason (the YouTube thumbnails of the video tiles). */
+  keepThumbs?: Iterable<string>
+}
+
+/** Every `/icons/<name>` and `/thumbs/<name>` string anywhere in a value (a block, the whole profile). */
+function localNamesIn(value: unknown, found: { icons: Set<string>, thumbs: Set<string> }): void {
+  if (typeof value === 'string') {
+    const match = value.match(/^\/(icons|thumbs)\/([^/\\?#]+)$/)
+    if (match?.[1] && match[2]) found[match[1] === 'icons' ? 'icons' : 'thumbs'].add(match[2])
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) localNamesIn(item, found)
+    return
+  }
+  if (isRecord(value)) {
+    for (const item of Object.values(value)) localNamesIn(item, found)
+  }
+}
+
+/**
+ * Removes the files in `dirs.icons` and `dirs.thumbs` that nothing uses any more (WP10 security
+ * round, S3): without it both folders only grow, and every orphan ships with the site.
+ * A file stays when the current profile names it (any block, hidden ones too), when a FRESH cache
+ * entry names it (younger than 30 days: the editor may have fetched it for a draft), when it is in
+ * `keepThumbs`, or when it is `.gitkeep` / `manifest.json` / a dot file.
+ *
+ * It only ever deletes plain files directly inside those two folders: a folder that is itself a
+ * symlink is left alone, symlinks and sub-folders inside are never followed or removed, and the
+ * real path of every file must be inside the real path of its folder.
+ * Returns the removed files as public paths. Never throws.
+ */
+export async function pruneLinkFiles(profile: Profile, options: PruneOptions = {}): Promise<string[]> {
+  const dirs = options.dirs ?? DEFAULT_DIRS
+  const now = options.now ?? Date.now()
+  const used = { icons: new Set<string>(), thumbs: new Set<string>(options.keepThumbs ?? []) }
+  localNamesIn(profile, used)
+  for (const entry of Object.values(readCacheSync(dirs))) {
+    if (now - Date.parse(entry.data.fetchedAt) < FRESH_MS) localNamesIn([entry.data.favicon, entry.data.image], used)
+  }
+
+  const removed: string[] = []
+  for (const kind of ['icons', 'thumbs'] as const) {
+    const dir = dirs[kind]
+    try {
+      if (!(await lstat(dir)).isDirectory()) continue // missing, or a symlink: not ours to clean
+      const realDir = await realpath(dir)
+      for (const item of await readdir(dir, { withFileTypes: true })) {
+        if (!item.isFile()) continue // sub-folders and symlinks stay
+        if (PRUNE_KEEP.has(item.name) || item.name.startsWith('.') || used[kind].has(item.name)) continue
+        const file = resolve(realDir, item.name)
+        if (dirname(file) !== realDir || (await realpath(file)) !== file) continue
+        await unlink(file)
+        removed.push(`/${kind}/${item.name}`)
+      }
+    }
+    catch {
+      // A folder that cannot be read is skipped. Pruning is housekeeping, never a reason to fail a build.
+    }
+  }
+  return removed.sort()
 }

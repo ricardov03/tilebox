@@ -4,7 +4,7 @@
  * `npm run generate`. The engine's own cases are in unfurl.spec.ts.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -12,7 +12,7 @@ import sharp from 'sharp'
 import { buildSiteAssets } from '../../content/site-assets'
 import { SITE_FILES } from '../../content/site-files'
 import { storeSiteUpload, SiteUploadError } from '../../content/site-upload'
-import { readCacheSync, withLocalLinkFiles, type UnfurlDirs } from '../../content/unfurl-cache'
+import { FRESH_MS, pruneLinkFiles, readCacheSync, withLocalLinkFiles, type UnfurlDirs } from '../../content/unfurl-cache'
 import { parseProfile, ProfileSchema, type Profile } from '../../types/profile'
 import { SiteSchema } from '../../types/site'
 import { ROOT } from './helpers'
@@ -228,5 +228,84 @@ test.describe('S4: the cache file is checked like any other input', () => {
       writeFileSync(dirs.cache, text)
       expect(readCacheSync(dirs), text).toEqual({})
     }
+  })
+})
+
+test.describe('S3: unused fetched files are removed', () => {
+  let dir = ''
+  let dirs: UnfurlDirs
+  const NOW = Date.parse('2026-09-18T00:00:00.000Z')
+
+  const cacheEntry = (url: string, fetchedAt: string, files: { favicon?: string, image?: string }) => ({
+    data: { url, finalUrl: url, source: 'html', fetchedAt, ...files },
+    imageTried: true,
+  })
+
+  function profileWith(blocks: Profile['blocks']): Profile {
+    const example = parseProfile(JSON.parse(readFileSync(resolve(ROOT, 'content/profile.example.json'), 'utf8')))
+    return { ...example, blocks, layout: { desktop: blocks.map(block => block.id) } }
+  }
+
+  test.beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tilebox-prune-'))
+    dirs = { icons: join(dir, 'public/icons'), thumbs: join(dir, 'public/thumbs'), cache: join(dir, '.tilebox/cache.json') }
+    mkdirSync(dirs.icons, { recursive: true })
+    mkdirSync(dirs.thumbs, { recursive: true })
+    mkdirSync(join(dir, '.tilebox'))
+  })
+
+  test.afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('only files that no block and no fresh cache entry uses are removed', async () => {
+    for (const name of ['.gitkeep', 'used.png', 'hidden.png', 'fresh.png', 'stale.png', 'orphan.png', 'old.svg', 'note.html']) writeFileSync(join(dirs.icons, name), 'x')
+    for (const name of ['.gitkeep', 'manifest.json', 'used.webp', 'fresh.webp', 'orphan.webp', 'video1video.jpg', 'gone2video.jpg']) writeFileSync(join(dirs.thumbs, name), 'x')
+    writeFileSync(dirs.cache, JSON.stringify({
+      version: 1,
+      entries: {
+        'https://fresh.example/': cacheEntry('https://fresh.example/', new Date(NOW - FRESH_MS + 60_000).toISOString(), { favicon: '/icons/fresh.png', image: '/thumbs/fresh.webp' }),
+        'https://stale.example/': cacheEntry('https://stale.example/', new Date(NOW - FRESH_MS - 60_000).toISOString(), { favicon: '/icons/stale.png' }),
+      },
+    }))
+    const profile = profileWith([
+      { id: 'a', type: 'link', size: '2x1', url: 'https://a.example/', title: 'A', enrich: true, showImage: true, favicon: '/icons/used.png', image: '/thumbs/used.webp' },
+      { id: 'h', type: 'link', size: '1x1', url: 'https://h.example/', title: 'H', hidden: true, enrich: true, favicon: '/icons/hidden.png' },
+    ])
+
+    const removed = await pruneLinkFiles(profile, { dirs, now: NOW, keepThumbs: ['video1video.jpg'] })
+    expect(removed).toEqual(['/icons/note.html', '/icons/old.svg', '/icons/orphan.png', '/icons/stale.png', '/thumbs/gone2video.jpg', '/thumbs/orphan.webp'])
+    expect(readdirSync(dirs.icons).sort()).toEqual(['.gitkeep', 'fresh.png', 'hidden.png', 'used.png'])
+    expect(readdirSync(dirs.thumbs).sort()).toEqual(['.gitkeep', 'fresh.webp', 'manifest.json', 'used.webp', 'video1video.jpg'])
+    // A second run has nothing to do.
+    expect(await pruneLinkFiles(profile, { dirs, now: NOW, keepThumbs: ['video1video.jpg'] })).toEqual([])
+  })
+
+  test('symlinks and sub-folders are never followed or removed, and nothing outside the two folders is touched', async () => {
+    const outside = join(dir, 'outside')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.png'), 'keep me')
+    writeFileSync(join(dir, 'public/keep.png'), 'keep me')
+    symlinkSync(join(outside, 'secret.png'), join(dirs.icons, 'link.png'))
+    symlinkSync(outside, join(dirs.icons, 'linkdir'))
+    mkdirSync(join(dirs.icons, 'sub'))
+    writeFileSync(join(dirs.icons, 'sub/inner.png'), 'x')
+    writeFileSync(join(dirs.icons, 'orphan.png'), 'x')
+
+    expect(await pruneLinkFiles(profileWith([]), { dirs, now: NOW })).toEqual(['/icons/orphan.png'])
+    expect(readFileSync(join(outside, 'secret.png'), 'utf8')).toBe('keep me')
+    expect(existsSync(join(dir, 'public/keep.png'))).toBe(true)
+    expect(readdirSync(dirs.icons).sort()).toEqual(['link.png', 'linkdir', 'sub'])
+    expect(existsSync(join(dirs.icons, 'sub/inner.png'))).toBe(true)
+  })
+
+  test('a folder that is itself a symlink is left alone, a missing folder is fine', async () => {
+    const real = join(dir, 'elsewhere')
+    mkdirSync(real)
+    writeFileSync(join(real, 'orphan.png'), 'x')
+    const linked: UnfurlDirs = { icons: join(dir, 'icons-link'), thumbs: join(dir, 'no-such-folder'), cache: dirs.cache }
+    symlinkSync(real, linked.icons)
+    expect(await pruneLinkFiles(profileWith([]), { dirs: linked, now: NOW })).toEqual([])
+    expect(existsSync(join(real, 'orphan.png'))).toBe(true)
   })
 })
