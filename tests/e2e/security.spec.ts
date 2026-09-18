@@ -12,7 +12,8 @@ import sharp from 'sharp'
 import { buildSiteAssets } from '../../content/site-assets'
 import { SITE_FILES } from '../../content/site-files'
 import { storeSiteUpload, SiteUploadError } from '../../content/site-upload'
-import { parseProfile } from '../../types/profile'
+import { readCacheSync, withLocalLinkFiles, type UnfurlDirs } from '../../content/unfurl-cache'
+import { parseProfile, ProfileSchema, type Profile } from '../../types/profile'
 import { SiteSchema } from '../../types/site'
 import { ROOT } from './helpers'
 
@@ -161,5 +162,71 @@ test.describe('S1c: an uploaded SVG is never written to disk', () => {
       expect((error as SiteUploadError).statusCode, upload.filename).toBe(415)
     }
     expect(readdirSync(uploads)).toHaveLength(1)
+  })
+})
+
+test.describe('S4: the cache file is checked like any other input', () => {
+  let dir = ''
+  let dirs: UnfurlDirs
+
+  const entry = (data: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    data: { url: 'https://a.example/', finalUrl: 'https://a.example/', source: 'html', fetchedAt: '2026-09-18T00:00:00.000Z', ...data },
+    imageTried: true,
+    ...extra,
+  })
+
+  test.beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tilebox-cache-'))
+    dirs = { icons: join(dir, 'icons'), thumbs: join(dir, 'thumbs'), cache: join(dir, 'cache.json') }
+    mkdirSync(dirs.icons)
+    mkdirSync(dirs.thumbs)
+    // Every file the poisoned entries name is really on disk, so only the checks can stop them.
+    for (const file of ['evil.html', 'evil.svg', 'good.png']) writeFileSync(join(dirs.icons, file), 'x')
+    for (const file of ['manifest.json', 'good.webp']) writeFileSync(join(dirs.thumbs, file), 'x')
+  })
+
+  test.afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('a poisoned cache never reaches the profile: bad paths and a bad imageAlt are dropped, the result passes ProfileSchema', () => {
+    writeFileSync(dirs.cache, JSON.stringify({
+      version: 1,
+      entries: {
+        'https://poison.example/': entry({ url: 'https://poison.example/', favicon: '/icons/evil.html', image: '/thumbs/manifest.json', imageAlt: {} }),
+        'https://svg.example/': entry({ url: 'https://svg.example/', favicon: '/icons/evil.svg' }),
+        'https://alt.example/': entry({ url: 'https://alt.example/', favicon: '/icons/good.png', image: '/thumbs/good.webp', imageAlt: {} }),
+        'https://long-alt.example/': entry({ url: 'https://long-alt.example/', image: '/thumbs/good.webp', imageAlt: 'x'.repeat(201) }),
+        'https://extra.example/': entry({ url: 'https://extra.example/', favicon: '/icons/good.png' }, { unknownKey: 1 }),
+        'https://good.example/': entry({ url: 'https://good.example/', favicon: '/icons/good.png', image: '/thumbs/good.webp', imageAlt: 'A good picture' }),
+      },
+    }))
+    // Invalid entries are dropped silently, the good one stays.
+    expect(Object.keys(readCacheSync(dirs))).toEqual(['https://good.example/'])
+
+    const example = parseProfile(JSON.parse(readFileSync(resolve(ROOT, 'content/profile.example.json'), 'utf8')))
+    const hosts = ['poison', 'svg', 'alt', 'long-alt', 'extra', 'good']
+    const blocks: Profile['blocks'] = hosts.map(host => ({ id: host, type: 'link', size: '2x1', url: `https://${host}.example/`, title: host, enrich: true, showImage: true }))
+    const profile: Profile = { ...example, blocks, layout: { desktop: hosts } }
+    const result = withLocalLinkFiles(profile, dirs)
+    expect(ProfileSchema.safeParse(result).success).toBe(true)
+    for (const block of result.blocks) {
+      if (block.type !== 'link') continue
+      if (block.id === 'good') {
+        expect(block).toMatchObject({ favicon: '/icons/good.png', image: '/thumbs/good.webp', imageAlt: 'A good picture' })
+        continue
+      }
+      expect(block.favicon, block.id).toBeUndefined()
+      expect(block.image, block.id).toBeUndefined()
+      expect(block.imageAlt, block.id).toBeUndefined()
+    }
+    expect(JSON.stringify(result)).not.toMatch(/evil|manifest\.json/)
+  })
+
+  test('a cache file that is not the expected shape is an empty cache', () => {
+    for (const text of ['not json', '[]', '{"version":2,"entries":{}}', '{"version":1,"entries":[]}', '{"version":1,"entries":{"https://a.example/":"text"}}']) {
+      writeFileSync(dirs.cache, text)
+      expect(readCacheSync(dirs), text).toEqual({})
+    }
   })
 })

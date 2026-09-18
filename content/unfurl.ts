@@ -825,8 +825,13 @@ async function run(input: string, options: UnfurlOptions): Promise<UnfurlResult>
       if (!/^(text\/html|application\/xhtml\+xml)\b/i.test(contentType?.trim() ?? '')) throw new UnfurlError('not html')
       finalUrl = response.url
       head = parseHead(decodeHtml(response.body, contentType), finalUrl)
-      etag = response.headers.get('etag') ?? undefined
-      lastModified = response.headers.get('last-modified') ?? undefined
+      // Longer values would not pass the cache schema (content/unfurl-cache.ts), so they are not kept.
+      const validator = (name: string, max: number) => {
+        const value = response.headers.get(name)
+        return value && value.length <= max ? value : undefined
+      }
+      etag = validator('etag', 1024)
+      lastModified = validator('last-modified', 128)
       const images: ImageCandidate[] = []
       if (head.image) images.push({ url: head.image.url, alt: head.image.alt })
       if (head.twitterImage && head.twitterImage !== head.image?.url) images.push({ url: head.twitterImage })

@@ -10,9 +10,10 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import { z } from 'zod'
 import { brandIconFor } from '../app/utils/brand-icons'
 import { LOCAL_ICON_PATH, LOCAL_THUMB_PATH } from '../types/local-paths'
-import type { Block, LinkBlock, Profile } from '../types/profile'
+import { localIconPath, localThumbPath, type Block, type LinkBlock, type Profile } from '../types/profile'
 import { ROOT } from './resolve'
 
 /** Where the engine writes. All of it is ignored by git. Tests pass their own folders. */
@@ -35,34 +36,41 @@ export const MAX_URL_CHARS = 2048
 /** A cache entry is fresh for 30 days. */
 export const FRESH_MS = 30 * 24 * 60 * 60 * 1000
 
-/** What the engine found. Every file is a local public path, never a remote URL. */
-export interface UnfurlData {
-  /** The normalized URL that was asked for. */
-  url: string
-  /** The URL after redirects. */
-  finalUrl: string
-  title?: string
-  description?: string
-  siteName?: string
-  themeColor?: string
-  /** `/icons/<hash>.png`. Always a PNG the engine drew itself. */
-  favicon?: string
-  /** `/thumbs/<hash>.webp`. Only when the image was asked for. */
-  image?: string
-  imageAlt?: string
-  source: 'oembed' | 'html' | 'brand'
-  fetchedAt: string
-  /** One short line for the editor, for example why only the brand icon is there. */
-  note?: string
-}
+/** Longest `imageAlt`. The same number caps the fetched description (content/unfurl.ts). */
+export const IMAGE_ALT_MAX = 200
 
-export interface CacheEntry {
-  data: UnfurlData
+const isoDate = z.string().min(1).max(40).refine(value => Number.isFinite(Date.parse(value)), 'must be a date')
+
+/** What the engine found. Every file is a local public path, never a remote URL. */
+export const UnfurlDataSchema = z.object({
+  /** The normalized URL that was asked for. */
+  url: z.string().min(1).max(MAX_URL_CHARS),
+  /** The URL after redirects. */
+  finalUrl: z.string().min(1).max(8192),
+  title: z.string().max(300).optional(),
+  description: z.string().max(500).optional(),
+  siteName: z.string().max(300).optional(),
+  themeColor: z.string().max(64).optional(),
+  /** `/icons/<hash>.png`. Always a PNG the engine drew itself. The SAME pattern as `favicon` in types/profile.ts. */
+  favicon: localIconPath.optional(),
+  /** `/thumbs/<hash>.webp`. Only when the image was asked for. The SAME pattern as `image` in types/profile.ts. */
+  image: localThumbPath.optional(),
+  imageAlt: z.string().max(IMAGE_ALT_MAX).optional(),
+  source: z.enum(['oembed', 'html', 'brand']),
+  fetchedAt: isoDate,
+  /** One short line for the editor, for example why only the brand icon is there. */
+  note: z.string().max(300).optional(),
+}).strict()
+export type UnfurlData = z.infer<typeof UnfurlDataSchema>
+
+export const CacheEntrySchema = z.object({
+  data: UnfurlDataSchema,
   /** Was the image step run for this entry? An entry without it cannot answer a `showImage` request. */
-  imageTried: boolean
-  etag?: string
-  lastModified?: string
-}
+  imageTried: z.boolean(),
+  etag: z.string().max(1024).optional(),
+  lastModified: z.string().max(128).optional(),
+}).strict()
+export type CacheEntry = z.infer<typeof CacheEntrySchema>
 
 interface CacheFile {
   version: 1
@@ -103,11 +111,9 @@ function parseCache(text: string): CacheFile {
     if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.entries)) return empty
     const entries: Record<string, CacheEntry> = {}
     for (const [key, value] of Object.entries(parsed.entries)) {
-      if (!isRecord(value) || !isRecord(value.data)) continue
-      const data = value.data
-      if (typeof data.url !== 'string' || typeof data.fetchedAt !== 'string') continue
-      // Written by this module only, so the shape is trusted after the checks above.
-      entries[key] = value as unknown as CacheEntry
+      // Anyone (or anything) can edit this file. An entry that does not fit the schema is dropped, silently.
+      const entry = CacheEntrySchema.safeParse(value)
+      if (entry.success && key.length <= MAX_URL_CHARS) entries[key] = entry.data
     }
     return { version: 1, entries }
   }
