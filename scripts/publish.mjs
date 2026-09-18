@@ -232,17 +232,21 @@ function nowIso() {
 
 function loadState() {
   if (!existsSync(STATE_FILE)) return null
+  const broken = why => fail(`${STATE_FILE} is broken: ${why}.\nFix the file, or start over with: npm run publish -- --reset`)
+  const isText = value => typeof value === 'string' && value.trim() !== ''
   let state
   try {
     state = JSON.parse(readFileSync(STATE_FILE, 'utf8'))
   }
   catch {
-    fail(`${STATE_FILE} is not valid JSON. Fix it or run: npm run publish -- --reset`)
+    broken('it is not valid JSON')
   }
-  if (!PROVIDERS[state.provider] || !state.name || !state.url) {
-    fail(`${STATE_FILE} misses provider, name or url. Fix it or run: npm run publish -- --reset`)
-  }
-  if (state.provider === 'netlify' && !state.siteId) fail(`${STATE_FILE} misses siteId. Fix it or run: npm run publish -- --reset`)
+  if (state === null || typeof state !== 'object' || Array.isArray(state)) broken('it is not a JSON object')
+  if (!isText(state.provider) || !Object.hasOwn(PROVIDERS, state.provider)) broken('"provider" must be "cloudflare" or "netlify"')
+  if (!isText(state.name)) broken('"name" is missing')
+  if (!isText(state.url)) broken('"url" is missing')
+  if (state.provider === 'cloudflare' && !isText(state.accountId)) broken('"accountId" is missing (a Cloudflare state needs it)')
+  if (state.provider === 'netlify' && !isText(state.siteId)) broken('"siteId" is missing (a Netlify state needs it)')
   return state
 }
 
