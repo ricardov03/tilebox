@@ -7,6 +7,7 @@
  * as linkedin, twitter, amazon, slack and codepen: never map to those).
  * Pure: no Vue or Node imports. nuxt.config.ts, the scripts and the app use it.
  */
+import { MAILTO_PREFIX } from './mail-shield'
 
 export const BRAND_ICONS: Readonly<Record<string, string>> = {
   // line-md
@@ -78,9 +79,12 @@ export const BRAND_ICONS: Readonly<Record<string, string>> = {
   'huggingface.co': 'simple-icons:huggingface',
 }
 
-/** Icons for links that are not web pages. */
+/**
+ * Icons for links that are not web pages. The mail scheme comes from `MAILTO_PREFIX`,
+ * because the literal string may be in no file of `dist/` (WP17, docs/invariants.md).
+ */
 const SCHEME_ICONS: Readonly<Record<string, string>> = {
-  'mailto:': 'line-md:email',
+  [MAILTO_PREFIX]: 'line-md:email',
   'tel:': 'line-md:phone',
 }
 
