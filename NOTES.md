@@ -1143,3 +1143,71 @@ nuxt.com served only a PNG icon link on that day, so vite.dev (an SVG favicon) w
 ### Open
 - Safari and Firefox: not checked (headless Chromium only).
 - A host other than Cloudflare Pages or Netlify needs the `_headers` rules in its own format.
+
+## WP11
+
+Branch: `wp/11-second-wave` (from the local branch `merge/main-tmp`, commit `39f6970`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate worktree; the main checkout was not touched. Not merged, no tag. "Linktree second wave" = PLAN.md 13.5: schedule, save contact, QR code, share button, UTM tags, link check.
+
+### What was built
+- **Schedule.** `startsAt` / `endsAt` on every block type (`z.iso.datetime({ offset: true })`, `endsAt` after `startsAt` through ONE `superRefine` on `BlockSchema`, so the block form and the profile get the same check). Pure rules in `app/utils/schedule.ts`. `blockDropReason()` in `types/profile.ts` is the one rule for the build, `check:profile` and the tests. `toPublicProfile()` got a 4th argument `{ now?, envSiteUrl? }`; `modules/public-profile.ts` passes the time of the render (build time; in dev, the last profile change). The public block keeps `endsAt` only. `BentoGrid.vue` writes `data-ends-at` on the `<li>`; `app/pages/index.vue` adds the inline script (`ENDS_AT_SCRIPT`, 194 bytes, `tagPosition: 'bodyClose'`) only when a block has an end date. It sets `hidden` (Tailwind preflight: `display: none !important`).
+- **Save contact.** `ContactSchema` (strict, all optional), `app/utils/vcard.ts` (pure: escaping, 75-byte folding that never cuts a character, control and bidi characters removed by code point), `content/site-extras.ts` writes or REMOVES `public/site/contact.vcf`. `ContactBlock.vue` = `Tile` with the new `download` prop (only with it a local `href` becomes a link). The public profile gets `contact: { fileName }` only, and only when the file exists.
+- **QR code.** `qrSvg()` (`uqr` `renderSVG`, ecc M, border 2) in `content/site-extras.ts`; https only (`isSiteUrl`); env > `site.url`. `QrBlock.vue` is an `<img>`. `GET /api/site/qr.png` (dev only, `assertEditorRequest(event, 'none')`) draws the local SVG with sharp at 1024 px, nearest-neighbour.
+- **Share button.** `ShareButton.vue`, included in `ProfileHeader.vue` behind a `share` prop (the public page passes `site.share !== false`; the editor preview does not pass it). Same markup on server and client, so no `ClientOnly` and no hydration mismatch in the built page.
+- **UTM tags.** `app/utils/utm.ts` (`withUtm`, `withoutUtm`, `isExternalHttpUrl`). String work, not `URL.searchParams`: the typed query and hash stay byte for byte. `toPublicBlock()` tags link, social, map and video URLs. `toPublicSite()` drops `utm`. `sameAsOf()` strips the tags, so JSON-LD identity URLs stay clean.
+- **Link check.** `content/link-check.ts` (`linkTargets`, `classifyStatus`, `checkLink`, `checkLinks`, `linkTable`), `scripts/check-links.ts` (`--broken-only` for `publish.mjs`), `POST /api/links/check`, `useLinkCheck()` (`useState`, memory only), `LinkCheckButton.vue`, `BlockRowBadges.vue`.
+- **Editor.** All new UI is in NEW components. `useEditor()` now `provide`s the draft (`EDITOR_DRAFT`, `useEditorDraft()`), and `useSiteDraft()` reads and writes `site.*` and `contact` through it. So `edit.vue` has NO change, `SitePanel.vue` has one include line (`<EditorSiteExtras />`) plus one type on `withKey`, `BlockForm.vue` has two includes (`EditorBlockExtraFields`, `EditorBlockAdvanced`), `BlockList.vue` two (`EditorLinkCheckButton`, `EditorBlockRowBadges`), `PreviewTile.vue` one. `ImagePicker.vue` was not touched.
+- `server/api/save.post.ts` runs `buildSiteExtras()` BEFORE it writes the profile (no network, no sharp), so the dev page never drops a fresh contact or QR tile for a missing file and never links to a stale card.
+
+### Deviations and why
+1. **The example has a block that starts in 2099 (`b13`, "Scheduled draft tile").** The brief said "no time-dependent content except one `endsAt` in 2099", and also asked the privacy spec to prove that a future-start title is in no file of `dist/`. That proof needs such a block in the built profile. A 2099 start is as stable as a 2099 end, and it follows the precedent of the hidden block `b11`. Cost: `check:profile` prints one warning line on every build of the sample. The `endsAt` 2099 is on `b7`.
+2. **No `qr` block in the example**: it has no `site.url` (checked). `dist/site/qr.svg` exists only with `NUXT_PUBLIC_SITE_URL` or `site.url`.
+3. **The QR code always uses the LIGHT preset colors on a solid ground**, also in dark mode. The brief allowed "transparent/ground"; a light-on-dark code does not scan on many phones, and an `<img>` SVG cannot follow the theme toggle.
+4. **The contact card and the QR code are in a sibling module (`content/site-extras.ts`), not inside `buildSiteAssets()`.** The WP10b tests pin "8 files" and the exact folder listing of that builder. The script prints its summary line unchanged, then the extras lines.
+5. **`EMAIL;TYPE=INTERNET`** (the usual 3.0 form) instead of a bare `EMAIL`. `URL`, `TEL` and `EMAIL` are not text values in RFC 2426, so they are not comma-escaped; the schema and a second guard keep line breaks out.
+6. **Link check classes.** Other 4xx (400, 451...) count as `blocked`. A refusal of the SSRF guard (a private address) counts as `broken`: a visitor cannot open it either. Hidden blocks are checked too (the owner may show them again); the vCard URL is checked when the card is on. Besides "4 at a time" there is "one request per host at a time" (PLAN 13.5).
+7. **`content/unfurl.ts` (a WP10a file) got one option**: `method?: 'GET' | 'HEAD'` on `RequestOptions` (now exported) and `TransportInit`. Default `GET`, so the engine and its 152 tests are unchanged.
+8. **Icons.** `line-md` has no clock and no share icon (checked in the pack). Schedule badge: `line-md:calendar`. Share: `line-md:upload` (the arrow-out-of-a-tray shape of the iOS share icon), `line-md:confirm` after a copy. Contact: `line-md:account` (exists). All in `UI_ICONS`, so `check:icons` covers them (68 icons).
+9. **"Check links" sits at the top of the block list** (`BlockList.vue`), not in a tab header: the Blocks tab has no header, and this keeps `edit.vue` untouched.
+10. **Share button position on phones.** The fixed theme toggle covers the top right corner of the profile tile below `md`. The share button sits left of it (`right-16`), and at `md` and up in the corner (`md:right-6`). A test checks at 1280 and 390: 44 px, no overlap, 8 px gap or more, inside the tile, clear of the avatar and the name.
+11. `publish.mjs` runs the link check also with `--no-build`. Only `--skip-link-check` skips it. It can add up to about 5 minutes in the worst case (60 dead hosts); a normal profile takes seconds.
+
+### For the merge with the two parallel branches
+- `BlockForm.vue`: my change is the 10 lines before the last `<div class="mt-2 ...">` (two components that emit `update:block`). They need only `block` and the form's `emit`.
+- `SitePanel.vue`: `<EditorSiteExtras />` before the closing `</div>`, and `Record<string, Site[keyof Site]>` in `withKey()` (`site.utm` is an object, so `string | boolean` no longer fits). If the refactor rewrites `withKey()`, keep it spreading `site.value`: that is what keeps `share` and `utm` alive when another field changes.
+- `useEditor.ts`: `BLOCK_TYPES`, `BLOCK_TYPE_LABELS`, `newBlock`, `copyOf`, `blockSummary` got the two types; `provide(EDITOR_DRAFT, draft)` is the first line of `useEditor()`.
+- The Site tab has new labels. Kept unique against the WP10b tests (`getByLabel` matches substrings): the card uses "Role", not "Job title".
+
+### Known limits (documented in the README)
+- A scheduled START needs a new publish after that time. `check:profile` says so, with the date.
+- A tile with a passed `endsAt` stays visible with JavaScript off, and its text is in the files of the site until the next publish. Not for secrets.
+- In `nuxt dev`, a page opened right after a save can log one Vue hydration warning (server bundle and client bundle refresh at slightly different times). Dev only; it was there before for every saved field. The built page has none.
+
+### Tests
+- `static`: 191 passed (was 152). New file `tests/e2e/second-wave.spec.ts` (37 tests): schema (old profile valid, offset needed, `endsAt` after `startsAt`, every block type, qr sizes, utm slugs, strict `contact`), schedule matrix with a fixed `now` (both layouts cleaned, only `endsAt` ships, input untouched), `datetime-local` <-> ISO, script under 400 bytes; UTM matrix (existing query and hash, existing `utm_*`, `mailto:`, `tel:`, local path, same site, `www.`, `noUtm`, hidden block, image source untouched, env URL wins, `sameAs` clean, brand icon + cache key on the ORIGINAL url with a real cache file); vCard (escaping, CRLF only, 75-byte lines, no `PHOTO`, profile email absent from the card and from the public profile, stale file removed); QR (no URL = no file, colors, no script in the SVG, env wins, http refused); link check with a mocked transport (HEAD first, honest UA, pinned address, GET retry reads 2 chunks at most, redirect followed, DNS / certificate / timeout reasons, private address refused with no connection, targets, 4 at a time and one per host). Browser: end-date script with `page.clock` (hidden at load in 2100; hidden by the 60 s check), share button (clipboard permission, "Link copied", gone after 2 s, no foreign or `/api/` request; the `navigator.share` branch with a stub), geometry at 1280 and 390, contact tile `href` + `download` + a real download event, no QR without a site URL. `privacy.spec.ts` +2 (`.vcf` is a text file now): the 2099 block is in no file of `dist/`; the card is in `dist/` only when it is on and has no profile email. `public.spec.ts` counts tiles with `blockDropReason()`. a11y stays at 0 violations with the new tile and button.
+- `dev`: 54 passed (was 45). New file `tests/e2e/second-wave-editor.spec.ts` (7 tests): schedule round-trip to ISO with the machine's offset (saved file, reload, list badge, tile badge, dev page follows, Clear restores the block exactly), Expired badge, contact panel (public note, bad email refused, saved object, preview text, the card follows the save and leaves the disk when turned off), live UTM example (incomplete, bad value, saved, stored links clean, dev page tagged), share checkbox, "Check links" with the route mocked (badges, summary, file unchanged), the real routes (403 / 415 / 400 guards, a loopback link answers `blocked address` with no network, QR PNG 1024x1024 with the sandbox CSP on the SVG). `security-dev.spec.ts`: `/api/links/check` joined `JSON_ROUTES` (+2). The profile is backed up and restored; the two generated files are made again from the restored profile.
+- Both projects in one run: 243 passed, 2 skipped (the two "example only" tests: the dev server's `predev` creates `content/profile.json` before the static tests start; alone, `static` runs them).
+
+### Verification output (last lines)
+```
+$ npm run lint                      -> clean
+$ npm run typecheck                 -> clean
+$ npm run generate                  -> exit 0
+  warning: block "b13" starts on 2099-01-01T00:00:00Z. This build leaves it out: publish again after 2099-01-01T00:00:00Z to show it.
+  site: favicon from initials, social image generated (8 files in public/site/)
+  site: contact card written (/site/contact.vcf). Everything in it is public.
+$ ls dist/site                      -> the 8 files + contact.vcf (no qr.svg: the example has no site URL)
+$ NUXT_PUBLIC_SITE_URL=https://ricardo.example npx tsx scripts/build-site-assets.ts
+  site: QR code written for https://ricardo.example/
+$ grep -r "hello@example.com" dist | wc -l          -> 0
+$ grep -rl "Scheduled draft tile" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4422 E2E_DEV_PORT=3422 npx playwright test --project=static   -> 191 passed
+$ E2E_STATIC_PORT=4422 E2E_DEV_PORT=3422 npx playwright test --project=dev      -> 54 passed
+$ npm run check:icons               -> OK  68 icons found in installed Iconify packs
+$ npm run check:links               -> exit 0. 10 URLs: 6 ok, 0 blocked, 4 broken (the example.com/* sample paths answer 404)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks         -> exit 0
+```
+
+### Open
+- Review (Grok or OCR) not run yet. `content/link-check.ts`, `app/utils/vcard.ts` and the change in `content/unfurl.ts` are the security-relevant parts.
+- Safari and Firefox: not checked. `navigator.share` on a real phone: not checked (stubbed in the test).
+- `npm run publish` with the link check step was not run against a real provider (it needs Ricardo's login). `node scripts/publish.mjs --help` prints the new flag.
