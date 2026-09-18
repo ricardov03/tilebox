@@ -8,7 +8,8 @@
   before) and "Pexels" (PexelsPicker.vue). A picked stock photo is ONE `stock` event with `src`, `alt`
   and `source` together, so the form saves them in one step. An upload still emits `update:src`, and
   the form clears `source` then (a local file has no stock credit). After a pick the alt field follows
-  the new `alt` of the block (a change from outside, the field has no focus).
+  the new `alt` of the block (a change from outside, the field has no focus). "Is the alt the owner's
+  own?" is decided from the text in the FIELD: an emptied, refused field is not the owner's text.
 -->
 <script setup lang="ts">
 import type { PickResult } from '~~/content/pexels'
@@ -43,6 +44,9 @@ function onTabKey(event: KeyboardEvent) {
   void nextTick(() => tabButtons.value?.find(button => button.dataset.tab === next)?.focus())
 }
 
+/** The alt text field (EditorTextField): its text may differ from the draft while a value is refused. */
+const altField = useTemplateRef<{ text: () => string, sync: (value: string) => void }>('altField')
+
 /** The alt text this field filled in from a stock photo. Still the same = the owner did not write their own. */
 const prefilledAlt = ref<string | null>(null)
 
@@ -57,11 +61,15 @@ watch(() => props.id, () => {
  * text of a new block, or the text of the stock photo picked before. A text the owner wrote stays.
  */
 function onStockPick(result: PickResult) {
-  const current = (alt.value ?? '').trim()
+  // The text in the FIELD decides, not only the draft: a cleared field is refused ("Required"), so the
+  // draft still holds the old alt, and that old alt is not what the owner wants for the new photo.
+  const current = (altField.value?.text() ?? alt.value ?? '').trim()
   const replace = current === '' || current.startsWith('Sample image') || current === prefilledAlt.value
   const nextAlt = replace ? result.alt : current
   if (replace) prefilledAlt.value = result.alt
   emit('stock', { src: result.src, alt: nextAlt, source: result.source })
+  // The same alt as the draft has = no change of the model: the field is told by hand.
+  if (replace) void nextTick(() => altField.value?.sync(nextAlt))
 }
 
 const uploading = ref(false)
@@ -220,6 +228,7 @@ const altId = computed(() => `${props.id}-alt`)
     <EditorTextField
       v-if="requireAlt"
       :id="altId"
+      ref="altField"
       label="Alt text"
       required
       required-mark

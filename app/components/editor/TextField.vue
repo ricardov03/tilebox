@@ -101,6 +101,13 @@ function onBlur() {
   emit('blur')
 }
 
+defineExpose({
+  /** What the input shows now: a refused text is here and not in the draft. */
+  text: () => state.text,
+  /** The parent set the model to `value`. The field follows by the rules of a change from outside, also when the model did not change (a refused text over the same value). */
+  sync: (value: string) => field.modelChanged(value),
+})
+
 const errorId = computed(() => `${props.id}-error`)
 const describedBy = computed(() => [state.error ? errorId.value : '', props.describedby ?? ''].filter(Boolean).join(' ') || undefined)
 const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ? 'font-mono' : '', props.multiline ? 'py-2' : ''])
