@@ -195,17 +195,29 @@ test('contact panel: says that everything is public, refuses a bad email, saves,
   await panel.getByLabel('Note').fill('Met at the engine fair.')
   await panel.getByLabel('Note').blur()
 
+  // WP17: the address is OPT-IN. The card has no EMAIL line until the owner asks for it.
+  const cardText = async () => {
+    const href = await panel.locator('[data-contact-preview]').getAttribute('href')
+    return decodeURIComponent((href ?? '').replace('data:text/vcard;charset=utf-8,', ''))
+  }
+  const shareEmail = panel.getByLabel('Include my email in the contact file')
+  await expect(shareEmail).not.toBeChecked()
+  await expect(panel.locator('[data-share-email-note]')).toContainText('the file is public')
+  expect(await cardText()).not.toContain('ada.public@a.example')
+  await shareEmail.check()
+
   // The preview is the text the build writes, made from the draft.
-  const href = await panel.locator('[data-contact-preview]').getAttribute('href')
-  const preview = decodeURIComponent((href ?? '').replace('data:text/vcard;charset=utf-8,', ''))
+  const preview = await cardText()
   expect(preview).toContain('FN:Ada Lovelace\r\n')
   expect(preview).toContain('ORG:Analytical Engines\\, Ltd.\r\n')
+  expect(preview).toContain('EMAIL;TYPE=INTERNET:ada.public@a.example')
   expect(preview).not.toContain(before.profile.email)
   await expect(panel.locator('[data-contact-preview]')).toHaveAttribute('download', 'ada-lovelace.vcf')
 
   await save(page)
   expect(readProfile().contact).toEqual({
     enabled: true,
+    shareEmail: true,
     fullName: 'Ada Lovelace',
     org: 'Analytical Engines, Ltd.',
     title: 'Mathematician',

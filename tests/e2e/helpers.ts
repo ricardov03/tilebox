@@ -1,15 +1,40 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { extname, join, relative, resolve } from 'node:path'
 import type { Page } from '@playwright/test'
 import { parseProfile, type Profile } from '../../types/profile'
 
-import { PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT } from '../../content/resolve'
+import { EXAMPLE_PROFILE_PATH, PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT } from '../../content/resolve'
 
 /** Same resolution as the build: content/profile.json when it exists, else the example. `ROOT` comes from the resolver, which anchors on its own location. */
-export { PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT }
+export { EXAMPLE_PROFILE_PATH, PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT }
 
 /** The content the site was built from, validated with the same schema the app uses. Resolved on every call. */
 export function readProfile(): Profile {
   return parseProfile(JSON.parse(readFileSync(profilePath(), 'utf8')))
+}
+
+const TEXT_EXTENSIONS = new Set(['.html', '.json', '.js', '.mjs', '.css', '.txt', '.xml', '.svg', '.map', '.webmanifest', '.vcf'])
+
+/** Resolved inside a test, never at load time: a missing `dist/` fails a test, not the whole file. `dist` is a symlink to `.output/public`. */
+export function distDir(): string {
+  return realpathSync(resolve(ROOT, 'dist'))
+}
+
+/** Every text file under `dir`, recursive. */
+export function textFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) return textFiles(path)
+    return TEXT_EXTENSIONS.has(extname(entry.name)) ? [path] : []
+  })
+}
+
+/** Paths, relative to `dir`, of the text files that hold `needle` (case-insensitive). */
+export function filesContaining(dir: string, needle: string): string[] {
+  const lower = needle.toLowerCase()
+  return textFiles(dir)
+    .filter(file => readFileSync(file, 'utf8').toLowerCase().includes(lower))
+    .map(file => relative(dir, file))
 }
 
 export const THEME_KEY = 'tilebox:theme'

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { brandIconFor } from '../../app/utils/brand-icons'
+import { mailHref } from '../../app/utils/mail-shield'
 import { ENDS_AT_SCRIPT, isoToLocalInput, localInputToIso, scheduleState } from '../../app/utils/schedule'
 import { buildHead } from '../../app/utils/site-head'
 import { withoutUtm, withUtm } from '../../app/utils/utm'
@@ -234,7 +235,10 @@ test.describe('UTM tags (build time)', () => {
     expect(urlOf('map')).toBe(`https://maps.google.com/?q=City&${tags}`)
     expect(urlOf('vid')).toBe(`https://www.youtube.com/watch?v=dQw4w9WgXcQ&${tags}`)
     expect(urlOf('optout')).toBe('https://optout.example/page')
-    expect(urlOf('mail')).toBe('mailto:ada@a.example')
+    // WP17: a mail link has no `url` on the public page at all. It ships as a token, so there is nothing to tag.
+    const mail = out.blocks.find(item => item.id === 'mail')
+    expect(mail && 'url' in mail).toBe(false)
+    expect(mail && 'mail' in mail ? mailHref(mail.mail ?? { u: '', d: '' }) : '').toBe('mailto:ada@a.example')
     expect(urlOf('own')).toBe('https://ada.example/blog')
     expect(urlOf('off')).toBeUndefined()
     const text = JSON.stringify(out)
@@ -311,6 +315,8 @@ test.describe('contact card (vCard 3.0)', () => {
       org: 'Analytical Engines, Ltd.',
       title: 'Mathematician; writer',
       phone: '+44 20 7946 0000',
+      // WP17: the address reaches the file only with `shareEmail`.
+      shareEmail: true,
       email: 'ada.public@a.example',
       url: 'https://ada.example/?a=1,2;b',
       note: `Line one\nLine two with a very long text ${'x'.repeat(120)} and an accent: Bogotá ñ`,
@@ -400,13 +406,13 @@ test('a DRAFT never rewrites the contact card of the saved profile; the QR code 
   const dir = mkdtempSync(join(tmpdir(), 'tilebox-draft-card-'))
   try {
     const blocks: Parameters<typeof profileOf>[0] = [{ id: 'c', type: 'contact', size: '1x1' }, { id: 'q', type: 'qr', size: '1x1' }]
-    const saved = profileOf(blocks, { contact: { enabled: true, email: 'ada@saved.example' }, site: { url: 'https://ada.example' } })
+    const saved = profileOf(blocks, { contact: { enabled: true, shareEmail: true, email: 'ada@saved.example' }, site: { url: 'https://ada.example' } })
     await buildSiteExtras({ profile: saved, outDir: dir })
     const card = readFileSync(join(dir, 'contact.vcf'), 'utf8')
     expect(card).toContain('ada@saved.example')
 
     // Typed, not saved: another public email and another site URL. "Regenerate" and "Make the QR code" send this.
-    const draft = profileOf(blocks, { contact: { enabled: true, email: 'draft@unsaved.example' }, site: { url: 'https://new.example' } })
+    const draft = profileOf(blocks, { contact: { enabled: true, shareEmail: true, email: 'draft@unsaved.example' }, site: { url: 'https://new.example' } })
     const result = await buildSiteExtras({ profile: draft, outDir: dir, draft: true })
     // The card is a file the public tile serves: it follows the SAVE, never the draft.
     expect(readFileSync(join(dir, 'contact.vcf'), 'utf8')).toBe(card)

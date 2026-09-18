@@ -5,35 +5,19 @@
  *    Same for a hidden block (`hidden: true`, WP10a) and for a block that has not started yet
  *    (`startsAt`, WP11): none of its text is in `dist/`. The contact card (`.vcf`) is a text file too.
  * 2. The sanitizer itself (`toPublicProfile` in types/profile.ts), unit-checked.
+ * WP17: the email shield has its own file, `mail-shield.spec.ts`. Here the email
+ * tests only got stricter: an address is public nowhere, whatever `showEmail` says.
  */
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
-import { extname, join, relative, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
-import { profileIsPersonal, readProfile, ROOT } from './helpers'
+import { distDir, filesContaining, profileIsPersonal, readProfile, textFiles } from './helpers'
 import { ProfileSchema, PublicProfileSchema, toPublicProfile, type Profile } from '../../types/profile'
+import { decodeEmail } from '../../app/utils/mail-shield'
 
 const EXAMPLE_EMAIL = 'hello@example.com'
-const TEXT_EXTENSIONS = new Set(['.html', '.json', '.js', '.mjs', '.css', '.txt', '.xml', '.svg', '.map', '.webmanifest', '.vcf'])
-
-/** Every text file under `dir`, recursive. `dist` is a symlink to `.output/public`, so it is resolved first. */
-function textFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) return textFiles(path)
-    return TEXT_EXTENSIONS.has(extname(entry.name)) ? [path] : []
-  })
-}
-
-function filesContaining(dir: string, needle: string): string[] {
-  const lower = needle.toLowerCase()
-  return textFiles(dir)
-    .filter(file => readFileSync(file, 'utf8').toLowerCase().includes(lower))
-    .map(file => relative(dir, file))
-}
 
 test.describe('the built site', () => {
-  /** Resolved inside the tests: a missing `dist/` fails a test, not the file load. */
-  const distDir = () => realpathSync(resolve(ROOT, 'dist'))
   const profile = readProfile()
 
   test('has text files to check', () => {
@@ -46,13 +30,15 @@ test.describe('the built site', () => {
     const email = profile.profile.email
     test.skip(!email, 'this profile has no email (WP17: it is optional)')
     if (!email) return
-    test.skip(profile.profile.showEmail, 'this profile shows its email on purpose')
-    // A block that links to the same address (a mailto tile) publishes it on purpose.
-    const inBlocks = JSON.stringify(profile.blocks).toLowerCase().includes(email.toLowerCase())
-    test.skip(inBlocks, 'a block of this profile uses the same address')
-    // WP11: `contact.email` is public by intent. Typing the same address there publishes it on purpose.
-    const inCard = profile.contact?.enabled === true && profile.contact.email?.toLowerCase() === email.toLowerCase()
-    test.skip(inCard, 'the contact card of this profile uses the same address')
+    // WP17: `showEmail: true` no longer publishes the address either. It ships as a shield token.
+    // A block that links to the same address in a way that is NOT `mailto:` publishes it on purpose.
+    const inBlocks = profile.blocks.some(block => 'url' in block && block.url !== undefined
+      && !block.url.toLowerCase().startsWith('mailto:') && block.url.toLowerCase().includes(email.toLowerCase()))
+    test.skip(inBlocks, 'a block of this profile puts the address in a URL that is not a mailto:')
+    // `contact.email` reaches the public vCard only with `shareEmail` (WP17). Then it is public on purpose.
+    const inCard = profile.contact?.enabled === true && profile.contact.shareEmail === true
+      && profile.contact.email?.toLowerCase() === email.toLowerCase()
+    test.skip(inCard, 'the contact card of this profile shares the same address on purpose')
     expect(filesContaining(distDir(), email)).toEqual([])
   })
 
@@ -97,13 +83,17 @@ test.describe('the built site', () => {
     const text = readFileSync(card, 'utf8')
     expect(text).not.toMatch(/PHOTO/i)
     const email = profile.profile.email?.toLowerCase()
-    const sameOnPurpose = profile.contact?.email?.toLowerCase() === email
-    if (email && !profile.profile.showEmail && !sameOnPurpose) expect(text.toLowerCase()).not.toContain(email)
+    const sameOnPurpose = profile.contact?.shareEmail === true && profile.contact.email?.toLowerCase() === email
+    if (email && !sameOnPurpose) expect(text.toLowerCase()).not.toContain(email)
+    // WP17: the public email of the card is opt-in. No opt-in, no EMAIL line at all.
+    if (profile.contact?.shareEmail !== true) expect(text).not.toMatch(/^EMAIL/im)
   })
 
-  test('the example email is in no file of dist/', () => {
+  test('the example email is in no file of dist/, although the example shows it on two tiles', () => {
     test.skip(profileIsPersonal(), 'dist/ was built from content/profile.json, not from the example')
     expect(profile.profile.email).toBe(EXAMPLE_EMAIL)
+    // WP17: the sample has a `mailto:` link tile and a social `email` tile with this very address.
+    expect(profile.blocks.filter(block => 'url' in block && block.url?.toLowerCase().startsWith('mailto:')).length).toBe(2)
     expect(filesContaining(distDir(), EXAMPLE_EMAIL)).toEqual([])
   })
 })
@@ -133,10 +123,13 @@ test.describe('toPublicProfile', () => {
     expect(result.blocks).toEqual(base.blocks)
   })
 
-  test('keeps the email when showEmail is true', () => {
+  test('keeps the email when showEmail is true, as a TOKEN and never as an address (WP17)', () => {
     const result = toPublicProfile(withInfo({ showEmail: true }))
-    expect(result.profile.email).toBe('private@tilebox.test')
+    expect('email' in result.profile).toBe(false)
     expect('showEmail' in result.profile).toBe(false)
+    expect(result.profile.emailToken).toBeTruthy()
+    expect(result.profile.emailToken && decodeEmail(result.profile.emailToken)).toBe('private@tilebox.test')
+    expect(JSON.stringify(result)).not.toContain('private@tilebox.test')
   })
 
   test('avatar: the uploaded one wins, then the Gravatar file, then none', () => {

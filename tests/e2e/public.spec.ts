@@ -42,22 +42,21 @@ test('highlights render as a list under the bio', async ({ page }) => {
   await expect(list.locator('> li')).toHaveText(highlights)
 })
 
-test('the email shows as a mailto link only when showEmail is true', async ({ page }) => {
-  await page.goto('/')
-  const { showEmail } = profile.profile
-  // WP17: the email is optional. No email = no line, whatever `showEmail` says.
-  const email = profile.profile.email ?? 'no-email-in-this-profile@tilebox.invalid'
+test('the email line shows only when showEmail is true, and never as a raw address (WP17)', async ({ page }) => {
+  const { showEmail, email } = profile.profile
   if (!profileIsPersonal()) expect(showEmail).toBe(false)
-  const link = page.locator(`a[href="mailto:${email}"]`)
-  if (showEmail && profile.profile.email) {
-    await expect(link).toHaveCount(1)
-    await expect(link).toContainText(email)
+  await page.goto('/')
+  const line = page.locator('[data-profile-email]')
+  if (!showEmail || !email) {
+    await expect(line).toHaveCount(0)
+    if (email) await expect(page.locator('body')).not.toContainText(email)
     return
   }
-  await expect(link).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText(email)
-  // The example has no mailto link at all.
-  if (!profileIsPersonal()) await expect(page.locator('a[href^="mailto:"]')).toHaveCount(0)
+  // Prerendered: a button, no href, the human form. The address is nowhere in the document.
+  await expect(line).toHaveCount(1)
+  expect(await page.content()).not.toContain(email)
+  await expect(line).toHaveText(email.replace(/@/g, ' at ').replace(/\./g, ' dot '))
+  await expect(line).toHaveAttribute('aria-label', `Email ${profile.profile.name}`)
 })
 
 test('the status dot pings: a halo behind a solid dot, both hidden from assistive tech, no layout shift', async ({ page }) => {
@@ -85,7 +84,8 @@ test('the status dot pings: a halo behind a solid dot, both hidden from assistiv
 })
 
 test('a link without an icon shows the brand icon of its URL', async ({ page }) => {
-  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && b.url !== undefined && brandIconFor(b.url) !== undefined)
+  // A web URL: a mail tile has a brand icon too (the envelope), but no `href` to find it by (WP17).
+  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && b.url?.startsWith('https://') && brandIconFor(b.url) !== undefined)
   if (!profileIsPersonal()) expect(block?.id).toBe('b10')
   test.skip(!block || block.type !== 'link', 'this profile has no such link')
   if (!block || block.type !== 'link' || !block.url) return
