@@ -2012,6 +2012,106 @@ Live migration check: two foreign icons put into `content/profile.json` by hand,
 `profile: removed icon "lucide:mail" from block b1 (only line-md and simple-icons are supported)` and the same line for `mdi:home` / block `b7`. A second run printed nothing.
 
 ### Open
-- The `IconPicker.vue` preview `img` still calls `api.iconify.design`. One line for its owner, above. Until then the editor makes one foreign request per shown result; the search itself makes none.
+- ~~The `IconPicker.vue` preview `img` still calls `api.iconify.design`.~~ Done in WP19: WP17 had already swapped the route, WP19 added the missing `&color=`. See `## WP19 integration`.
 - No Grok verdict for this branch yet (`npm run review -- --range main..wp/18-icon-sets --files <block>`).
 - A pack update can hide more brands. `npm run check:icons` runs in `pregenerate`, so a build says so; the profile keeps the name until you change it (the migration only removes a FOREIGN set, never a hidden icon, so nothing is lost silently).
+
+## WP19 integration
+
+Branch `wp/19-integration`, from `origin/main` (which already held WP15, WP16 and WP18). Date: 2026-09-18. Work was done in a git worktree. Goal: merge `origin/wp/17-owner-feedback` onto it and leave ONE green branch. Not merged into `main`, no tag.
+
+`wp/17-owner-feedback` was branched BEFORE WP16 and WP18, so this is the first time WP17's schema rework sits next to WP18's icon rule and WP16's editor chrome.
+
+### The merge (`dba725d`)
+`git merge origin/wp/17-owner-feedback` left 5 conflicts. Every one was resolved by keeping BOTH sides. Nothing was dropped.
+
+| File | What collided | How it was resolved |
+|---|---|---|
+| `playwright.config.ts` | Both sides added spec names: WP18 `icons.spec.ts` + `icons-dev.spec.ts`, WP17 `incomplete.spec.ts` + `mail-shield.spec.ts` | Union, in both the header comment and `testMatch`. The `static` list now has all four; the `dev` list already had `icons-dev.spec.ts` from the automatic merge |
+| `app/components/editor/BlockForm.vue` | Only the top comment. WP17 rewrote the icon paragraph and the "every field optional" paragraph, WP16 rewrote the footer paragraph | Union: WP17's schema and icon wording plus WP16's small red trash button in its own footer row. The BODY merged by itself and was read back: `EditorLinkIconField`, `auto-caption="From the network"`, `data-form-incomplete`, `EditorDeleteButton` + `EditorDeleteConfirm` in the footer are all there |
+| `README.md` | The two rows of the Tests table | Union. The `static` row keeps WP17's dot wording ("the status dot pings, no halo with reduced motion, no layout shift", which supersedes "the dot pulses") plus WP18's `icons.spec.ts` sentence, and WP17's two specs got the sentences its own branch never wrote into the table. The `dev` row keeps WP16's delete-button and axe clause, WP18's `icons-dev.spec.ts` clause and WP17's `editor-inputs.spec.ts` wording (no "Required", no "Save is blocked": the stricter, current rule). Checked afterwards: the Scripts table is ONE table with each script exactly once (the other `npm run ...` rows are in the Link previews and Troubleshooting tables) |
+| `PLAN.md` | The status line, and section 8 where both branches appended a WP section at the same place | One status line that names WP16, WP17 and WP18. Section 8: both sections kept, `### WP17` then `### WP18` (numeric order) |
+| `NOTES.md` | WP17 appended its section where WP16 + WP18 already sat | Whole sections, never interleaved, in order WP16, WP17, WP18 |
+| `docs/invariants.md` | Auto-merged, but WRONG: WP17 numbered its new rules 20 and 21 against a base whose Process group ended at 19, while WP18 had inserted rule 16. The file ended with TWO rules numbered 20 | Renumbered: WP17's two rules are 17 and 18 under a topic heading ("Email and empty fields (WP17)", the style of every other group), and Process is 19 to 22. No numbered reference breaks: the only numbers quoted in code and docs are 8, 10, 12 and 16, all in groups that did not move |
+| `docs/security.md` | Auto-merged cleanly | Read back: "The icon routes (WP18)" and "The email shield (WP17)" are both there, in section order |
+| `types/profile.ts` | Auto-merged cleanly, and this was the one to check | Read back: `iconName = z.string().regex(ICON_NAME_RE, ICON_SETS_MESSAGE)` (WP18) AND `MailTokenSchema`, `mail`, `emailToken`, `publicTarget()`, `PublicProfileSchema`'s guard, `ContactSchema.shareEmail`, `incompleteReason()`/`incompleteMessage()`/`blockDropReason`'s `incomplete` (WP17). Both intents survive; step 2b then proved it with tests |
+| `content/profile.example.json` | Auto-merged (WP18 never touched it) | `b7` is the `mailto:` link with no own icon, `b14` is the social `email` tile. No block of the sample has an `icon` at all, so the sample cannot hold a foreign one |
+| `package.json` / `package-lock.json` | No conflict: WP17 added no dependency | Untouched by the merge (`git diff origin/main -- package.json package-lock.json` is empty), so no `npm install` was needed. `npm ci` passes |
+
+**A defect found while resolving `NOTES.md`, and fixed.** `origin/main` carried a scrambled `NOTES.md` from the WP18 merge: WP16's `### Verification` heading had an EMPTY body, WP16's verification block and its `### Open` sat inside the WP18 section under the heading `### Checks`, and WP18's own verification block had lost its heading and its opening fence (so it rendered as prose and the stray closing fence opened a block that never closed). The two halves were told apart by their numbers: 143 review assertions and 72 contrast pairs and "static 239 / dev 83" are WP16, while 130 assertions and "static 262 / dev 91" and the `:3482` icon-route proof are WP18. Each half went back to its own section. Repairing it exposed a SECOND, much older fence defect in the shared prefix (the WP4 review block near line 323 opened a fence, put `(exit 0, no output)` in it and never closed it, so every fence after it was mispaired). It was fixed too: `npm run lint` does not read Markdown, so nothing had caught either one. `NOTES.md` fences now pair up from top to bottom.
+
+### Step 2a. The picker previews really come from the local route (`e47ff74`)
+WP17 had already swapped `previewUrl()` to `/api/icons/svg?name=`, so no code built an `api.iconify.design` URL any more (checked with grep over `app server content scripts tests nuxt.config.ts`: only comments mention the host). What was MISSING is the second half of WP18's contract: the route takes `&color=<rrggbb>` because **an `<img>` is its own document, so `currentColor` inside the SVG resolves to black** and a preview would be black on the dark ground. The pre-WP17 picker sent the ink color; WP17's rewrite dropped it.
+- `IconPicker.vue` now reads its OWN resolved `color` (the box carries the `ink` token, `ref="inkProbe"`) with `getComputedStyle`, parses the `rgb(...)` it always returns, and sends it. A `MutationObserver` on `<html>`'s `data-theme` and `data-colors` reads it again, so the toggle, a system change and a color preset all follow. Empty until it is read: the SVG then keeps `currentColor`, the safe first paint.
+- `LinkIconField.vue` builds no URL of its own; it passes the auto icon to the picker. So `IconPicker.vue` is the ONE place.
+- **Real proof, no mock.** `npm run dev -- --port 3502`, then a headless Playwright script (in `.tilebox-test/`, git-ignored, deleted after the run) opened `/edit`, added a link block, typed `mailto:you@example.com`, searched `home` and clicked the first result, listening to every request. 18 checks, all PASS:
+  - the automatic preview is `/api/icons/svg?name=line-md%3Aemail&color=0b1f33`, and the `<img>` decoded (`naturalWidth > 0`: the ROUTE drew it, not the `<Icon>` fallback);
+  - 20 result previews, every one on the local route, all 20 decoded;
+  - a freshly picked `line-md:home` showed at once, **with no dev restart**, and decoded;
+  - **22 distinct `/api/icons/svg` URLs, every one HTTP 200**; 1 `/api/icons/search`, 200;
+  - **0 requests to `api.iconify.design`**, 0 requests that left the dev origin, 0 failed requests, 0 console errors;
+  - the color follows the theme: `0b1f33` light, `eaf3fa` dark, and the dark one also answered 200 and decoded.
+  - One thing the first run taught: a check for the string `iconify` is WRONG. Vite serves `@iconify/vue`'s own source from `localhost` under `_nuxt/@fs/.../node_modules/`, which is not a network call. The check now reads the HOST of the URL.
+- Permanent cover, because a throwaway script proves nothing tomorrow: 2 new tests in `icons-dev.spec.ts` ("WP19: the icon picker previews come from the local route") drive the real picker against the real routes with NO `page.route` mock and assert the same things. WP17's own test in `editor.spec.ts` mocks both icon routes, so it proves the picker's contract but not the route; both now exist.
+- `editor.spec.ts` pinned the exact src (`'/api/icons/svg?name=line-md%3Aemail'`). A new helper `iconSvgSrc(name)` pins the NAME and requires six hex digits of color, which is stricter than before, not looser.
+
+### Step 2b. WP17's optional fields did not loosen WP18's icon rule (`931296c`)
+3 tests in `icons.spec.ts` ("WP19: the relaxed schema keeps the icon rule"):
+- every block schema of `BlockSchema.options` that HAS an `icon` (link and contact today; a new block type is covered by itself, because the list is derived, not written out) refuses `lucide:mail`, `mdi:home`, `github`, `line-md`, `''` and `' line-md:github'`, each with `ICON_SETS_MESSAGE` on the `icon` path, while the same block with `line-md:github` and nothing else is VALID: the relaxation is real and the rule still bites;
+- an emptied icon is never accepted as `""` (WP17 removes the key; the schema is the second layer);
+- the most relaxed whole file WP17 allows (only `profile.name`, a link with no title and no url) parses, and the same file with `icon: "lucide:mail"` does not, with the two-sets message; with `simple-icons:github` it parses again.
+**Checked that the tests bite.** With `iconName` mutated to a bare `z.string()`, all 3 fail; restored, all 3 pass.
+
+### Step 2c. A migrated icon never makes a block incomplete (`92a6d64`)
+The seam: WP18's `ensure:profile` migration removes an icon of another set, and WP17's `blockDropReason` gained `incomplete`. If an icon counted as an essential value, the migration would silently delete a tile from the page. It does not, and 3 tests in `icons.spec.ts` hold that. They take the real example profile, put `lucide:mail` on its first https link block, run the REAL `migrateIconsText()` and then:
+- the icon is reported removed, the migrated file parses, the block has no `icon` key, and `incompleteReason()`, `incompleteMessage()` and `blockDropReason()` are all null;
+- `resolveLinkIcon()` gives an automatic icon whose `source` is never `manual`, and that name is an allowed name with no `iconProblem()`; with the foreign icon still on it the picture came from the icon itself, so the two really differ;
+- `toPublicProfile()` keeps the block and its id in `layout.desktop`, and no `icon` of another set is on any public block.
+**Checked that the tests bite.** With `incompleteReason()` mutated to return `'pick an icon'` for a link without one, 2 of the 3 fail (the third is about `resolveLinkIcon` and correctly does not care); restored, all 3 pass.
+
+### Two test races the merged suite exposed (`0e1d8bb`, `99e63c9`)
+Both are TEST defects, not product defects, and both were found by running the full suite rather than a file. Each was reproduced and then removed at the cause, not by a retry or a longer timeout.
+- `mail-shield.spec.ts`, "no axe violation after the upgrade": failed once in a full run, passed 5 of 5 alone. `useHumanSignal` arms its listeners in `onMounted`, so the ONE `page.mouse.move` a test sends before hydration is simply missed, and nothing else ever fires: the tile stays a button for ever. A real visitor sends a stream of pointer events and never notices. Measured with a throwaway probe: `#__nuxt._vnode` (set by `app.mount()`) is the honest hydration signal, and one mouse move AFTER it upgrades the tile every time. A local `hydrated(page)` helper now runs before the signal in the three mouse/keyboard tests. The "one mouse move is enough" assertion is unchanged: it is now deterministic instead of lucky.
+- `editor-inputs.spec.ts`, "WP17: cleared title, bio, handle and email are saved as absent keys": failed in the full run and in a whole-`dev` run, passed alone and with `editor.spec.ts` before it. The failure is in the CLEANUP tail: `title.fill(...)`, `blur()`, then `Ctrl+S` with nothing in between. An `EditorTextField` commits after a short idle, so the save could write the OLD model, leave the title out, and then nothing would save again, so the 15 s poll could never pass. It now waits for the preview tile to carry the title (the tile IS the model) before saving, and asserts "Saved" before polling the file.
+
+### Verification (every exit code read, never grepped from coloured output)
+```
+$ npm ci                                          -> exit 0
+$ npm run lint                                    -> exit 0
+$ npm run typecheck                               -> exit 0
+$ npm run test:review                             -> exit 0, passed=143 failed=0 total=143 expected=143
+$ npm run check:contrast                          -> exit 0, all 72 pairs pass
+$ npm run check:icons                             -> exit 0, 68 icons (line-md and simple-icons)
+$ npm run check:links                             -> exit 0, 6 ok, 0 blocked, 3 broken (the example.com links of the sample)
+$ rm -f content/profile.json && npm run generate   -> exit 0 (14 blocks, the sample)
+$ grep -rEi "mailto:" dist | wc -l                -> 0
+$ grep -r "hello@example.com" dist | wc -l        -> 0
+$ grep -r "contact@example.com" dist | wc -l      -> 0
+$ grep -r "you@example.com" dist | wc -l          -> 0
+$ find dist -name '*.svg' -path '*icons*'         -> empty
+$ test -f dist/_headers                           -> present
+$ test -f dist/site/contact.vcf                   -> present (0 EMAIL lines: shareEmail is off in the sample)
+$ test -e dist/edit                               -> absent (and no dist/edit.html, no dist/api)
+$ grep -n "contact.vcf" dist/robots.txt           -> "Disallow: /site/contact.vcf"
+$ E2E_STATIC_PORT=4501 E2E_DEV_PORT=3501 npx playwright test   (ONE run, both projects)
+    -> exit 0.  static: 300 passed, 2 skipped   dev: 100 passed   total: 400 passed, 2 skipped
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0, would cut v0.1.1 (from v0.1.0)
+$ npm run dev -- --port 3503, probed after 25 s
+    /                                 -> 200 text/html
+    /edit                             -> 200 text/html
+    /api/profile                      -> 200 application/json
+    /api/icons/search?q=mail          -> 200 application/json
+    /api/icons/svg?name=line-md:email -> 200 image/svg+xml
+    -> 0 ERROR lines in the log
+```
+The 2 skips are the SAME two "example only" static tests as in WP14, WP15, WP16, WP17 and WP18, and they skip themselves for the same reason: `privacy.spec.ts:92` "the example email is in no file of dist/, although the example shows it on two tiles" and `second-wave.spec.ts:808` "no qr tile and no qr file without a site URL (the example has none)". The `predev` of the dev server writes `content/profile.json` before the static project reads it, so `profileIsPersonal()` is true by then. The first of the two is not the only guard: `mail-shield.spec.ts` reads `content/profile.example.json` directly and scans `dist/` for every address of the sample, and that runs unconditionally.
+
+Test count, and where the numbers come from. WP18 left `main` at static 262 + dev 91; WP17 alone was static 271 + dev 86 over a pre-WP16 base. Merged and wired: static 300 + 2 skipped, dev 100, 400 passed in one run. The 5 new tests of this branch are static +3 (the schema seam) +3 (the migration seam) = +6 and dev +2 (the two un-mocked picker tests).
+
+### Open
+- **No Grok verdict for this branch, and none for WP16, WP17 or WP18 either.** This branch is the first place their code sits together, so the review that matters is this range: `npm run review -- --range origin/main..wp/19-integration --files app/components/editor/IconPicker.vue types/profile.ts --ledger`, then a second block for the tests, then `--scope pr` before any merge to `main`. `CLAUDE.md` asks for it before every merge; it has not run.
+- The merge is committed and the branch is green, but nothing was merged into `main` and no tag was made, as asked.
+- `PublicProfileSchema`'s guard still does not read `site` (WP17's stated deviation): `site.description` with an address would not be caught. Unchanged here.
+- The dev server still prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. Older than WP17.
+- `contact.email` of the sample is never published. To make the sample SHOW the opt-in, set `"shareEmail": true` in `content/profile.example.json` and the `dist` scan for `contact@example.com` has to allow that one file.
+- Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport; Safari and Firefox were never checked by hand; the history rewrite that drops the old attribution trailers; real content from Ricardo.
