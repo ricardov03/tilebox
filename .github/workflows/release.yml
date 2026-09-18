@@ -1,0 +1,94 @@
+name: Release
+
+# Runs when a version tag is pushed. The tag is made locally by `npm run release`.
+# The job checks the tag against package.json, runs the same checks as CI,
+# zips dist/ and publishes a GitHub Release with the built-in GITHUB_TOKEN.
+# It never deploys. Deploy is a local command: `npm run deploy`.
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Validate tag and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Tag matches package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$expected" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)."
+            echo "Make the tag with 'npm run release' so both stay in sync."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package.json."
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Generate
+        run: npm run generate
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright (static project)
+        run: npx playwright test --project=static
+
+      - name: Zip dist and write checksum
+        run: |
+          cd dist && zip -r "../tilebox-${GITHUB_REF_NAME}.zip" . && cd ..
+          sha256sum "tilebox-${GITHUB_REF_NAME}.zip" > "tilebox-${GITHUB_REF_NAME}.sha256"
+          cat "tilebox-${GITHUB_REF_NAME}.sha256"
+
+      - name: Pick the release body
+        id: body
+        run: |
+          file="releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$file" ]; then
+            echo "Using $file"
+          else
+            file="$RUNNER_TEMP/release-body.md"
+            printf 'See CHANGELOG.md\n' > "$file"
+            echo "::warning::releases/${GITHUB_REF_NAME}.md is missing. Using a short body."
+          fi
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: tilebox ${{ github.ref_name }}
+          body_path: ${{ steps.body.outputs.path }}
+          files: |
+            tilebox-*.zip
+            tilebox-*.sha256
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
