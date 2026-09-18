@@ -63,7 +63,7 @@ export function ensureProfile(): string {
   }
   catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
-    throw new Error(`Cannot copy ${EXAMPLE_PROFILE_PATH} to ${PERSONAL_PROFILE_PATH}: ${reason}`)
+    throw new Error(`Cannot copy ${EXAMPLE_PROFILE_PATH} to ${PERSONAL_PROFILE_PATH}: ${reason}`, { cause: error })
   }
   return PERSONAL_PROFILE_PATH
 }
