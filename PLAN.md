@@ -255,9 +255,10 @@ Any color preset works with any font preset. 9 combinations. The canvas shows `c
 - Default set: `line-md` (https://icones.js.org/collection/line-md). 1218 animated line icons. Install `@iconify-json/line-md`.
 - Brand fallback: `simple-icons`. Install `@iconify-json/simple-icons`. Use only when `line-md` lacks the brand (WhatsApp, Dribbble, Behance, Medium).
 - Any icon in `profile.json` is a full Iconify name: `line-md:github`. Any collection works if its `@iconify-json/<prefix>` pack is installed.
+- Brand icon from the URL (WP10a): `app/utils/brand-icons.ts` maps about 60 hosts to an icon (`line-md` first, else `simple-icons`, never an icon the pack marks `hidden`). A link tile without `icon` uses it. No network. The built site bundles only the brands its profile uses.
 - Public page bundle: `nuxt.config.ts` collects every icon name in `profile.json` plus the social map into `icon.clientBundle.icons`. Zero icons fetched at runtime.
 - Editor icon picker (`app/components/editor/IconPicker.vue`): a search box. Dev only, so it may call the Iconify search API (`https://api.iconify.design/search?query=<q>&prefix=line-md`). It shows results as live `<Icon>` previews. It has a link "Browse all on icones.js.org". You can also paste any `prefix:name`.
-- `scripts/check-icons.ts`: reads `profile.json`, checks every icon name exists in an installed pack. Fails `generate` with a clear message if not. The save route runs the same check and returns the error to the editor.
+- `scripts/check-icons.ts`: reads `profile.json`, checks every icon name (and every value of the brand map) exists in an installed pack and is not marked `hidden`. Fails `generate` with a clear message if not. The save route runs the same check and returns the error to the editor.
 
 Social network map (`app/utils/networks.ts`):
 
@@ -318,11 +319,15 @@ Two files, one shape (WP7): `content/profile.json` is the user's document, ignor
     { "id": "b6", "type": "map",     "size": "1x1", "label": "Bogota", "sublabel": "GMT-5", "url": "https://maps.google.com/?q=Bogota" },
     { "id": "b7", "type": "link",    "size": "1x1", "title": "Say hello", "url": "mailto:x@y.z", "icon": "line-md:email", "pop": true },
     { "id": "b8", "type": "section", "title": "Projects" },
-    { "id": "b9", "type": "video",   "size": "2x1", "url": "https://youtube.com/watch?v=...", "title": "A talk" }
+    { "id": "b9", "type": "video",   "size": "2x1", "url": "https://youtube.com/watch?v=...", "title": "A talk" },
+    { "id": "b10", "type": "link",   "size": "2x1", "title": "Nuxt", "url": "https://nuxt.com/", "spotlight": "pop",
+      "enrich": true, "showImage": true, "favicon": "/icons/fb6ffcbd70de0858.png", "image": "/thumbs/3da768251b881db0.webp", "imageAlt": "...",
+      "meta": { "title": "Nuxt: The Full-Stack Vue Framework", "description": "...", "siteName": "Nuxt", "themeColor": "#020420", "source": "html", "fetchedAt": "2026-09-18T08:12:31.492Z" } },
+    { "id": "b11", "type": "text",   "size": "1x1", "body": "A draft", "hidden": true }
   ],
   "layout": {
-    "desktop": ["b1","b2","b3","b4","b5","b6","b7","b8","b9"],
-    "mobile":  ["b1","b4","b2","b3","b5","b6","b7","b8","b9"]
+    "desktop": ["b1","b2","b3","b4","b5","b6","b7","b8","b9","b10","b11"],
+    "mobile":  ["b1","b4","b2","b3","b5","b6","b7","b8","b9","b10","b11"]
   }
 }
 ```
@@ -336,7 +341,10 @@ Rules:
 - Validate with `zod` in `types/profile.ts`. Export both the schema and the TS types from it.
 - Social `network` is a key of the map in section 5.5 (`app/utils/networks.ts`).
 - `theme.colors` and `theme.fonts` are keys of `app/utils/presets.ts`. zod enum. Unknown key = validation error.
-- `icon` on any block is optional. Full Iconify name. Link tiles without `icon` show the fetched favicon.
+- `icon` on any block is optional. Full Iconify name. A link tile without `icon` shows, in order: the brand icon of its URL, its local `favicon` file, `line-md:link` (WP10a).
+- `hidden` (WP10a): optional boolean on EVERY block type. `toPublicProfile()` removes a hidden block and its id from both layouts, so it is in no file of `dist/`. The editor keeps it, dimmed.
+- Link preview fields (WP10a), all optional, strict objects, old profiles stay valid: `enrich` (absent = false; the editor sets `true` on new links), `showImage` (absent = false, the second switch), `favicon` (`/icons/<hash>.<png|jpg|webp|gif|svg>`, a local path only), `image` (`/thumbs/<hash>.webp`, a local path only), `imageAlt`, `meta` `{ title?, description?, siteName?, themeColor?, source: 'oembed' | 'html' | 'brand', fetchedAt }`. `title` and `description` stay the display fields; fetched values fill them only when empty. The public profile never has `enrich` or `meta`, and has `image` only with `showImage`.
+- `spotlight` (WP10a): optional `'pop' | 'wobble' | 'buzz'` on link blocks. At most ONE block of the profile (zod `superRefine`).
 - `image.source` is `null` in v1. Later it holds `{ provider: 'unsplash' | 'pexels' | 'r2', id, url, author, authorUrl }` (section 13). The schema has the field from day one so old JSON stays valid.
 
 ## 7. Folder layout
@@ -364,7 +372,8 @@ tilebox/
     utils/networks.ts  sizes.ts  presets.ts
   server/api/save.post.ts  server/api/upload.post.ts   # dev only
   types/profile.ts
-  scripts/fetch-favicons.ts   # runs before generate
+  scripts/fetch-links.ts      # link previews + YouTube thumbnails, runs before generate (was fetch-favicons.ts)
+  content/unfurl.ts  content/unfurl-cache.ts   # the link preview engine (WP10a)
   scripts/build-presets.ts    # presets.ts -> presets.css, runs predev + pregenerate
   scripts/check-icons.ts      # every icon in profile.json exists in an installed pack
   scripts/check-contrast.ts   # WCAG numbers for all presets
@@ -421,6 +430,17 @@ Done when: `npm run publish -- --help` prints the usage. With fake `wrangler` an
 Owns: the `highlights`, `email`, `showEmail` fields and the `PublicProfile` types + `toPublicProfile()` in `types/profile.ts`, `modules/public-profile.ts`, the `#profile` alias target in `nuxt.config.ts`, `app/composables/useProfile.ts`, `app/components/ProfileHeader.vue`, `content/gravatar.ts`, `content/migrate.ts`, `scripts/fetch-avatar.ts`, the migration in `scripts/ensure-profile.ts`, the placeholder warning in `scripts/validate-profile.ts`, `server/api/avatar/gravatar.{get,post}.ts`, `app/components/editor/HighlightsField.vue`, `app/components/editor/GravatarButton.vue`, the Profile tab in `app/pages/edit.vue`, `tests/e2e/privacy.spec.ts`, `package.json` scripts (`fetch:avatar`, its place in `predev` and `pregenerate`).
 Design (decided by Ricardo): (A) the status dot pulses, not under `prefers-reduced-motion`, and is `aria-hidden`. (B) Up to 3 highlights under the bio, as a list. (C) The email is required and private by default: with `showEmail: false` it is in no file of the built site, because the page imports a sanitized copy of the profile, never the raw file. With `showEmail: true` it is a `mailto:` link with `line-md:email` under the highlights. (D) The avatar comes from the email through Gravatar, downloaded at build time to `public/avatar.gravatar.jpg` (ignored by git). An uploaded `profile.avatar` wins. The public page never calls gravatar.com. The editor has the email field, the visibility checkbox, 3 highlight inputs with counters and a "Use my Gravatar" button (dev-only route).
 Done when: `grep -r "hello@example.com" dist | wc -l` is 0 after `npm run generate` on the example. `tests/e2e/privacy.spec.ts` (every text file of `dist/` + the sanitizer unit checks) is green. A long bio + 3 long highlights + email + status stay inside the 2x2 tile at 1280 and 390. An old `profile.json` gets the 3 new keys from `ensure:profile`, one printed line, nothing else changed; a second run does nothing. A save in `/edit` reaches the public page in dev without a restart. `public/avatar.gravatar.jpg` is never tracked. axe stays at 0 violations. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev` green. README, `content/README.md`, NOTES.md `## WP9`.
+
+### WP10a. Smart links and quick wins
+Owns: `app/utils/brand-icons.ts`, `content/unfurl.ts`, `content/unfurl-cache.ts`, `server/api/unfurl.post.ts`, `scripts/fetch-links.ts` (replaces `scripts/fetch-favicons.ts`; the npm script `fetch:favicons` stays as an alias), `app/components/editor/LinkEnrich.vue`, `app/components/editor/LinkIconField.vue`, `tests/e2e/links.spec.ts`, `tests/e2e/unfurl.spec.ts`. Edits in shared files, kept small: the link fields, `hidden`, `spotlight`, `toPublicBlock()` and the hidden filter of `toPublicProfile()` in `types/profile.ts`; `resolveLinkIcon()` / `linkImageLayout()` in `app/components/blocks/media.ts`; `LinkBlock.vue`; the brand check in `scripts/check-icons.ts`; `iconsIn()` and the `$development` icon list in `nuxt.config.ts` (the `#manifest/icons` alias is gone, `#manifest/thumbs` stays); `withLocalLinkFiles()` in `modules/public-profile.ts`; `toggleHidden`, `duplicateBlock` and the one-spotlight rule in `useEditor.ts`; rows and controls in `BlockList.vue`, `PreviewTile.vue`, `BlockForm.vue`; event wiring in `edit.vue`; two blocks in `content/profile.example.json`. It adds NO site-level metadata: that is WP10b (`site` object, "Site" tab).
+Design (decided by Ricardo):
+- A. Brand icon from the URL. A hand-made map host -> Iconify name for about 60 sites, `line-md` first, else `simple-icons`, never an icon the pack marks `hidden`. Lower-case host, no `www.`, the full host then each parent domain. `mailto:` -> `line-md:email`, `tel:` -> `line-md:phone`. Tile icon, in order: `block.icon` > brand icon > local favicon file > `line-md:link`. The built site bundles only the brand icons its profile uses; `nuxt dev` bundles the whole map so the editor previews any URL at once.
+- B. Link preview ("unfurl"). Per link: `enrich` (icon and text) and `showImage` (the website's image, a SECOND switch, default off). The engine follows a fixed algorithm: normalize (http/https, no credentials, no fragment, 2048 chars, = cache key, fresh 30 days, conditional refresh, `force`); keyless oEmbed shortcuts and the GitHub avatar shortcut; an SSRF-safe fetch for EVERY request (resolve, public unicast only, pinned IP, manual redirects max 5 with a check per hop, ports 80/443, 8 s, honest user agent `tilebox-unfurl/<version> (+https://github.com/ricardov03/tilebox)`, 512 KB or `</head>`, html content-type, charset from header then meta then utf-8); SAX head parse (htmlparser2) with og > twitter > plain priorities, relative URLs against the final URL, title 120 and description 200 chars; favicon order svg < 100 KB > apple-touch-icon > PNG icon > manifest (192 first, no maskable-only) > `/favicon.ico` (largest PNG entry, BMP skipped) > Google s2 last, target the smallest icon of 96 px or more, file `public/icons/<sha1[:16]>.<ext>`; image only with `showImage`, 5 MB, magic bytes (png, jpeg, webp, gif, avif, no SVG), 200x200 minimum, 1200 px wide WebP (no EXIF) in `public/thumbs/<sha1[:16]>.webp`; never throws for a network reason, answers `{ ok: false, reason }`. Fetched text pre-fills `title` / `description` only when empty; "Use fetched title/description" buttons when they differ; the owner can always overwrite. `enrich` off: only the typed text plus the brand icon; `meta`, `favicon`, `image` are cleared.
+- The dev route `POST /api/unfurl`: dev only, `Host` must be localhost / 127.0.0.1 / [::1], an `Origin` must be the same origin, one request per target host at a time.
+- Build: `npm run fetch:links` (in `pregenerate`) runs the engine for links with `enrich: true` whose files are missing, keeps the YouTube thumbnails of video blocks, never fails the build, prints one summary line. The build never writes the profile: `withLocalLinkFiles()` takes the paths from the cache and drops a path whose file is not on disk.
+- Featured look: with `showImage` + `image` the picture fills the top (2x2, 1x2) or the right third (2x1), `object-cover`, lazy (eager + high priority among the first 3 phone tiles). Text and image never overlap. 1x1 never shows it.
+- C. Quick wins. `hidden` on every block type: `toPublicProfile()` removes the block and its ids from both layouts; the editor dims it, shows an eye-off badge, and has Hide / Show in the list row, in the tile controls and in the form. Duplicate (list row and form): fresh id, " copy", right after the original in both layouts, selected, never the spotlight. `spotlight: pop | wobble | buzz` on link blocks: at most one (zod `superRefine`; the editor moves it), transform-only keyframes, 1 cycle per 6 s, off with reduced motion, a select with a live sample in the link form.
+Done when: a github.com link without `icon` renders the inline `line-md:github` SVG on the static page and no request leaves the origin. `npm run check:icons` fails on a missing or hidden icon of the brand map. The title of a hidden block is in no file of `dist/` (`tests/e2e/privacy.spec.ts`). The spotlight tile has `animation-name: none` under reduced motion and axe stays at 0 violations. `tests/e2e/unfurl.spec.ts` (local `node:http` server, `allowHosts` for tests only) covers head priorities, relative URLs, the redirect limit, the 512 KB cut, non-html, ICO PNG extraction, magic bytes, private addresses refused without `allowHosts` (10.0.0.1, 127.0.0.1, 169.254.169.254, ::1, IPv4-mapped), cache freshness + 304, oEmbed with a mocked connection. The `dev` project covers the preview card with a mocked route, "Use fetched title", the saved switches, the failure reason, hide, duplicate, one spotlight. `.output/server` has no copy of the engine. `grep -r "hello@example.com" dist | wc -l` = 0. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev`, `node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks` green. README "Link previews", `content/README.md`, NOTES.md `## WP10a`.
 
 ## 9. Code review with Grok
 
@@ -539,6 +559,17 @@ Decided by Ricardo on 2026-09-18: plan only. Build when he asks.
 **Done when.** A new user can type a handle in the editor, see that the address is free, run `npm run publish` with zero prompts except the login, and see the live URL back in the editor. An old user with an existing `publish.json` sees no change in behavior.
 
 **Size.** One work package. Owner files: `scripts/publish.mjs`, `scripts/lib/site-name.mjs`, `server/api/publish/*`, `server/api/editor/state.get.ts`, `app/components/editor/PublishPanel.vue`, a few lines in `edit.vue` and `useEditor.ts`.
+
+### 13.5 Linktree-inspired second wave (planned)
+
+Planned only. Every item stays static: the work happens on the owner's machine in the editor or at build time, and the public page makes no runtime network call.
+
+- **Schedule.** Optional `showFrom` / `showUntil` dates on a block. `toPublicProfile()` drops a block outside its window at build time (like `hidden`), and the editor shows a clock badge. A static site changes only on a build, so `npm run publish` on the day (or a scheduled CI build) applies it; no client-side date check that would ship hidden text.
+- **vCard.** A build script writes `public/contact.vcf` from the public profile (name, site URL, the email only when `showEmail` is true). A tile or a profile button links to the local file with `download`.
+- **QR code.** A build script draws the QR code of `NUXT_PUBLIC_SITE_URL` as a local SVG (`public/qr.svg`) with a small dev dependency, no runtime library. The page shows it in a tile or a `<dialog>`; the editor has "Download QR".
+- **Share / copy button.** One small button on the profile tile: `navigator.share()` when the browser has it, else `navigator.clipboard.writeText()`. Browser APIs only, no third-party script, no network call.
+- **UTM at build.** An optional UTM setting in the profile (`source`, `medium`, `campaign`; it fits the site-level settings of WP10b). `toPublicProfile()` appends the parameters to http(s) tile URLs at build time. The stored URLs stay clean. Never added to `mailto:` and `tel:`.
+- **Dead-link check.** `npm run check:links`: a HEAD (then GET) request per tile URL through the SSRF-safe fetch of `content/unfurl.ts`, same honest user agent, one request per host at a time. It prints a table and exits 0: a warning, never a build failure. The editor can show the last result per block.
 
 ## Sources
 - https://tailwindcss.com/docs/installation/framework-guides/nuxt
