@@ -1,7 +1,7 @@
 <!--
   Local editor. Dev only: the routes it uses 404 outside `nuxt dev`, and
   nuxt.config.ts keeps /edit out of the prerendered output.
-  Left: live preview (the real tiles, drag to reorder). Right: Profile | Blocks | Theme.
+  Left: live preview (the real tiles, drag to reorder). Right: Profile | Blocks | Theme | Site.
   The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
   do not exist, so the page renders one short message and nothing else.
   Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice,
@@ -11,6 +11,7 @@
 <script setup lang="ts">
 import type { DeleteSource, EditorTab } from '~/composables/useEditor'
 import { GRAVATAR_PUBLIC_PATH, ProfileInfoSchema, toPublicProfileInfo } from '~~/types/profile'
+import type { Site } from '~~/types/site'
 
 definePageMeta({ layout: false })
 
@@ -42,6 +43,7 @@ const tabs: { id: EditorTab, label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'blocks', label: 'Blocks' },
   { id: 'theme', label: 'Theme' },
+  { id: 'site', label: 'Site' },
 ]
 const tabButtons = useTemplateRef<HTMLButtonElement[]>('tabButtons')
 
@@ -232,6 +234,13 @@ function setShowEmail(event: Event) {
   const target = event.target
   if (!(target instanceof HTMLInputElement) || !draft.value) return
   draft.value.profile.showEmail = target.checked
+}
+
+/** Site tab (WP10b). No keys left = no `site` object in the file. */
+function setSite(value: Site | undefined) {
+  if (!draft.value) return
+  if (value) draft.value.site = value
+  else delete draft.value.site
 }
 
 function setHighlights(value: string[]) {
@@ -580,6 +589,20 @@ const previewProfile = computed(() => {
             <EditorThemePanel
               :model-value="draft.profile.theme"
               @update:model-value="editor.setTheme"
+            />
+          </div>
+
+          <!-- Site -->
+          <div
+            v-show="tab === 'site'"
+            id="panel-site"
+            role="tabpanel"
+            aria-labelledby="tab-site"
+          >
+            <EditorSitePanel
+              :profile="draft"
+              :has-avatar="Boolean(previewProfile.avatar)"
+              @update:site="setSite"
             />
           </div>
         </div>

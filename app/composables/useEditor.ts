@@ -6,7 +6,7 @@
 import type { Block, BlockType, Profile, Theme } from '~~/types/profile'
 
 export type LayoutKey = 'desktop' | 'mobile'
-export type EditorTab = 'profile' | 'blocks' | 'theme'
+export type EditorTab = 'profile' | 'blocks' | 'theme' | 'site'
 /** Where the inline delete confirm shows: a list row, a preview tile or the block form. */
 export type DeleteSource = 'list' | 'tile' | 'form'
 
