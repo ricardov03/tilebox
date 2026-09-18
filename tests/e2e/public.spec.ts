@@ -1,15 +1,21 @@
 /**
  * Public page, prerendered `dist/`. Server: scripts/serve-dist.mjs.
  */
+import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
+import { siteAssetsIfPresent } from '../../content/site-files'
+import { blockDropReason } from '../../types/profile'
 import { siteTitle } from '../../app/utils/site-head'
-import { columnsOf, profileIsPersonal, readProfile, THEME_KEY, tileLefts } from './helpers'
+import { columnsOf, profileIsPersonal, readProfile, ROOT, THEME_KEY, tileLefts } from './helpers'
 import { brandIconFor } from '../../app/utils/brand-icons'
 import { COLOR_PRESETS } from '../../app/utils/presets'
 
 const profile = readProfile()
-/** What the build ships: hidden blocks are dropped (WP10a). */
-const visibleBlocks = profile.blocks.filter(block => !block.hidden)
+/**
+ * What the build ships: hidden blocks are dropped (WP10a), and so are blocks outside their schedule and
+ * `contact` / `qr` blocks without their generated file (WP11). Same rule as the build: `blockDropReason()`.
+ */
+const visibleBlocks = profile.blocks.filter(block => blockDropReason(block, new Date(), siteAssetsIfPresent(resolve(ROOT, 'dist/site'))) === null)
 const GRID = 'ul[aria-label="Tiles"]'
 const TILES = `${GRID} > li`
 const TOGGLE = 'button[aria-label^="Theme:"]'

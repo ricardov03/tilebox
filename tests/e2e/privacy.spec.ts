@@ -2,17 +2,18 @@
  * Privacy of the built site. No browser.
  * 1. The built site: with `showEmail: false` the email is in no text file of
  *    `dist/` (HTML, payload JSON, JS chunks, CSS). Run `npm run generate` first.
- *    Same for a hidden block (`hidden: true`, WP10a): none of its text is in `dist/`.
+ *    Same for a hidden block (`hidden: true`, WP10a) and for a block that has not started yet
+ *    (`startsAt`, WP11): none of its text is in `dist/`. The contact card (`.vcf`) is a text file too.
  * 2. The sanitizer itself (`toPublicProfile` in types/profile.ts), unit-checked.
  */
-import { readdirSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { extname, join, relative, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { profileIsPersonal, readProfile, ROOT } from './helpers'
 import { ProfileSchema, PublicProfileSchema, toPublicProfile, type Profile } from '../../types/profile'
 
 const EXAMPLE_EMAIL = 'hello@example.com'
-const TEXT_EXTENSIONS = new Set(['.html', '.json', '.js', '.mjs', '.css', '.txt', '.xml', '.svg', '.map', '.webmanifest'])
+const TEXT_EXTENSIONS = new Set(['.html', '.json', '.js', '.mjs', '.css', '.txt', '.xml', '.svg', '.map', '.webmanifest', '.vcf'])
 
 /** Every text file under `dir`, recursive. `dist` is a symlink to `.output/public`, so it is resolved first. */
 function textFiles(dir: string): string[] {
@@ -46,6 +47,9 @@ test.describe('the built site', () => {
     // A block that links to the same address (a mailto tile) publishes it on purpose.
     const inBlocks = JSON.stringify(profile.blocks).toLowerCase().includes(profile.profile.email.toLowerCase())
     test.skip(inBlocks, 'a block of this profile uses the same address')
+    // WP11: `contact.email` is public by intent. Typing the same address there publishes it on purpose.
+    const inCard = profile.contact?.enabled === true && profile.contact.email?.toLowerCase() === profile.profile.email.toLowerCase()
+    test.skip(inCard, 'the contact card of this profile uses the same address')
     expect(filesContaining(distDir(), profile.profile.email)).toEqual([])
   })
 
@@ -64,6 +68,33 @@ test.describe('the built site', () => {
       expect(texts.length, `hidden block ${block.id} has no text to look for`).toBeGreaterThan(0)
       for (const value of texts) expect(filesContaining(distDir(), value), `"${value}" of hidden block ${block.id}`).toEqual([])
     }
+  })
+
+  test('a block that has not started yet is in no file of dist/ (WP11 schedule)', () => {
+    const now = Date.now()
+    const waiting = profile.blocks.filter(block => !block.hidden && block.startsAt && Date.parse(block.startsAt) > now)
+    // The tracked example ships one link that starts in 2099 on purpose.
+    if (!profileIsPersonal()) expect(waiting.map(block => block.id)).toEqual(['b13'])
+    test.skip(waiting.length === 0, 'this profile has no block that starts later')
+    const onPage = JSON.stringify(profile.blocks.filter(block => !waiting.includes(block) && !block.hidden))
+    for (const block of waiting) {
+      const texts = Object.entries(block)
+        .filter(([key, value]) => typeof value === 'string' && value.length >= 8 && !['id', 'type', 'size', 'icon', 'network'].includes(key))
+        .map(([, value]) => String(value))
+        .filter(value => !onPage.includes(value))
+      expect(texts.length, `block ${block.id} has no text to look for`).toBeGreaterThan(0)
+      for (const value of texts) expect(filesContaining(distDir(), value), `"${value}" of block ${block.id}`).toEqual([])
+    }
+  })
+
+  test('the contact card is in dist/ only when it is turned on, and the profile email is not in it', () => {
+    const card = resolve(distDir(), 'site/contact.vcf')
+    expect(existsSync(card)).toBe(profile.contact?.enabled === true)
+    if (!existsSync(card)) return
+    const text = readFileSync(card, 'utf8')
+    expect(text).not.toMatch(/PHOTO/i)
+    const sameOnPurpose = profile.contact?.email?.toLowerCase() === profile.profile.email.toLowerCase()
+    if (!profile.profile.showEmail && !sameOnPurpose) expect(text.toLowerCase()).not.toContain(profile.profile.email.toLowerCase())
   })
 
   test('the example email is in no file of dist/', () => {
