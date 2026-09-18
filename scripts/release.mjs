@@ -270,10 +270,17 @@ const releaseFile = join(releasesDir, `v${nextVersion}.md`)
 let summary = null
 let keepExistingReleaseFile = false
 
+/** Ask one line. Resolves to null when there is no terminal or stdin closes. */
 async function askLine(question) {
+  if (!stdin.isTTY) {
+    log(`${question}(no terminal)`)
+    return null
+  }
   const rl = createInterface({ input: stdin, output: stdout })
+  const closed = new Promise(resolve => rl.once('close', () => resolve(null)))
   try {
-    return (await rl.question(question)).trim()
+    const answer = await Promise.race([rl.question(question), closed])
+    return answer === null ? null : answer.trim()
   }
   finally {
     rl.close()
@@ -282,17 +289,11 @@ async function askLine(question) {
 
 async function readOwnSummary() {
   log('    Type your summary. Finish with an empty line.')
-  const rl = createInterface({ input: stdin, output: stdout })
   const lines = []
-  try {
-    for (;;) {
-      const line = await rl.question('    > ')
-      if (line.trim() === '') break
-      lines.push(line.trim())
-    }
-  }
-  finally {
-    rl.close()
+  for (;;) {
+    const line = await askLine('    > ')
+    if (line === null || line === '') break
+    lines.push(line)
   }
   return lines.join(' ').trim() || null
 }
@@ -358,7 +359,11 @@ async function chooseSummary(draft) {
     if (opts.yes && !current) return null
     const answer = (await askLine(current
       ? '    [a]ccept, [e]dit, [w]rite my own, [s]kip summary: '
-      : '    [w]rite my own, [s]kip summary: ')).toLowerCase()
+      : '    [w]rite my own, [s]kip summary: '))?.toLowerCase()
+    if (answer === null || answer === undefined) {
+      log('    no terminal input. Summary skipped. Use --summary or --yes next time.')
+      return current && opts.yes ? current : null
+    }
     if (answer === 'a' && current) return current
     if (answer === 's') return null
     if (answer === 'w') {
