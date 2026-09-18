@@ -522,3 +522,57 @@ Fixes applied on `wp/6-release` after the review of `scripts/release.mjs` and `.
 7. Windows: `npm` and `npx` spawn with `shell: true` on `win32` (Node refuses to spawn `.cmd` files without a shell). `\r\n` in captured output is normalized to `\n`.
 
 Note: `.wrangler/` in `.gitignore` is a WP0-owned file edit, accepted by the architect.
+
+## WP8
+
+Branch: `wp/8-publish`. Date: 2026-09-18. Node used: 22.23.1. wrangler 4.134.0, netlify-cli 27.8.0.
+
+### What was built
+- `scripts/publish.mjs` (`npm run publish`, alias `npm run site:publish`): node built-ins only, same helpers as `release.mjs` (`run()`, `askLine()`, `log`/`step`, stdout-only parsing, `.cmd` through the shell on Windows). First run: provider prompt (2 options) or `--provider`, name prompt or `--name` (rules: `[a-z0-9-]`, no dash at the ends, max 37, loop on invalid), auth check (`wrangler whoami --json` / `netlify status --json`), browser login with inherited stdio when logged out and a re-check, account pick (`whoami` accounts / `netlify api listAccountsForUser`; prompt when more than one, or `--account`), availability pre-check (Cloudflare: `dns.resolve4('<name>.pages.dev')`, ENOTFOUND/ENODATA = free; Netlify: HTTPS HEAD, 404 = free), create (`wrangler pages project create` with `CLOUDFLARE_ACCOUNT_ID` / `netlify sites:create --json --disable-linking`), state file written only after a successful create. Then build (`npm run generate` with `NUXT_PUBLIC_SITE_URL` = `--site-url`, else the shell env, else the saved URL), `dist/index.html` check, file count (max 20,000) and size (max 25 MiB) check, upload (`wrangler pages deploy` with `WRANGLER_OUTPUT_FILE_PATH=.tilebox/wrangler-out.ndjson`, alias read from the `pages-deploy-detailed` line for previews; `netlify deploy --json`, `url` for production, `deploy_url` for previews), `Live:` / `Preview:` line, custom domain hint. Later runs: state + auth check + build + upload.
+- State `.tilebox/publish.json`: `{ provider, name, accountId | accountSlug, siteId (Netlify), url, createdAt, lastPublishedAt }`. No token, ever. A conflicting `--provider` or `--name` against the saved state exits 2 with a hint to drop the flag or `--reset`.
+- Flags: `--provider`, `--name`, `--account`, `--preview`, `--site-url`, `--no-build`, `--yes`, `--reset`, `--help`. Exit codes 0/1/2. Every external command is printed as `$ wrangler ...` before it runs; env values (`CLOUDFLARE_ACCOUNT_ID`) are printed in the prefix. Timeouts: 30 s checks and create, 10 min login, build and upload.
+- `package.json`: `publish`, `site:publish`, `deploy` = `publish --provider cloudflare`, `deploy:preview` = `... --preview`. `netlify-cli` 27.8.0 added next to `wrangler`. `.gitignore`: `.tilebox/`, `.netlify/`.
+- Docs: README "Publish" (first run, later runs, flags, state, what is never stored, custom domain, limits; the Git-connected Cloudflare and Netlify sections stay as optional). CLAUDE.md publish line. PLAN.md WP8 + status line.
+
+### Deviations and why
+- The CLI binaries are resolved from `PATH` first, then `node_modules/.bin` (not `npx`). `npx` always prefers the local install, which makes the fake-CLI tests impossible. The resolved path is printed once (`using ...`). A global older `wrangler` on `PATH` would win; the README says the pinned versions are the dev dependencies.
+- `--account <id-or-slug>` added (not in the brief): needed for `--yes` runs with more than one account or team.
+- The Netlify HEAD pre-check cannot tell a created-but-empty site from a free name: both answer 404 with the same headers (`netlify.netlify.app` answers 404 on 2026-09-18, so the brief's example was not usable). The create step covers it: non-interactive `netlify sites:create` auto-suffixes (`<name>-123`); the script warns and stores the real name. Taken names with a deploy answer 200 (`hono.netlify.app`) or 301 (`docs.netlify.app`) and are refused before create.
+- `demo-site.pages.dev` is a real, taken project, so the shim tests use a random `tb-test-<time>-<pid>` name and the pre-checks run for real inside the shim tests.
+- The state file is also consulted on later runs for a quick auth check (`whoami`/`status`, 30 s), so a fresh machine or an expired login runs the browser login before the upload fails.
+- `npm ci` on `main` failed: `package-lock.json` was out of sync (`conventional-commits-filter`). `npm install -D netlify-cli` rewrote the lock (dedupe, 20k lines); the lock now matches `package.json` and `npm ci` works.
+- Reattaching an existing project after `--reset` is manual (write `.tilebox/publish.json` by hand, documented in README). The taken-name check would otherwise refuse your own project name.
+
+### Verified (fake CLIs on PATH, no login)
+Shims `wrangler` and `netlify` (shell scripts in the session scratchpad, not committed) emulate `whoami --json`, `login`, `pages project create` (incl. the `8000000` taken error), `pages deploy` (writes the ND-JSON output file), `status --json` (logged in but not linked exits 1 with JSON, like the real CLI), `api listAccountsForUser`, `sites:create --json` (incl. auto-suffix), `deploy --json` (prod and draft). 47 checks, all pass:
+- Cloudflare first run: `Live: https://<name>.pages.dev`; state has provider, name, `accountId`, url, dates; create and deploy got `CLOUDFLARE_ACCOUNT_ID` and `WRANGLER_OUTPUT_FILE_PATH`. Later run: no create, no DNS check, deploys again. `--preview`: `Preview: https://preview.<name>.pages.dev` from the alias; production url kept in the state.
+- Netlify first run with auto-suffix: warns `It created <name>-123 instead`, state has `name: <name>-123`, `siteId`, `accountSlug`, `ssl_url`; `Live:` from the deploy JSON `url`; `--preview` prints `deploy_url`.
+- Logged out + `--yes`: exit 1 `not logged in. Run: npx netlify login`, no state. Logged out without `--yes`: login runs, `whoami` runs twice, publish continues.
+- Two accounts + `--yes`: exit 2 listing them; `--account acc-222` saved. Taken via CLI error: exit 1, no state.
+- Real DNS: `hono.pages.dev` refused as taken, no create call; a random name is free. Real HTTPS: `hono.netlify.app` (200) and `docs.netlify.app` (301) refused; a random name is free (404).
+- `--help` exit 0, unknown flag exit 2 with usage, invalid names (`-bad`, `bad-`, `Bad`, `a_b`, 40 chars) exit 2, invalid `--provider` exit 2, `--reset` with and without a state, provider and name conflicts exit 2, `--site-url ftp://x` exit 2, no TTY and no flags exit 2 with `Pass --provider`, `--no-build` without `dist/` exit 1.
+- Not verified (needs Ricardo's account): a real `wrangler login` / `netlify login`, a real create and a real upload on both providers, the multi-account prompt with a real account list.
+
+### Verification output (last lines)
+
+`npm run lint`
+```
+> eslint .
+(exit 0)
+```
+
+`npm run typecheck`
+```
+> nuxt typecheck
+ℹ Nuxt Icon server bundle mode is set to local
+ℹ Nuxt Icon client bundle consist of 26 icons with 22.33KB(uncompressed) in size
+(exit 0)
+```
+
+`npm run generate`
+```
+[nitro] ✔ Generated public .output/public
+[nitro] ✔ You can preview this build using npx serve .output/public
+└  ✨ You can now deploy .output/public to any static hosting!
+(exit 0)
+```
