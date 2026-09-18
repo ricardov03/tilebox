@@ -9,7 +9,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import AxeBuilder from '@axe-core/playwright'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { siteAssetsIfPresent } from '../../content/site-files'
 import { distDir, EXAMPLE_PROFILE_PATH, filesContaining, readProfile, ROOT, settle } from './helpers'
 import {
@@ -286,6 +286,21 @@ function mailTile(): { title: string, href: string } | null {
   return { title: block.title, href: block.url }
 }
 
+/**
+ * `useHumanSignal` arms its listeners in `onMounted`, so a pointer event a test
+ * sends BEFORE hydration is simply missed. A real visitor sends a stream of them
+ * and never notices; a test sends exactly one, and the tile would stay a button
+ * for ever (WP19 saw this as a flake in the full run, 1 in 6). `#__nuxt._vnode`
+ * is set by `app.mount()`, so it is true only once Vue has taken over.
+ */
+async function hydrated(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => !!(document.getElementById('__nuxt') as unknown as { _vnode?: unknown } | null)?._vnode,
+    undefined,
+    { timeout: 15_000 },
+  )
+}
+
 test.describe('the mail tile in a browser', () => {
   test('before any interaction it is a button, and the DOM holds no address', async ({ page }) => {
     const tile = mailTile()
@@ -309,6 +324,7 @@ test.describe('the mail tile in a browser', () => {
     test.skip(tile === null, 'this profile has no mailto: tile')
     if (!tile) return
     await page.goto('/')
+    await hydrated(page)
     const control = page.locator(`${TILES} [data-protected-email]`).first()
     const before = (await control.textContent())?.trim()
 
@@ -324,6 +340,7 @@ test.describe('the mail tile in a browser', () => {
   test('the focus survives the swap, and a key press is a human signal too', async ({ page }) => {
     test.skip(mailTile() === null, 'this profile has no mailto: tile')
     await page.goto('/')
+    await hydrated(page)
     const control = page.locator(`${TILES} [data-protected-email]`).first()
     await control.focus()
     await expect(control).toBeFocused()
@@ -364,6 +381,7 @@ test.describe('the mail tile in a browser', () => {
       if (!request.url().startsWith(baseURL ?? '') && !request.url().startsWith('data:')) foreign.push(request.url())
     })
     await page.goto('/')
+    await hydrated(page)
     await page.mouse.move(40, 40)
     await expect(page.locator(`${TILES} [data-protected-email]`).first()).toHaveAttribute('data-protected-email', 'link')
     await settle(page)
