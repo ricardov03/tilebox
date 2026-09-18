@@ -776,6 +776,28 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
   await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:github'))
 })
 
+test('WP20: the current icon of the picker has an accessible name, off the visible text', async ({ page }) => {
+  await openEditor(page)
+  await mockIcons(page)
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Link', exact: true }).click()
+  const picker = page.locator('form [data-link-icon]')
+
+  // WP17 took the icon NAME off every visible text. A screen reader was then left with "Icon",
+  // "Custom" and "Search icons" and no way to learn which icon is set, unless a search happened
+  // to be open. The picture itself now carries the name, so nothing visible changed.
+  await page.locator('form input[id$="-url"]').fill('mailto:you@example.com')
+  await expect(picker.getByRole('img', { name: 'line-md:email' })).toBeVisible()
+  await expect(picker.locator('[data-icon-caption]')).toHaveText('Auto, from the link')
+
+  await picker.getByPlaceholder('Search icons').fill('line-md:home')
+  await picker.getByRole('button', { name: 'line-md:home', exact: true }).click()
+  await expect(picker.locator('[data-icon-caption]')).toHaveText('Custom')
+  await expect(picker.getByRole('img', { name: 'line-md:home' })).toBeVisible()
+  // Still no name on any text the eye reads: the name lives in `aria-label` alone.
+  await expect(picker).not.toContainText('line-md')
+})
+
 test('WP20: two untitled mail links are named by their addresses, not both "Link without a title"', async ({ page }) => {
   await openEditor(page)
   await mockIcons(page)

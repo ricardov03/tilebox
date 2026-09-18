@@ -89,6 +89,16 @@ const iconName = computed(() => (shown.value?.kind === 'icon' ? shown.value.name
 const faviconSrc = computed(() => (shown.value?.kind === 'favicon' ? shown.value.src : null))
 const caption = computed(() => (model.value ? 'Custom' : (props.autoCaption ?? 'Auto, from the link')))
 
+/**
+ * The accessible name of the current icon (WP20). The `prefix:name` string is on NO visible text,
+ * so without this a screen reader could never learn which icon is set. The caption is read next to
+ * it, so this says the NAME only.
+ */
+const shownLabel = computed(() => {
+  if (faviconSrc.value) return 'The icon of the website'
+  return iconName.value ?? 'No icon'
+})
+
 /** The dev route did not draw the current icon: fall back to <Icon>. Reset when the icon changes. */
 const previewFailed = ref(false)
 watch(iconName, () => {
@@ -158,10 +168,15 @@ const smallButton = `min-h-9 rounded-full border border-line px-3 text-xs font-m
     <div class="flex flex-wrap items-center gap-3">
       <!-- `ref="inkProbe"`: this box carries the `ink` token, so its resolved
            `color` is the exact color the previews must be drawn in. -->
+      <!-- WP20: the box IS the accessible name of the current icon. WP17 took the `prefix:name`
+           string off every visible text, which left a screen reader with "Icon", the caption and
+           "Search icons" and no way to learn which icon is set. `role="img"` + `aria-label` says it
+           without putting it back on screen, and the children stay presentational. -->
       <span
         ref="inkProbe"
+        role="img"
+        :aria-label="shownLabel"
         class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-ground text-ink"
-        aria-hidden="true"
       >
         <img
           v-if="faviconSrc"
