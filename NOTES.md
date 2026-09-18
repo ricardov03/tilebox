@@ -680,3 +680,9 @@ Shim checks, run again after the fixes in `.tilebox-test/` (ignored, deleted aft
 - State with `"accountId": ""` and state `{nope`: exit 1, both with the `--reset` hint.
 - `node scripts/publish.mjs --provider cloudflare --name demo-site --yes --no-build | cat` shows the `Live:` line. Same for Netlify with a random name (real HTTPS pre-check, 0.8 s, the process ends by itself).
 - `npm run lint`, `npm run typecheck`, `npm run generate` (`profile: content/profile.example.json (example)`), `npx playwright test --project=static` (16 passed): exit 0.
+
+### WP7 regression fix (2026-09-18)
+Symptom: `/edit` loaded but `GET /api/profile` answered 500 with `ENOENT ./.nuxt/content/profile.example.json`.
+Cause: the review fix that anchored `ROOT` in `content/resolve.ts` on `import.meta.url`. The Nitro dev server bundles that module into `.nuxt/`, so `..` was not the repo.
+Fix: `ROOT` is now found by walking upward (from the module, then from `process.cwd()`) to the first folder that holds `content/profile.example.json`.
+Lesson: a change to the resolver or to `server/` must run the Playwright `dev` project, not only `static`. The `dev` project catches this (4 tests, green again).
