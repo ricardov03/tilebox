@@ -86,6 +86,8 @@ export interface FetchGravatarOptions {
    * delete the picture of the saved profile.
    */
   allowDelete: boolean
+  /** The file to write or remove. Default: `GRAVATAR_FILE`. Tests pass a file in a temp folder. */
+  targetFile?: string
 }
 
 /**
@@ -96,10 +98,11 @@ export interface FetchGravatarOptions {
  *   odd body): no usable picture, the old file stays. `offline`.
  */
 export async function fetchGravatar(email: string, options: FetchGravatarOptions): Promise<GravatarResult> {
+  const target = options.targetFile ?? GRAVATAR_FILE
   try {
     const response = await fetch(gravatarUrl(email), { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'follow' })
     if (response.status === 404) {
-      if (options.allowDelete) await rm(GRAVATAR_FILE, { force: true })
+      if (options.allowDelete) await rm(target, { force: true })
       return { status: 'none', message: 'avatar: no gravatar for this email' }
     }
     const type = response.headers.get('content-type') ?? ''
@@ -107,7 +110,7 @@ export async function fetchGravatar(email: string, options: FetchGravatarOptions
     if (Number(response.headers.get('content-length') ?? 0) > MAX_BYTES) return OFFLINE
     const body = Buffer.from(await response.arrayBuffer())
     if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return OFFLINE
-    await writeAtomic(GRAVATAR_FILE, body)
+    await writeAtomic(target, body)
     return { status: 'saved', message: 'avatar: gravatar saved' }
   }
   catch {

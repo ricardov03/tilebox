@@ -1,7 +1,7 @@
 /**
  * Two projects:
  * - `static`: the prerendered site in `dist/` (run `npm run generate` first),
- *   served by scripts/serve-dist.mjs on :4173, plus repo.spec.ts and privacy.spec.ts (no browser). Runs in CI.
+ *   served by scripts/serve-dist.mjs on :4173, plus repo.spec.ts, privacy.spec.ts and gravatar.spec.ts (no browser). Runs in CI.
  * - `dev`: the editor on `nuxt dev` at :3111. Writes content/profile.json and
  *   public/blocks/, so it runs locally only.
  * Only the servers of the selected projects start.
@@ -39,7 +39,7 @@ export default defineConfig({
   projects: [
     {
       name: 'static',
-      testMatch: ['public.spec.ts', 'a11y.spec.ts', 'repo.spec.ts', 'privacy.spec.ts'],
+      testMatch: ['public.spec.ts', 'a11y.spec.ts', 'repo.spec.ts', 'privacy.spec.ts', 'gravatar.spec.ts'],
       use: { baseURL: STATIC_URL },
     },
     {
