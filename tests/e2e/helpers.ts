@@ -1,13 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Page } from '@playwright/test'
-import type { Profile } from '../../types/profile'
+import { parseProfile, type Profile } from '../../types/profile'
 
 export const ROOT = resolve(import.meta.dirname, '../..')
 export const PROFILE_PATH = resolve(ROOT, 'content/profile.json')
 
+/** The sample content, validated with the same schema the app uses. */
 export function readProfile(): Profile {
-  return JSON.parse(readFileSync(PROFILE_PATH, 'utf8')) as Profile
+  return parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
 }
 
 export const THEME_KEY = 'tilebox:theme'
