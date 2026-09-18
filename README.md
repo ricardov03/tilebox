@@ -171,7 +171,7 @@ Link fields (all optional, an old file stays valid):
 | `spotlight` | `pop`, `wobble` or `buzz`. A gentle move every 6 seconds. Only ONE block of the profile may have it. Off for visitors with reduced motion |
 | `enrich` | `true` = link previews on for this link (see [Link previews](#link-previews)). Missing = off. The editor sets it on new links |
 | `showImage` | `true` = show the website's image on a 2x1, 1x2 or 2x2 tile. Missing = off. A 1x1 tile never shows it |
-| `favicon` | A local file, `/icons/<hash>.png` (also jpg, webp, gif, svg). Written by the editor. A remote URL is refused |
+| `favicon` | A local file, `/icons/<hash>.png`. Always a PNG: the editor draws every fetched icon again. Written by the editor. A remote URL is refused |
 | `image`, `imageAlt` | A local file, `/thumbs/<hash>.webp`, and its alt text. Written by the editor |
 | `meta` | What the website said: `title`, `description`, `siteName`, `themeColor`, `source` (`oembed`, `html` or `brand`), `fetchedAt`. For the editor only. Never shipped |
 

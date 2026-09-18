@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { brandIconFor } from '../app/utils/brand-icons'
+import { LOCAL_ICON_PATH, LOCAL_THUMB_PATH } from '../types/local-paths'
 import type { Block, LinkBlock, Profile } from '../types/profile'
 import { ROOT } from './resolve'
 
@@ -44,7 +45,7 @@ export interface UnfurlData {
   description?: string
   siteName?: string
   themeColor?: string
-  /** `/icons/<hash>.<ext>` */
+  /** `/icons/<hash>.png`. Always a PNG the engine drew itself. */
   favicon?: string
   /** `/thumbs/<hash>.webp`. Only when the image was asked for. */
   image?: string
@@ -152,11 +153,17 @@ export function updateCache(key: string, entry: CacheEntry | null, dirs: UnfurlD
   return writeQueue
 }
 
-/** `/icons/x.png` -> the file in `dirs.icons`, `/thumbs/x.webp` -> the file in `dirs.thumbs`. `null` for any other path. */
+/**
+ * `/icons/x.png` -> the file in `dirs.icons`, `/thumbs/x.webp` -> the file in `dirs.thumbs`.
+ * `null` for any other path: the same two patterns as the profile contract (types/local-paths.ts),
+ * so `/icons/x.svg`, `/icons/x.html` or `/thumbs/manifest.json` never count as a link file.
+ */
 export function localFileOf(publicPath: string, dirs: UnfurlDirs = DEFAULT_DIRS): string | null {
-  const match = publicPath.match(/^\/(icons|thumbs)\/([a-z0-9]+\.[a-z0-9]+)$/)
-  if (!match || !match[1] || !match[2]) return null
-  return resolve(match[1] === 'icons' ? dirs.icons : dirs.thumbs, match[2])
+  if (typeof publicPath !== 'string') return null
+  const name = publicPath.slice(publicPath.lastIndexOf('/') + 1)
+  if (LOCAL_ICON_PATH.test(publicPath)) return resolve(dirs.icons, name)
+  if (LOCAL_THUMB_PATH.test(publicPath)) return resolve(dirs.thumbs, name)
+  return null
 }
 
 export function localFileExists(publicPath: string | undefined, dirs: UnfurlDirs = DEFAULT_DIRS): boolean {

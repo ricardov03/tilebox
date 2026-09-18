@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
 import { SIZES } from '../app/utils/sizes'
+import { LOCAL_ICON_PATH, LOCAL_THUMB_PATH } from './local-paths'
 import { PublicSiteSchema, SiteSchema, toPublicSite, type PublicSiteExtras } from './site'
 
 const id = z.string().min(1)
@@ -16,9 +17,9 @@ const iconName = z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/, 'Icon must be a ful
 
 /** Optional on every block (WP10a). `true` = the build drops the block: it is in no file of `dist/`. */
 const hidden = z.boolean().optional()
-/** Local files the unfurl engine wrote (content/unfurl.ts). Never a remote URL. */
-const localIconPath = z.string().regex(/^\/icons\/[a-z0-9]+\.(png|jpg|webp|gif|svg)$/, 'favicon must be a local path like /icons/<hash>.png')
-const localThumbPath = z.string().regex(/^\/thumbs\/[a-z0-9]+\.webp$/, 'image must be a local path like /thumbs/<hash>.webp')
+/** Local files the unfurl engine wrote (content/unfurl.ts). Never a remote URL. Icons are PNG only (./local-paths.ts). */
+export const localIconPath = z.string().regex(LOCAL_ICON_PATH, 'favicon must be a local path like /icons/<hash>.png')
+export const localThumbPath = z.string().regex(LOCAL_THUMB_PATH, 'image must be a local path like /thumbs/<hash>.webp')
 
 export const SPOTLIGHTS = ['pop', 'wobble', 'buzz'] as const
 export type Spotlight = (typeof SPOTLIGHTS)[number]

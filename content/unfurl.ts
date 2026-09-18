@@ -477,11 +477,49 @@ export function largestPngFromIco(ico: Buffer): Buffer | null {
   return best?.data ?? null
 }
 
-/** An SVG is served only through `<img>` (no script runs there). Still, one that carries script is refused. */
-function isPlainSvg(body: Buffer): boolean {
-  if (body.byteLength >= MAX_SVG_BYTES) return false
-  const text = body.toString('utf8')
-  return !/<script|<foreignObject|\son\w+\s*=|javascript:/i.test(text)
+/** The saved icon: a PNG that fits inside 128x128. */
+const ICON_OUTPUT_PX = 128
+/** No decoder input may be larger than this, whatever its header says. */
+const MAX_INPUT_PIXELS = 4096 * 4096
+const SVG_BASE_DENSITY = 72
+/** Upper limit for the SVG render density. The render is about 128 px wide, so this only matters for a tiny viewBox. */
+const SVG_MAX_DENSITY = 2400
+const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 }
+
+/**
+ * Every fetched icon goes through here, and ONLY the result is stored.
+ * sharp decodes the bytes and draws them again as a PNG inside 128x128, so
+ * nothing of the remote file (script, markup, metadata, a second payload after
+ * the image data) reaches `public/icons/`. A remote SVG is never stored:
+ * opened directly it would run script on the site's own origin. librsvg draws
+ * it without running script and without loading outside files.
+ * `null` = sharp cannot decode it = "no icon", the next source is tried.
+ */
+export async function rasterizeIcon(body: Buffer, kind: ImageKind): Promise<Buffer | null> {
+  if (kind === 'ico') return null
+  if (kind === 'svg' && body.byteLength > MAX_SVG_BYTES) return null
+  try {
+    const { default: sharp } = await import('sharp')
+    const limits = { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' as const }
+    let density: number | undefined
+    if (kind === 'svg') {
+      // Size at 72 dpi, read from the header only (nothing is drawn yet). The density is set so the
+      // render is about 128 px: a huge viewBox cannot use a lot of memory, a tiny one stays sharp.
+      const meta = await sharp(body, { ...limits, density: SVG_BASE_DENSITY }).metadata()
+      const side = Math.max(meta.width ?? 0, meta.height ?? 0)
+      if (side <= 0) return null
+      density = Math.min(SVG_MAX_DENSITY, Math.max(1, Math.round(SVG_BASE_DENSITY * ICON_OUTPUT_PX / side)))
+    }
+    const png = await sharp(body, { ...limits, ...(density ? { density } : {}) })
+      .resize(ICON_OUTPUT_PX, ICON_OUTPUT_PX, { fit: 'inside', withoutEnlargement: kind !== 'svg', background: TRANSPARENT })
+      .ensureAlpha()
+      .png()
+      .toBuffer()
+    return sniffImage(png) === 'png' ? png : null
+  }
+  catch {
+    return null
+  }
 }
 
 function hashName(body: Buffer, ext: string): string {
@@ -509,9 +547,7 @@ export function pickBySize<T extends { size: number }>(list: readonly T[]): T | 
   return known.find(item => item.size >= ICON_TARGET_PX) ?? known.at(-1) ?? list[0]
 }
 
-const ICON_EXT: Partial<Record<ImageKind, string>> = { png: 'png', jpeg: 'jpg', webp: 'webp', gif: 'gif', svg: 'svg' }
-
-/** Downloads one icon and saves it. Returns the public path, or `undefined` when this candidate is no good. */
+/** Downloads one icon and saves it as a PNG (`rasterizeIcon()`, never the remote bytes). Returns the public path, or `undefined` when this candidate is no good. */
 async function saveIcon(url: string, options: UnfurlOptions, dirs: UnfurlDirs): Promise<string | undefined> {
   let response: SafeResponse
   try {
@@ -529,11 +565,12 @@ async function saveIcon(url: string, options: UnfurlOptions, dirs: UnfurlDirs): 
     body = png
     kind = 'png'
   }
-  if (kind === 'svg' && !isPlainSvg(body)) return undefined
-  const ext = kind ? ICON_EXT[kind] : undefined
-  if (!ext) return undefined
-  const name = hashName(body, ext)
-  await writeOnce(dirs.icons, name, body)
+  if (!kind) return undefined
+  const output = await rasterizeIcon(body, kind)
+  if (!output) return undefined
+  // The name is the hash of the OUTPUT: the stored bytes are the only thing the name vouches for.
+  const name = hashName(output, 'png')
+  await writeOnce(dirs.icons, name, output)
   return `/icons/${name}`
 }
 

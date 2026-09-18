@@ -145,10 +145,15 @@ test.describe('schema', () => {
   })
 
   test('favicon and image must be local files, unknown keys and spotlights are refused', () => {
-    const ok = link('a', { enrich: true, showImage: true, favicon: '/icons/0123456789abcdef.svg', image: '/thumbs/0123456789abcdef.webp', imageAlt: 'x', meta: { title: 'T', source: 'html', fetchedAt: '2026-09-18T00:00:00.000Z' } })
+    const ok = link('a', { enrich: true, showImage: true, favicon: '/icons/0123456789abcdef.png', image: '/thumbs/0123456789abcdef.webp', imageAlt: 'x', meta: { title: 'T', source: 'html', fetchedAt: '2026-09-18T00:00:00.000Z' } })
     expect(ProfileSchema.safeParse(profileWith([ok])).success).toBe(true)
     const bad: unknown[] = [
       { ...link('a'), favicon: 'https://nuxt.com/icon.png' },
+      // S1: PNG only. A stored SVG (or any other remote format) is refused by the contract too.
+      { ...link('a'), favicon: '/icons/0123456789abcdef.svg' },
+      { ...link('a'), favicon: '/icons/0123456789abcdef.jpg' },
+      { ...link('a'), favicon: '/icons/0123456789abcdef.gif' },
+      { ...link('a'), favicon: '/icons/0123456789abcdef.html' },
       { ...link('a'), image: '/thumbs/x.png' },
       { ...link('a'), image: 'https://nuxt.com/og.png' },
       { ...link('a'), spotlight: 'spin' },

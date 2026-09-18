@@ -6,6 +6,7 @@
  * (`lookup` throws), so a fallback such as the Google favicon service can never
  * reach the network. Files go to a temp folder (`dirs`), never to `public/`.
  */
+import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -24,6 +25,7 @@ import {
   oembedUrlFor,
   parseHead,
   pickBySize,
+  rasterizeIcon,
   safeRequest,
   sniffImage,
   unfurl,
@@ -78,6 +80,21 @@ const PAGE = `<!doctype html><html><head>
 <link rel="icon" href="/favicon.ico">
 </head><body><meta property="og:title" content="Body title"></body></html>`
 
+/** The six payloads of the 2026-09-18 security review (each one passed the old regex check), plus a plain file. */
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const SVG_PAYLOADS: Record<string, string> = {
+  'prefixed-script': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><x:script xmlns:x="${SVG_NS}">alert(document.domain)</x:script><rect width="10" height="10" fill="#f00"/></svg>`,
+  'dtd-entity': `<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY x "&#60;script xmlns='${SVG_NS}'>alert(1)&#60;/script>">]><svg xmlns="${SVG_NS}" viewBox="0 0 10 10">&x;<rect width="10" height="10" fill="#0f0"/></svg>`,
+  'entity-href': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><a href="java&#115;cript:alert(1)"><rect width="10" height="10" fill="#00f"/></a></svg>`,
+  'data-href-script': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><x:script xmlns:x="${SVG_NS}" href="data:text/javascript,alert(1)"/><rect width="10" height="10" fill="#ff0"/></svg>`,
+  'external-use': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><use href="https://evil.test/sprite.svg#a"/><image href="https://evil.test/pixel.png" width="10" height="10"/><rect width="10" height="10" fill="#0ff"/></svg>`,
+  'large-96kb': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><!--${'x'.repeat(96 * 1024)}--><x:script xmlns:x="${SVG_NS}">alert(1)</x:script><rect width="10" height="10" fill="#f0f"/></svg>`,
+  'huge-viewbox': `<svg xmlns="${SVG_NS}" width="1000000" height="1000000"><rect width="1000000" height="1000000" fill="#333"/></svg>`,
+  'over-100kb': `<svg xmlns="${SVG_NS}" viewBox="0 0 10 10"><!--${'x'.repeat(101 * 1024)}--><rect width="10" height="10" fill="#999"/></svg>`,
+  'plain': `<svg xmlns="${SVG_NS}" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#0c4a6e"/></svg>`,
+}
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
 let server: Server
 let base = ''
 let realPng: Buffer
@@ -100,9 +117,24 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     res.end()
     return
   }
+  const svgPage = path.match(/^\/svg-page\/([\w-]+)$/)
+  if (svgPage) return html(`<html><head><title>SVG icon</title><link rel="icon" type="image/svg+xml" href="/svg-icon/${svgPage[1]}.svg"></head></html>`)
+  const svgIcon = path.match(/^\/svg-icon\/([\w-]+)\.svg$/)
+  if (svgIcon) {
+    res.writeHead(200, { 'content-type': 'image/svg+xml' })
+    res.end(SVG_PAYLOADS[svgIcon[1] ?? ''] ?? '')
+    return
+  }
   switch (path) {
     case '/page':
       return html(PAGE)
+    case '/broken-icon-page':
+      return html('<html><head><title>Broken icon</title><link rel="icon" type="image/png" sizes="96x96" href="/broken.png"></head></html>')
+    case '/broken.png':
+      // The PNG signature, then garbage: the magic bytes pass, the decoder does not.
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), Buffer.from('not a real png body')]))
+      return
     case '/fake-image':
       return html(PAGE.replace('/real.png', '/fake.png'))
     case '/big':
@@ -318,7 +350,7 @@ test.describe('fetching (local server, allowHosts)', () => {
     if (!result.ok) return
     expect(result.url).toBe(`${base}/page`)
     expect(result.favicon).toMatch(/^\/icons\/[0-9a-f]{16}\.png$/)
-    expect(readFileSync(join(dirs.icons, result.favicon!.slice('/icons/'.length)))).toEqual(TINY_PNG)
+    expect(sniffImage(readFileSync(join(dirs.icons, result.favicon!.slice('/icons/'.length))))).toBe('png')
     // The image is the second switch: not asked for, not downloaded.
     expect(result.image).toBeUndefined()
     expect(hits.get('/real.png')).toBeUndefined()
@@ -406,6 +438,70 @@ test.describe('fetching (local server, allowHosts)', () => {
 
     await unfurl(url, { ...timed, force: true })
     expect(hits.get('/etag')).toBe(3)
+  })
+})
+
+test.describe('S1: a remote SVG is never stored', () => {
+  for (const name of Object.keys(SVG_PAYLOADS)) {
+    test(`svg favicon "${name}": only PNG files land in the icons folder`, async () => {
+      const result = await unfurl(`${base}/svg-page/${name}`, options)
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(hits.get(`/svg-icon/${name}.svg`)).toBe(1)
+      const files = existsSync(dirs.icons) ? readdirSync(dirs.icons) : []
+      expect(files.filter(file => !file.endsWith('.png'))).toEqual([])
+      for (const file of files) {
+        const bytes = readFileSync(join(dirs.icons, file))
+        expect(bytes.subarray(0, 8).equals(PNG_SIGNATURE), file).toBe(true)
+        expect(bytes.toString('latin1')).not.toMatch(/<svg|script/i)
+      }
+      if (result.favicon !== undefined) expect(result.favicon).toMatch(/^\/icons\/[0-9a-f]{16}\.png$/)
+    })
+  }
+
+  test('a plain valid SVG becomes a PNG of 128 px at most, named after the OUTPUT bytes', async () => {
+    const result = await unfurl(`${base}/svg-page/plain`, options)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    // The SVG was good, so no other icon source was asked.
+    expect(hits.get('/favicon.ico')).toBeUndefined()
+    expect(result.favicon).toMatch(/^\/icons\/[0-9a-f]{16}\.png$/)
+    const name = result.favicon!.slice('/icons/'.length)
+    const bytes = readFileSync(join(dirs.icons, name))
+    expect(bytes.subarray(0, 8).equals(PNG_SIGNATURE)).toBe(true)
+    expect(name).toBe(`${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.png`)
+    const meta = await sharp(bytes).metadata()
+    expect(meta.format).toBe('png')
+    expect(meta.width).toBe(128)
+    expect(meta.height).toBe(128)
+    expect(meta.hasAlpha).toBe(true)
+  })
+
+  test('icon bytes are never stored as they came: a PNG is decoded and written again', async () => {
+    const result = await unfurl(`${base}/page`, options)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const bytes = readFileSync(join(dirs.icons, result.favicon!.slice('/icons/'.length)))
+    expect(bytes.subarray(0, 8).equals(PNG_SIGNATURE)).toBe(true)
+    expect(result.favicon).toBe(`/icons/${createHash('sha1').update(bytes).digest('hex').slice(0, 16)}.png`)
+  })
+
+  test('an SVG over 100 KB is not decoded at all: the next source gives the icon', async () => {
+    const result = await unfurl(`${base}/svg-page/over-100kb`, options)
+    expect(result).toMatchObject({ ok: true })
+    expect(hits.get('/favicon.ico')).toBe(1)
+    expect(await rasterizeIcon(Buffer.from(SVG_PAYLOADS['over-100kb'] ?? ''), 'svg')).toBeNull()
+    expect(await rasterizeIcon(Buffer.from(SVG_PAYLOADS.plain ?? ''), 'svg')).not.toBeNull()
+  })
+
+  test('an icon sharp cannot decode is "no icon": the next source is tried', async () => {
+    const result = await unfurl(`${base}/broken-icon-page`, options)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(hits.get('/broken.png')).toBe(1)
+    expect(hits.get('/favicon.ico')).toBe(1)
+    expect(result.favicon).toMatch(/\.png$/)
+    expect(readdirSync(dirs.icons)).toHaveLength(1)
   })
 })
 

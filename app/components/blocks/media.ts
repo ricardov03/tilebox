@@ -2,6 +2,7 @@
  * Pure helpers shared by the block components and the build scripts.
  * No Vue imports here: `scripts/*.ts` run this file with tsx.
  */
+import { LOCAL_ICON_PATH as LOCAL_FAVICON, LOCAL_THUMB_PATH as LOCAL_THUMB } from '../../../types/local-paths'
 import { brandIconFor } from '../../utils/brand-icons'
 
 /** Tile chrome variants. `accent` and `pop` have no border. */
@@ -65,9 +66,8 @@ export type LinkIcon
     | { kind: 'favicon', src: string }
 
 const FALLBACK_LINK_ICON = 'line-md:link'
-/** Only local files the unfurl engine wrote. A remote URL here would be a runtime network call. */
-const LOCAL_FAVICON = /^\/icons\/[a-z0-9]+\.(png|jpg|webp|gif|svg)$/
-const LOCAL_THUMB = /^\/thumbs\/[a-z0-9]+\.webp$/
+// LOCAL_FAVICON / LOCAL_THUMB: only local files the unfurl engine wrote (PNG icons, webp images).
+// A remote URL here would be a runtime network call.
 
 /**
  * Icon of a link tile, in order (WP10a): the owner's `icon`, the brand icon
