@@ -1,47 +1,27 @@
 /**
- * Dev only. Proxies the Iconify search API so the editor's icon picker
- * can search line-md and simple-icons. 5 s timeout. Returns `{ icons }`
- * with `line-md:` names first, at most 48.
+ * Dev only. The icon search of the editor's icon picker. WP18.
+ * LOCAL: it reads the index of the two installed packs (content/icon-index.ts). It asks no
+ * other host for anything, so it works offline and a query never leaves this machine.
+ * `GET /api/icons/search?q=<text>` -> `{ icons, sets, total }`: at most 48 `prefix:name`
+ * names, `line-md` first inside one rank, removed (hidden) brands never. An empty `q`
+ * returns a small default list. A full name that exists (`line-md:github`) is the first result.
+ * The index is loaded only under `nuxt dev`, so a build never bundles it.
  */
 import { z } from 'zod'
-import { assertDev, assertEditorRequest } from '../../utils/editor'
+import { assertEditorRequest } from '../../utils/editor'
 
-const MAX_QUERY = 64
-const LIMIT = 48
-const PREFERRED = 'line-md:'
-
-const IconifySearchSchema = z.object({
-  icons: z.array(z.string()).default([]),
+/** `q` once, as text. `?q=a&q=b` (an array) is refused. The index cuts the text to 64 characters. */
+const QuerySchema = z.object({
+  q: z.string().max(2048).optional(),
 })
 
 export default defineEventHandler(async (event) => {
-  assertDev()
+  const index = import.meta.dev ? await import('~~/content/icon-index') : null
+  if (!index) throw createError({ statusCode: 404, statusMessage: 'Not found' })
   assertEditorRequest(event, 'none')
-  const q = String(getQuery(event).q ?? '').trim().slice(0, MAX_QUERY)
-  if (!q) return { icons: [] as string[] }
-
-  const url = new URL('https://api.iconify.design/search')
-  url.searchParams.set('query', q)
-  url.searchParams.set('limit', String(LIMIT * 2))
-  url.searchParams.set('prefixes', 'line-md,simple-icons')
-
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
-    if (!res.ok) {
-      throw createError({ statusCode: 502, statusMessage: `Iconify search answered ${res.status}` })
-    }
-    const parsed = IconifySearchSchema.safeParse(await res.json())
-    if (!parsed.success) {
-      throw createError({ statusCode: 502, statusMessage: 'Iconify search returned an unexpected shape' })
-    }
-    const preferred = parsed.data.icons.filter(name => name.startsWith(PREFERRED))
-    const rest = parsed.data.icons.filter(name => !name.startsWith(PREFERRED))
-    return { icons: [...preferred, ...rest].slice(0, LIMIT) }
+  const query = QuerySchema.safeParse(getQuery(event))
+  if (!query.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid query', message: 'Send the search text once, as ?q=<text>.' })
   }
-  catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError') {
-      throw createError({ statusCode: 504, statusMessage: 'Iconify search timed out after 5 s' })
-    }
-    throw error
-  }
+  return index.searchIcons(query.data.q ?? '')
 })

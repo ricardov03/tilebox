@@ -6,9 +6,12 @@
  * 2. Upgrades an existing content/profile.json that lacks the WP9 keys
  *    (`highlights`, `email`, `showEmail`). The rest of the file stays as it is.
  *    A file that already has them is never touched.
+ * 3. WP18: removes a block `icon` that comes from another icon set (only line-md and
+ *    simple-icons are supported). One line per removed icon. The tile gets its automatic icon.
+ *    Only content/profile.json, never the example.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
-import { migrateProfileText } from '../content/migrate'
+import { migrateIconsText, migrateProfileText, removedIconLine } from '../content/migrate'
 import { ensureProfile, hasPersonalProfile } from '../content/resolve'
 
 const existed = hasPersonalProfile()
@@ -21,4 +24,10 @@ const migrated = migrateProfileText(readFileSync(path, 'utf8'))
 if (migrated !== null) {
   writeFileSync(path, migrated, 'utf8')
   process.stdout.write('profile: added email, showEmail and highlights. Set your real email in /edit.\n')
+}
+
+const icons = migrateIconsText(readFileSync(path, 'utf8'))
+if (icons !== null) {
+  writeFileSync(path, icons.text, 'utf8')
+  for (const item of icons.removed) process.stdout.write(`${removedIconLine(item)}\n`)
 }

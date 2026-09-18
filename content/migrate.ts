@@ -6,7 +6,12 @@
  * (bio is not a plain one-line string), the file is rewritten as 2-space JSON.
  * Returns `null` when there is nothing to do or the text is not a profile.
  * No Vue or Nuxt imports: `scripts/ensure-profile.ts` runs this with tsx.
+ *
+ * WP18: `migrateIconsText()` removes an `icon` of another icon set from its block (only the sets of
+ * app/utils/icon-sets.ts are supported). The tile falls back to its automatic icon. Nothing else changes.
  */
+import { ICON_SETS, ICON_SETS_TEXT } from '../app/utils/icon-sets'
+
 export const MIGRATION_EMAIL = 'you@example.com'
 
 const NEW_KEYS: readonly (readonly [key: string, value: unknown])[] = [
@@ -63,4 +68,74 @@ export function migrateProfileText(text: string): string | null {
     }
   }
   return `${JSON.stringify(expected, null, 2)}\n`
+}
+
+/** A block `icon` from a set tilebox does not support, for example `lucide:mail`. */
+export interface ForeignIcon {
+  id: string
+  icon: string
+}
+
+/** `prefix:name` with a prefix that is not one of `ICON_SETS`. A name without a prefix is a typo, not a foreign set: the schema reports it. */
+function isForeignIcon(icon: unknown): icon is string {
+  if (typeof icon !== 'string') return false
+  const colon = icon.indexOf(':')
+  if (colon < 1) return false
+  const prefix = icon.slice(0, colon)
+  return !ICON_SETS.some(set => set === prefix)
+}
+
+function blocksOf(data: unknown): Record<string, unknown>[] {
+  if (!isRecord(data) || !Array.isArray(data.blocks)) return []
+  return data.blocks.filter(isRecord)
+}
+
+/** Every block icon of another set, in file order. `data` is the parsed JSON of a profile file. */
+export function foreignIcons(data: unknown): ForeignIcon[] {
+  return blocksOf(data).flatMap(block => (isForeignIcon(block.icon) ? [{ id: String(block.id), icon: block.icon }] : []))
+}
+
+/** The one line `npm run ensure:profile` prints per removed icon. */
+export function removedIconLine({ id, icon }: ForeignIcon): string {
+  return `profile: removed icon "${icon}" from block ${id} (only ${ICON_SETS_TEXT} are supported)`
+}
+
+/** The advice `npm run check:profile` prints for the same icon, when the migration did not run (a build never changes your file). */
+export function foreignIconAdvice({ id, icon }: ForeignIcon): string {
+  return `profile: icon "${icon}" of block ${id} is not supported (only ${ICON_SETS_TEXT} are supported). Run \`npm run ensure:profile\` to remove it (the tile gets its automatic icon), or pick another icon in /edit.`
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Removes every foreign `icon` from its block. Returns the new text and what was removed, or `null`
+ * when there is nothing to do (so a second run changes nothing) or the text is not a profile.
+ * Byte-stable when it can be: the `"icon": "..."` lines are cut out and the result is compared with
+ * the expected data. When that fails (the icon is the last key of its block, or the file is on one
+ * line) the file is rewritten as 2-space JSON with a final newline, the shape the editor writes.
+ */
+export function migrateIconsText(text: string): { text: string, removed: ForeignIcon[] } | null {
+  const data = tryParse(text)
+  const removed = foreignIcons(data)
+  if (!isRecord(data) || !removed.length) return null
+  const expected = {
+    ...data,
+    blocks: (Array.isArray(data.blocks) ? data.blocks : []).map((block: unknown) => {
+      if (!isRecord(block) || !isForeignIcon(block.icon)) return block
+      return Object.fromEntries(Object.entries(block).filter(([key]) => key !== 'icon'))
+    }),
+  }
+
+  let candidate = text
+  for (const { icon } of removed) {
+    const line = new RegExp(`^[ \\t]*"icon"[ \\t]*:[ \\t]*${escapeRegExp(JSON.stringify(icon))}[ \\t]*,[ \\t]*\\r?\\n`, 'm')
+    candidate = candidate.replace(line, '')
+  }
+  const parsed = tryParse(candidate)
+  if (parsed !== undefined && JSON.stringify(parsed) === JSON.stringify(expected)) {
+    return { text: candidate.endsWith('\n') ? candidate : `${candidate}\n`, removed }
+  }
+  return { text: `${JSON.stringify(expected, null, 2)}\n`, removed }
 }

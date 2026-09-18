@@ -9,6 +9,7 @@
 import { readFile } from 'node:fs/promises'
 import { scheduleState } from '../app/utils/schedule'
 import { resolveSiteUrl } from '../app/utils/site-head'
+import { foreignIconAdvice, foreignIcons } from '../content/migrate'
 import { describeProfile, profileIsPersonal, profilePath } from '../content/resolve'
 import { isPlaceholderEmail, parseProfile, type Profile } from '../types/profile'
 
@@ -41,9 +42,12 @@ function secondWaveWarnings(profile: Profile, now: Date): string[] {
   return lines
 }
 
+/** WP18. The parsed JSON, kept so a schema error about an icon of another set can say what to do. */
+let json: unknown
 try {
   const raw = await readFile(PROFILE_PATH, 'utf8')
-  const profile = parseProfile(JSON.parse(raw))
+  json = JSON.parse(raw)
+  const profile = parseProfile(json)
   if (profileIsPersonal() && isPlaceholderEmail(profile.profile.email)) {
     process.stdout.write(`warning: profile.email is still the placeholder "${profile.profile.email}". Set your real email in /edit. It stays hidden unless you turn on "Show my email".\n`)
   }
@@ -52,5 +56,6 @@ try {
 }
 catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+  for (const item of foreignIcons(json)) process.stderr.write(`${foreignIconAdvice(item)}\n`)
   process.exit(1)
 }
