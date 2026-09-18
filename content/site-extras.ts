@@ -31,6 +31,12 @@ export interface BuildSiteExtrasOptions {
   envSiteUrl?: string
   /** Default: `<ROOT>/public/site`. Tests pass a temp folder. */
   outDir?: string
+  /**
+   * `profile` is the editor's DRAFT, not the saved file ("Regenerate", "Make the QR code"). A draft may
+   * write the files it wants. It never REMOVES one: `contact.vcf` and `qr.svg` on disk belong to the saved
+   * profile, and the page in dev drops their tiles when they are gone. The save and every build remove them.
+   */
+  draft?: boolean
 }
 
 export interface BuildSiteExtrasResult {
@@ -81,7 +87,7 @@ export async function buildSiteExtras(options: BuildSiteExtrasOptions): Promise<
     }
   }
   else {
-    await rm(vcfFile, { force: true }).catch(() => undefined)
+    if (!options.draft) await rm(vcfFile, { force: true }).catch(() => undefined)
     if (hasBlock('contact')) messages.push('site: no contact card (contact.enabled is off), so the "Save my contact" tile is left out')
   }
 
@@ -103,7 +109,7 @@ export async function buildSiteExtras(options: BuildSiteExtrasOptions): Promise<
     }
   }
   else {
-    await rm(qrFile, { force: true }).catch(() => undefined)
+    if (!options.draft) await rm(qrFile, { force: true }).catch(() => undefined)
     const why = siteUrl ? `the site URL ${siteUrl} is not https` : 'no site URL: set NUXT_PUBLIC_SITE_URL or the site URL in the Site tab'
     if (hasBlock('qr')) messages.push(`site: no QR code (${why}), so the QR tile is left out`)
   }

@@ -396,6 +396,31 @@ test.describe('contact card (vCard 3.0)', () => {
   })
 })
 
+test('a DRAFT never removes the contact card or the QR code of the saved profile (POST /api/site/assets)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tilebox-draft-extras-'))
+  try {
+    const saved = profileOf([{ id: 'c', type: 'contact', size: '1x1' }, { id: 'q', type: 'qr', size: '1x1' }], { contact: { enabled: true }, site: { url: 'https://ada.example' } })
+    expect((await buildSiteExtras({ profile: saved, outDir: dir })).files).toEqual(['contact.vcf', 'qr.svg'])
+    const card = readFileSync(join(dir, 'contact.vcf'), 'utf8')
+
+    // The unsaved form: card off, site URL cleared. "Regenerate" sends this draft.
+    const draft = profileOf(saved.blocks, { contact: { enabled: false }, site: {} })
+    const result = await buildSiteExtras({ profile: draft, outDir: dir, draft: true })
+    expect(result.files).toEqual([])
+    expect(result.qrUrl).toBe('')
+    expect(readFileSync(join(dir, 'contact.vcf'), 'utf8')).toBe(card)
+    expect(existsSync(join(dir, 'qr.svg'))).toBe(true)
+
+    // The same profile SAVED (or built) removes them.
+    await buildSiteExtras({ profile: draft, outDir: dir })
+    expect(existsSync(join(dir, 'contact.vcf'))).toBe(false)
+    expect(existsSync(join(dir, 'qr.svg'))).toBe(false)
+  }
+  finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 /* ---------- QR code ---------- */
 
 test.describe('QR code', () => {

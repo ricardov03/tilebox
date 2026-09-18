@@ -26,6 +26,7 @@ export default defineEventHandler(async (event) => {
   const { buildSiteExtras } = await import('~~/content/site-extras')
   const envSiteUrl = process.env.NUXT_PUBLIC_SITE_URL
   const assets = await buildSiteAssets({ profile: body.data, envSiteUrl })
-  const extras = await buildSiteExtras({ profile: body.data, envSiteUrl })
+  // `draft`: an unsaved change (contact card off, site URL cleared) never deletes a file of the SAVED profile.
+  const extras = await buildSiteExtras({ profile: body.data, envSiteUrl, draft: true })
   return { ...assets, extras }
 })
