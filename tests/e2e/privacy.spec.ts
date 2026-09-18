@@ -1,7 +1,8 @@
 /**
- * Email privacy. No browser.
+ * Privacy of the built site. No browser.
  * 1. The built site: with `showEmail: false` the email is in no text file of
  *    `dist/` (HTML, payload JSON, JS chunks, CSS). Run `npm run generate` first.
+ *    Same for a hidden block (`hidden: true`, WP10a): none of its text is in `dist/`.
  * 2. The sanitizer itself (`toPublicProfile` in types/profile.ts), unit-checked.
  */
 import { readdirSync, readFileSync, realpathSync } from 'node:fs'
@@ -48,6 +49,23 @@ test.describe('the built site', () => {
     expect(filesContaining(distDir(), profile.profile.email)).toEqual([])
   })
 
+  test('a hidden block is in no file of dist/', () => {
+    const hidden = profile.blocks.filter(block => block.hidden)
+    // The tracked example ships one hidden link block on purpose.
+    if (!profileIsPersonal()) expect(hidden.map(block => block.id)).toEqual(['b11'])
+    test.skip(hidden.length === 0, 'this profile has no hidden block')
+    const visible = JSON.stringify(profile.blocks.filter(block => !block.hidden))
+    for (const block of hidden) {
+      const texts = Object.entries(block)
+        .filter(([key, value]) => typeof value === 'string' && value.length >= 8 && !['id', 'type', 'size', 'icon', 'network'].includes(key))
+        .map(([, value]) => String(value))
+        // A text that a visible block shows too is public on purpose.
+        .filter(value => !visible.includes(value))
+      expect(texts.length, `hidden block ${block.id} has no text to look for`).toBeGreaterThan(0)
+      for (const value of texts) expect(filesContaining(distDir(), value), `"${value}" of hidden block ${block.id}`).toEqual([])
+    }
+  })
+
   test('the example email is in no file of dist/', () => {
     test.skip(profileIsPersonal(), 'dist/ was built from content/profile.json, not from the example')
     expect(profile.profile.email).toBe(EXAMPLE_EMAIL)
@@ -91,6 +109,40 @@ test.describe('toPublicProfile', () => {
     expect(toPublicProfile(withInfo({ avatar: null }), '/avatar.gravatar.jpg').profile.avatar).toBe('/avatar.gravatar.jpg')
     expect(toPublicProfile(base, '/avatar.gravatar.jpg').profile.avatar).toBe('/avatar.gravatar.jpg')
     expect('avatar' in toPublicProfile(withInfo({ avatar: null })).profile).toBe(false)
+  })
+
+  test('removes hidden blocks and their ids from both layouts', () => {
+    const input: Profile = {
+      ...base,
+      blocks: [
+        { id: 'b1', type: 'section', title: 'Projects' },
+        { id: 'b2', type: 'link', size: '1x1', title: 'Secret draft', url: 'https://example.com/secret', hidden: true },
+        { id: 'b3', type: 'text', size: '1x1', body: 'Shown', hidden: false },
+      ],
+      layout: { desktop: ['b1', 'b2', 'b3'], mobile: ['b2', 'b3', 'b1'] },
+    }
+    const result = toPublicProfile(input)
+    expect(result.blocks.map(block => block.id)).toEqual(['b1', 'b3'])
+    expect(result.layout).toEqual({ desktop: ['b1', 'b3'], mobile: ['b3', 'b1'] })
+    expect(JSON.stringify(result)).not.toContain('Secret draft')
+    expect(JSON.stringify(result)).not.toContain('example.com/secret')
+    // No mobile layout in, no mobile layout out.
+    expect('mobile' in toPublicProfile({ ...input, layout: { desktop: ['b1', 'b2', 'b3'] } }).layout).toBe(false)
+  })
+
+  test('drops the editor-only link fields, and the image when showImage is off', () => {
+    const meta = { title: 'Fetched title', description: 'Fetched text', source: 'html' as const, fetchedAt: '2026-09-18T00:00:00.000Z' }
+    const image = '/thumbs/0123456789abcdef.webp'
+    const favicon = '/icons/0123456789abcdef.png'
+    const link = { id: 'b2', type: 'link' as const, size: '2x1' as const, title: 'Mine', url: 'https://example.com/', enrich: true, favicon, image, imageAlt: 'Alt', meta }
+    const input: Profile = { ...base, blocks: [...base.blocks, link], layout: { desktop: ['b1', 'b2'] } }
+
+    const off = toPublicProfile(input).blocks[1]
+    expect(off).toEqual({ id: 'b2', type: 'link', size: '2x1', title: 'Mine', url: 'https://example.com/', favicon })
+    expect(JSON.stringify(off)).not.toContain('Fetched')
+
+    const on = toPublicProfile({ ...input, blocks: [...base.blocks, { ...link, showImage: true }] }).blocks[1]
+    expect(on).toEqual({ id: 'b2', type: 'link', size: '2x1', title: 'Mine', url: 'https://example.com/', favicon, showImage: true, image, imageAlt: 'Alt' })
   })
 
   test('does not change its input', () => {
