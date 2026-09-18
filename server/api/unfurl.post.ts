@@ -6,8 +6,9 @@
  *
  * Guards, because this route makes the machine fetch a URL the caller picks:
  * - 404 outside `nuxt dev`. The engine is loaded only there, so a build never bundles it.
- * - The `Host` header must be localhost, 127.0.0.1 or [::1]: a DNS-rebinding page has another host.
- * - An `Origin` header, when present, must be this same origin: another website cannot POST here (CSRF).
+ * - `assertEditorRequest()` (server/utils/editor.ts), the same gate as every dev route: `Host` must be
+ *   localhost (DNS rebinding), `Origin` must be this origin, `Sec-Fetch-Site` must not be `cross-site`
+ *   or `same-site`, and the body must be `application/json` (an HTML form on another website cannot send that): 403 / 415.
  * - One request per target host at a time: the rest wait in line.
  * - A request the editor closed (a newer URL, another block) stops its job in the engine
  *   (`signal`), so the line for that host is free again and nothing is cached.
@@ -16,19 +17,13 @@
  */
 import { z } from 'zod'
 import type { UnfurlResult } from '~~/content/unfurl'
+import { assertEditorRequest } from '../utils/editor'
 
 const BodySchema = z.object({
   url: z.string().min(1).max(2048),
   showImage: z.boolean().optional(),
   force: z.boolean().optional(),
 }).strict()
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
-
-/** `localhost:3000` -> `localhost`, `[::1]:3000` -> `[::1]`. */
-function hostnameOf(hostHeader: string): string {
-  return hostHeader.trim().toLowerCase().replace(/:\d+$/, '')
-}
 
 /** The running request per target host. The next one for that host starts when it ends. */
 const inFlight = new Map<string, Promise<unknown>>()
@@ -48,14 +43,7 @@ export default defineEventHandler(async (event): Promise<UnfurlResult> => {
   const engine = import.meta.dev ? await import('~~/content/unfurl') : null
   if (!engine) throw createError({ statusCode: 404, statusMessage: 'Not found' })
 
-  const host = getRequestHeader(event, 'host') ?? ''
-  if (!LOCAL_HOSTS.has(hostnameOf(host))) {
-    throw createError({ statusCode: 403, statusMessage: 'The editor API answers on localhost only.' })
-  }
-  const origin = getRequestHeader(event, 'origin')
-  if (origin !== undefined && origin !== `http://${host}` && origin !== `https://${host}`) {
-    throw createError({ statusCode: 403, statusMessage: 'Cross-origin requests are refused.' })
-  }
+  assertEditorRequest(event, 'json')
 
   const body = BodySchema.safeParse(await readBody<unknown>(event))
   if (!body.success) throw createError({ statusCode: 400, statusMessage: 'Send { url, showImage?, force? }.' })

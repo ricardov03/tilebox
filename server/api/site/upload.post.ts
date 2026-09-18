@@ -10,9 +10,12 @@
  * raster file). The store function is imported behind the dev check, so a
  * production build drops it and sharp with it.
  */
+import { assertEditorRequest } from '../../utils/editor'
+
 export default defineEventHandler(async (event) => {
   const store = import.meta.dev ? await import('~~/content/site-upload') : null
   if (!store) throw createError({ statusCode: 404, statusMessage: 'Not found' })
+  assertEditorRequest(event, 'multipart')
 
   const kind = getQuery(event).kind
   if (kind !== 'favicon' && kind !== 'og') {

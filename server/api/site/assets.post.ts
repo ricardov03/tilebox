@@ -9,9 +9,11 @@
  * production build drops the whole branch, so sharp and satori never reach it.
  */
 import { ProfileSchema } from '~~/types/profile'
+import { assertEditorRequest } from '../../utils/editor'
 
 export default defineEventHandler(async (event) => {
   if (!import.meta.dev) throw createError({ statusCode: 404, statusMessage: 'Not found' })
+  assertEditorRequest(event, 'json')
 
   const body = ProfileSchema.safeParse(await readBody<unknown>(event))
   if (!body.success) {

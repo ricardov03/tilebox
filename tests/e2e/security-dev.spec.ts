@@ -63,3 +63,66 @@ test.describe('S1c: the upload route never stores an SVG', () => {
     expect(fake.status()).toBe(415)
   })
 })
+
+test.describe('S6: the dev write routes take only what the editor sends', () => {
+  const JSON_ROUTES = ['/api/unfurl', '/api/save', '/api/avatar/gravatar', '/api/site/assets']
+  const MULTIPART_ROUTES = ['/api/upload', '/api/site/upload?kind=favicon']
+  const TINY_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+
+  for (const route of JSON_ROUTES) {
+    test(`${route}: a form-encoded or text/plain body is refused with 415`, async ({ request }) => {
+      // What an HTML form on another website can send without a CORS preflight.
+      const form = await request.post(route, { form: { url: 'https://example.com/' } })
+      expect(form.status()).toBe(415)
+      const plain = await request.post(route, { headers: { 'content-type': 'text/plain' }, data: '{"url":"https://example.com/"}' })
+      expect(plain.status()).toBe(415)
+      const none = await request.post(route, { headers: { 'content-type': '' }, data: Buffer.from('{"url":"https://example.com/"}') })
+      expect(none.status()).toBe(415)
+    })
+  }
+
+  for (const route of MULTIPART_ROUTES) {
+    test(`${route}: a body that is not multipart/form-data is refused with 415`, async ({ request }) => {
+      expect((await request.post(route, { data: { file: 'x' } })).status()).toBe(415)
+      expect((await request.post(route, { form: { file: 'x' } })).status()).toBe(415)
+    })
+  }
+
+  for (const route of [...JSON_ROUTES, ...MULTIPART_ROUTES]) {
+    test(`${route}: cross-site, same-site, a foreign Origin and a foreign Host are refused with 403`, async ({ request }) => {
+      const multipart = MULTIPART_ROUTES.includes(route)
+      const send = (headers: Record<string, string>) => multipart
+        ? request.post(route, { headers, multipart: { file: { name: 'a.png', mimeType: 'image/png', buffer: TINY_PNG } } })
+        : request.post(route, { headers, data: { url: 'http://127.0.0.1/' } })
+      expect((await send({ 'sec-fetch-site': 'cross-site' })).status(), 'cross-site').toBe(403)
+      expect((await send({ 'sec-fetch-site': 'same-site' })).status(), 'same-site').toBe(403)
+      expect((await send({ origin: 'https://evil.example' })).status(), 'origin').toBe(403)
+      expect((await send({ host: 'evil.example' })).status(), 'host').toBe(403)
+    })
+  }
+
+  test('what the editor sends still works: JSON with same-origin, multipart with same-origin', async ({ request, baseURL }) => {
+    const sameOrigin = { 'origin': baseURL ?? '', 'sec-fetch-site': 'same-origin' }
+    // The engine refuses a loopback target without any request: a real answer, and no network.
+    const unfurl = await request.post('/api/unfurl', { headers: sameOrigin, data: { url: 'http://127.0.0.1/' } })
+    expect(unfurl.status()).toBe(200)
+    expect(await unfurl.json()).toEqual({ ok: false, reason: 'blocked address' })
+    const charset = await request.post('/api/unfurl', { headers: { 'content-type': 'application/json; charset=utf-8' }, data: JSON.stringify({ url: 'http://127.0.0.1/' }) })
+    expect(charset.status()).toBe(200)
+    // Past the guard, the routes answer as before: 400 for a body that is not a profile or has no file.
+    expect((await request.post('/api/save', { headers: sameOrigin, data: { nope: true } })).status()).toBe(400)
+    expect((await request.post('/api/site/assets', { headers: sameOrigin, data: { nope: true } })).status()).toBe(400)
+    expect((await request.post('/api/avatar/gravatar', { headers: sameOrigin, data: { email: 'not an email' } })).status()).toBe(400)
+    expect((await request.post('/api/upload', { headers: sameOrigin, multipart: { other: 'x' } })).status()).toBe(400)
+    expect((await request.post('/api/site/upload?kind=favicon', { headers: sameOrigin, multipart: { other: 'x' } })).status()).toBe(400)
+  })
+
+  test('the read routes refuse a foreign Host too (DNS rebinding), and answer the editor', async ({ request }) => {
+    // `q=` is empty on purpose: the icon search then answers without asking the Iconify API.
+    for (const route of ['/api/profile', '/api/avatar/gravatar', '/api/icons/search?q=']) {
+      expect((await request.get(route, { headers: { host: 'evil.example' } })).status(), route).toBe(403)
+      expect((await request.get(route, { headers: { 'sec-fetch-site': 'cross-site' } })).status(), route).toBe(403)
+      expect((await request.get(route)).status(), route).toBe(200)
+    }
+  })
+})
