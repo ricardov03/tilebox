@@ -4,10 +4,12 @@
   Left: live preview (the real tiles, drag to reorder). Right: Profile | Blocks | Theme.
   The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
   do not exist, so the page renders one short message and nothing else.
-  Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice.
+  Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice,
+  "Block deleted. Undo" for 8 seconds.
+  Delete or Backspace (focus outside a field) opens the delete confirm of the selected block.
 -->
 <script setup lang="ts">
-import type { EditorTab } from '~/composables/useEditor'
+import type { DeleteSource, EditorTab } from '~/composables/useEditor'
 import { ProfileInfoSchema, toPublicProfileInfo } from '~~/types/profile'
 
 definePageMeta({ layout: false })
@@ -29,6 +31,9 @@ const {
   selectedId,
   orderedBlocks,
   selectedBlock,
+  deleteTarget,
+  notice,
+  canUndo,
 } = editor
 
 useHead({ title: computed(() => (draft.value ? `Edit · ${draft.value.profile.name}` : 'Edit')) })
@@ -69,11 +74,70 @@ const previewTheme = computed(() => {
   return mode
 })
 
+/** Delete and Backspace keep their normal job while the focus is in a field. */
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
+}
+
 function onKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void editor.save()
+    return
   }
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (event.key === 'Escape' && deleteTarget.value) {
+    // The focus is outside the confirm (inside it, the confirm handles Escape itself).
+    editor.cancelDelete()
+    return
+  }
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return
+  if (!selectedId.value || deleteTarget.value || isTyping(event.target)) return
+  // Opens the confirm on the tile. It never deletes directly.
+  event.preventDefault()
+  editor.requestDelete(selectedId.value, 'tile')
+}
+
+/** The confirm id for one place, so only that place shows it. */
+function confirmingIn(where: DeleteSource): string | null {
+  return deleteTarget.value?.where === where ? deleteTarget.value.id : null
+}
+
+function focusFirst(selectors: string[]) {
+  for (const selector of selectors) {
+    const el = document.querySelector<HTMLElement>(selector)
+    if (el && el.offsetParent !== null) {
+      el.focus()
+      return
+    }
+  }
+}
+
+const editControl = (id: string) => `li[data-id="${CSS.escape(id)}"] button[data-editor-control][aria-pressed]`
+const listRow = (id: string) => `[data-select-block="${CSS.escape(id)}"]`
+
+/**
+ * "Yes" in any of the three confirms. After the delete the focus goes to the
+ * next block (the last one when the deleted block was last): its list row, or
+ * its tile when the delete came from the preview. No blocks left: Add block.
+ */
+async function confirmDelete(id: string) {
+  const where = deleteTarget.value?.where ?? 'list'
+  const index = orderedBlocks.value.findIndex(b => b.id === id)
+  editor.deleteBlock(id)
+  await nextTick()
+  const next = orderedBlocks.value[Math.min(Math.max(index, 0), orderedBlocks.value.length - 1)]
+  if (!next) return focusFirst(['[data-add-block]'])
+  focusFirst(where === 'tile' ? [editControl(next.id), listRow(next.id)] : [listRow(next.id), editControl(next.id)])
+}
+
+/** Undo removes its own button, so the focus moves to the block that came back. */
+async function undoDelete() {
+  const id = editor.undoDelete()
+  if (!id) return
+  await nextTick()
+  focusFirst([listRow(id), editControl(id)])
 }
 
 function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -266,8 +330,12 @@ const previewProfile = computed(() => {
               :columns="layoutKey === 'mobile' ? 2 : 4"
               :profile="previewProfile"
               :selected-id="selectedId"
+              :confirming-id="confirmingIn('tile')"
               @reorder="editor.setOrder"
               @select="editor.select"
+              @request-delete="editor.requestDelete($event, 'tile')"
+              @confirm-delete="confirmDelete"
+              @cancel-delete="editor.cancelDelete"
             />
             <template #fallback>
               <EditorPreviewGrid
@@ -275,7 +343,11 @@ const previewProfile = computed(() => {
                 :columns="layoutKey === 'mobile' ? 2 : 4"
                 :profile="previewProfile"
                 :selected-id="selectedId"
+                :confirming-id="confirmingIn('tile')"
                 @select="editor.select"
+                @request-delete="editor.requestDelete($event, 'tile')"
+                @confirm-delete="confirmDelete"
+                @cancel-delete="editor.cancelDelete"
               />
             </template>
           </ClientOnly>
@@ -467,21 +539,29 @@ const previewProfile = computed(() => {
               </button>
               <EditorBlockForm
                 :block="selectedBlock"
+                :confirming="confirmingIn('form') === selectedBlock.id"
                 @update:block="editor.updateBlock"
-                @delete="editor.deleteBlock"
+                @request-delete="editor.requestDelete($event, 'form')"
+                @delete="confirmDelete"
+                @cancel-delete="editor.cancelDelete"
               />
             </div>
             <EditorBlockList
               v-else
               :blocks="orderedBlocks"
               :selected-id="selectedId"
+              :confirming-id="confirmingIn('list')"
               @select="editor.select"
               @add="editor.addBlock"
               @move="editor.moveBlock"
+              @request-delete="editor.requestDelete($event, 'list')"
+              @confirm-delete="confirmDelete"
+              @cancel-delete="editor.cancelDelete"
             />
             <p class="text-xs text-muted">
               Order shown: <strong class="font-medium text-ink">{{ layoutKey }}</strong>.
               Drag a tile by its grip in the preview, or use the arrows here.
+              Remove a block with its trash button, or select it and press <kbd class="font-mono">Delete</kbd>.
             </p>
           </div>
 
@@ -530,6 +610,22 @@ const previewProfile = computed(() => {
             v-if="savedLabel"
             class="font-mono text-xs text-muted"
           >last save {{ savedLabel }}</span>
+        </span>
+        <!-- The live region is always in the DOM, so the delete and the undo are announced. Undo sits outside it. -->
+        <span class="flex items-center gap-2 text-sm text-ink">
+          <span
+            data-delete-notice
+            aria-live="polite"
+          >{{ notice }}</span>
+          <button
+            v-if="canUndo"
+            type="button"
+            :class="buttonClass"
+            class="border border-line px-4 text-ink hover:border-accent"
+            @click="undoDelete"
+          >
+            Undo
+          </button>
         </span>
         <kbd class="ml-auto rounded-md border border-line px-2 py-1 font-mono text-xs text-muted">⌘S / Ctrl+S</kbd>
       </div>

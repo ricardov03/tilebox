@@ -15,11 +15,16 @@ const props = defineProps<{
   columns: 2 | 4
   profile: PublicProfileInfo
   selectedId: string | null
+  /** The tile whose delete confirm is open. */
+  confirmingId: string | null
 }>()
 
 const emit = defineEmits<{
   reorder: [ids: string[]]
   select: [id: string]
+  requestDelete: [id: string]
+  confirmDelete: [id: string]
+  cancelDelete: []
 }>()
 
 /** `null` until the dynamic import resolves, or when it fails. The static grid renders then. */
@@ -72,6 +77,8 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
     :force-fallback="true"
     :fallback-tolerance="4"
     handle="[data-drag-handle]"
+    filter="[data-no-drag]"
+    :prevent-on-filter="false"
     draggable="li[data-id]"
     :direction="direction"
     ghost-class="opacity-40"
@@ -95,7 +102,11 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
       :block="block"
       :selected="block.id === selectedId"
       :draggable="true"
+      :confirming="block.id === confirmingId"
       @select="emit('select', $event)"
+      @request-delete="emit('requestDelete', $event)"
+      @confirm-delete="emit('confirmDelete', $event)"
+      @cancel-delete="emit('cancelDelete')"
     />
   </component>
   <EditorPreviewGrid
@@ -104,6 +115,10 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
     :columns="columns"
     :profile="profile"
     :selected-id="selectedId"
+    :confirming-id="confirmingId"
     @select="emit('select', $event)"
+    @request-delete="emit('requestDelete', $event)"
+    @confirm-delete="emit('confirmDelete', $event)"
+    @cancel-delete="emit('cancelDelete')"
   />
 </template>

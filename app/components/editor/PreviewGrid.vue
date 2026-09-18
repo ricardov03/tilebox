@@ -12,9 +12,16 @@ defineProps<{
   columns: 2 | 4
   profile: PublicProfileInfo
   selectedId: string | null
+  /** The tile whose delete confirm is open. */
+  confirmingId: string | null
 }>()
 
-const emit = defineEmits<{ select: [id: string] }>()
+const emit = defineEmits<{
+  select: [id: string]
+  requestDelete: [id: string]
+  confirmDelete: [id: string]
+  cancelDelete: []
+}>()
 </script>
 
 <template>
@@ -37,7 +44,11 @@ const emit = defineEmits<{ select: [id: string] }>()
       :block="block"
       :selected="block.id === selectedId"
       :draggable="false"
+      :confirming="block.id === confirmingId"
       @select="emit('select', $event)"
+      @request-delete="emit('requestDelete', $event)"
+      @confirm-delete="emit('confirmDelete', $event)"
+      @cancel-delete="emit('cancelDelete')"
     />
   </ul>
 </template>

@@ -1,20 +1,37 @@
 <!--
   Ordered list of blocks for the current layout, plus the add-block menu.
   Up/down buttons reorder without a mouse. Click a row to edit it.
+  Every row ends with a delete button. It swaps the row's right side for the
+  inline confirm. After a cancel the focus goes back to that delete button.
 -->
 <script setup lang="ts">
 import type { Block, BlockType } from '~~/types/profile'
+import { UI_ICONS } from '~/utils/networks'
 
 defineProps<{
   blocks: Block[]
   selectedId: string | null
+  /** The row whose delete confirm is open. */
+  confirmingId: string | null
 }>()
 
 const emit = defineEmits<{
   select: [id: string]
   add: [type: BlockType]
   move: [id: string, delta: -1 | 1]
+  requestDelete: [id: string]
+  confirmDelete: [id: string]
+  cancelDelete: []
 }>()
+
+const rows = useTemplateRef<HTMLOListElement>('rows')
+
+/** The confirm is gone after the next render, and the delete button is back: focus it. */
+async function cancelDelete(id: string) {
+  emit('cancelDelete')
+  await nextTick()
+  rows.value?.querySelector<HTMLButtonElement>(`[data-delete-block="${CSS.escape(id)}"]`)?.focus()
+}
 
 const menuOpen = ref(false)
 const menuRoot = useTemplateRef<HTMLElement>('menuRoot')
@@ -45,6 +62,7 @@ onMounted(() => document.addEventListener('click', onDocumentClick))
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 const rowClass = `flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 text-left ${FOCUS_RING}`
+const deleteClass = `flex size-11 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-ground hover:text-pop ${FOCUS_RING}`
 const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30 ${FOCUS_RING}`
 </script>
 
@@ -58,6 +76,7 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
       <button
         ref="menuButton"
         type="button"
+        data-add-block
         :aria-expanded="menuOpen"
         aria-haspopup="true"
         aria-controls="add-block-menu"
@@ -94,6 +113,7 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
 
     <ol
       v-else
+      ref="rows"
       class="flex list-none flex-col gap-1 p-0"
     >
       <li
@@ -103,6 +123,7 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
       >
         <button
           type="button"
+          :data-select-block="block.id"
           :aria-pressed="block.id === selectedId"
           :class="[rowClass, block.id === selectedId ? 'border-accent bg-ground' : 'border-transparent hover:bg-ground']"
           @click="emit('select', block.id)"
@@ -111,24 +132,46 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
           <span class="min-w-0 flex-1 truncate text-sm text-ink">{{ blockSummary(block) }}</span>
           <span class="shrink-0 font-mono text-xs text-muted">{{ block.type === 'section' ? 'row' : block.size }}</span>
         </button>
-        <button
-          type="button"
-          :disabled="index === 0"
-          :aria-label="`Move ${blockSummary(block)} up`"
-          :class="arrowClass"
-          @click="emit('move', block.id, -1)"
-        >
-          <span aria-hidden="true">↑</span>
-        </button>
-        <button
-          type="button"
-          :disabled="index === blocks.length - 1"
-          :aria-label="`Move ${blockSummary(block)} down`"
-          :class="arrowClass"
-          @click="emit('move', block.id, 1)"
-        >
-          <span aria-hidden="true">↓</span>
-        </button>
+        <EditorDeleteConfirm
+          v-if="block.id === confirmingId"
+          :label="blockSummary(block)"
+          class="shrink-0"
+          @confirm="emit('confirmDelete', block.id)"
+          @cancel="cancelDelete(block.id)"
+        />
+        <template v-else>
+          <button
+            type="button"
+            :disabled="index === 0"
+            :aria-label="`Move ${blockSummary(block)} up`"
+            :class="arrowClass"
+            @click="emit('move', block.id, -1)"
+          >
+            <span aria-hidden="true">↑</span>
+          </button>
+          <button
+            type="button"
+            :disabled="index === blocks.length - 1"
+            :aria-label="`Move ${blockSummary(block)} down`"
+            :class="arrowClass"
+            @click="emit('move', block.id, 1)"
+          >
+            <span aria-hidden="true">↓</span>
+          </button>
+          <button
+            type="button"
+            :data-delete-block="block.id"
+            :aria-label="`Delete ${blockSummary(block)}`"
+            :class="deleteClass"
+            @click="emit('requestDelete', block.id)"
+          >
+            <Icon
+              :name="UI_ICONS.trash"
+              class="size-5"
+              :aria-hidden="true"
+            />
+          </button>
+        </template>
       </li>
     </ol>
   </div>
