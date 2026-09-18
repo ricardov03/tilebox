@@ -49,9 +49,22 @@ export function profileIsPersonal(): boolean {
   return hasPersonalProfile()
 }
 
-/** Copies the example to `content/profile.json` when it is missing. Returns the personal path. */
+/**
+ * Copies the example to `content/profile.json` when it is missing. Returns the personal path.
+ * Throws one clear line, with both paths, when the example is missing or the copy fails.
+ */
 export function ensureProfile(): string {
-  if (!hasPersonalProfile()) copyFileSync(EXAMPLE_PROFILE_PATH, PERSONAL_PROFILE_PATH)
+  if (hasPersonalProfile()) return PERSONAL_PROFILE_PATH
+  if (!existsSync(EXAMPLE_PROFILE_PATH)) {
+    throw new Error(`Cannot create ${PERSONAL_PROFILE_PATH}: the example ${EXAMPLE_PROFILE_PATH} does not exist.`)
+  }
+  try {
+    copyFileSync(EXAMPLE_PROFILE_PATH, PERSONAL_PROFILE_PATH)
+  }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`Cannot copy ${EXAMPLE_PROFILE_PATH} to ${PERSONAL_PROFILE_PATH}: ${reason}`)
+  }
   return PERSONAL_PROFILE_PATH
 }
 
