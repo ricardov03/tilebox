@@ -276,35 +276,38 @@ test('after a pick the alt FIELD and the path field follow the block (a change f
   // Not saved: the next test loads the file again.
 })
 
-test('a cleared alt field ("Required") is not the owner\'s own text: the pick fills it, also with the alt the draft still holds', async ({ page }) => {
+test('a cleared alt field is not the owner\'s own text: the pick fills it, and the soft hint goes (WP17: no "Required")', async ({ page }) => {
   const id = imageBlockId()
   await mockPexels(page)
   await openImageForm(page)
   const altField = page.locator('form input[id$="-alt"]')
   const tile = page.locator(`li[data-id="${id}"]`)
 
-  // The owner writes an alt, then clears the field. The empty value is refused, so the draft keeps the old alt.
+  // The owner writes an alt, then clears the field. WP17: no error, the draft loses the alt, a soft hint shows.
   await altField.fill('My own words for this photo')
   await altField.blur()
   await altField.fill('')
   await altField.blur()
-  await expect(page.locator('form [data-field-error]')).toHaveText('Required')
-  await expect(tile.locator('img')).toHaveAttribute('alt', 'My own words for this photo')
+  await expect(page.locator('form [data-field-error]')).toHaveCount(0)
+  await expect(altField).not.toHaveAttribute('aria-invalid', 'true')
+  await expect(page.locator('form [data-alt-hint]')).toContainText('Add a description for screen readers')
+  await expect(tile.locator('img')).toHaveAttribute('alt', '')
 
   await openPexelsTab(page)
   await page.getByLabel('Search Pexels').fill('desk')
   await page.getByLabel('Search Pexels').press('Enter')
   await page.locator('button[data-photo-id="333333"]').click()
-  // The field decides, not the draft: the stock alt goes in and the refusal is gone.
+  // The stock alt goes in and the hint is gone.
   await expect(tile.locator('img')).toHaveAttribute('alt', 'A desk, photo 333333')
   await expect(altField).toHaveValue('A desk, photo 333333')
+  await expect(page.locator('form [data-alt-hint]')).toHaveCount(0)
   await expect(page.locator('form [data-field-error]')).toHaveCount(0)
   await expect(page.locator('[data-field-problems]')).toHaveCount(0)
 
-  // Cleared again, then the SAME photo: the draft does not change, the field still gets the alt back.
+  // Cleared again, then the SAME photo: the field gets the alt back.
   await altField.fill('')
   await altField.blur()
-  await expect(page.locator('form [data-field-error]')).toHaveText('Required')
+  await expect(page.locator('form [data-field-error]')).toHaveCount(0)
   await page.locator('button[data-photo-id="333333"]').click()
   await expect(altField).toHaveValue('A desk, photo 333333')
   await expect(page.locator('form [data-field-error]')).toHaveCount(0)

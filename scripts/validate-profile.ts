@@ -5,12 +5,13 @@
  * A personal file with a placeholder email gets a warning, not a failure.
  * WP11: one warning per expired block, per block that has not started yet, and per
  * contact / QR tile the build will leave out. Warnings never fail the build.
+ * WP17: one warning per INCOMPLETE block (a link without a URL, an image without a file, ...). Never a failure.
  */
 import { readFile } from 'node:fs/promises'
 import { scheduleState } from '../app/utils/schedule'
 import { resolveSiteUrl } from '../app/utils/site-head'
 import { describeProfile, profileIsPersonal, profilePath } from '../content/resolve'
-import { isPlaceholderEmail, parseProfile, type Profile } from '../types/profile'
+import { incompleteReason, isPlaceholderEmail, parseProfile, type Profile } from '../types/profile'
 
 const PROFILE_PATH = profilePath()
 const label = describeProfile(PROFILE_PATH)
@@ -28,6 +29,11 @@ function secondWaveWarnings(profile: Profile, now: Date): string[] {
   for (const block of profile.blocks) {
     if (block.hidden) continue
     const name = `block "${block.id}"`
+    const missing = incompleteReason(block)
+    if (missing !== null) {
+      lines.push(`warning: ${name} (${block.type}) is incomplete: ${missing}. This build leaves it out.`)
+      continue
+    }
     const state = scheduleState(block, now)
     if (state === 'expired') lines.push(`warning: ${name} expired on ${block.endsAt}. This build leaves it out.`)
     if (state === 'scheduled') lines.push(`warning: ${name} starts on ${block.startsAt}. This build leaves it out: publish again after ${block.startsAt} to show it.`)

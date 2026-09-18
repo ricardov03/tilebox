@@ -3,6 +3,7 @@
   Icon, in order: the owner's `icon`, the brand icon from the URL, the local
   favicon file, `line-md:link` (`resolveLinkIcon` in ./media.ts).
   Plain tile: top row icon + domain + arrow, bottom title + description.
+  No `title` (WP17: every text is optional) = the host of the URL is the title.
   Featured look (`linkImageLayout`): the website's image, a local file, fills the
   top (2x2, 1x2) or the right third (2x1). Text and image never overlap, so the
   text stays on token colors. 1x1 never shows the image.
@@ -101,7 +102,7 @@ const spotlightClass = computed(() =>
             wide ? 'text-[26px] leading-[1.05] md:text-[34px]' : 'text-base leading-[1.3] md:text-lg',
             imageLayout === null ? '' : 'line-clamp-2',
           ]"
-        >{{ block.title }}</span>
+        >{{ block.title ?? domain }}</span>
         <span
           v-if="block.description"
           class="text-sm leading-[1.4] md:text-base"

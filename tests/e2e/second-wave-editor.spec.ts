@@ -325,10 +325,10 @@ test('the contact card and UTM fields are clearable, wait for the typing to stop
   await expect(source).toHaveValue('')
   await expect(incomplete).toHaveCount(0)
 
-  // A refused value: the save key checks the field at once and writes nothing.
+  // A refused value: the save key checks the field at once. It is not in the draft, so nothing is written, and nothing is "blocked" (WP17).
   await source.pressSequentially('Bad Value', { delay: 10 })
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-save-blocked]')).toContainText('Save is blocked')
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
   await expect(page.locator('[data-field-problems]')).toContainText('Site > Source (utm_source): Use lowercase')
   await expect(utmPanel.locator('[data-field-error]')).toContainText('lowercase')
   await page.waitForTimeout(500)

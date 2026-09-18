@@ -58,8 +58,10 @@ export const LinkBlockSchema = z.object({
   id,
   type: z.literal('link'),
   size,
-  title: z.string().min(1),
-  url,
+  /** Optional (WP17). No title = the tile shows the host of the URL. */
+  title: z.string().min(1).optional(),
+  /** Optional (WP17). No URL = the block is INCOMPLETE: it saves, and the build leaves it out (`blockDropReason`). */
+  url: url.optional(),
   description: z.string().optional(),
   icon: iconName.optional(),
   accent: z.boolean().optional(),
@@ -84,7 +86,7 @@ export const SocialBlockSchema = z.object({
   type: z.literal('social'),
   size,
   network: z.enum(NETWORK_IDS),
-  url,
+  url: url.optional(),
   label: z.string().optional(),
   hidden,
   ...schedule,
@@ -95,8 +97,10 @@ export const ImageBlockSchema = z.object({
   id,
   type: z.literal('image'),
   size,
-  src: z.string().min(1),
-  alt: z.string().min(1),
+  /** Optional (WP17). No `src` = incomplete. */
+  src: z.string().min(1).optional(),
+  /** Optional (WP17). No `alt` = the page renders `alt=""`, the editor shows a soft hint. */
+  alt: z.string().min(1).optional(),
   caption: z.string().optional(),
   source: ImageSourceSchema.nullable(),
   hidden,
@@ -108,7 +112,8 @@ export const TextBlockSchema = z.object({
   type: z.literal('text'),
   size,
   title: z.string().optional(),
-  body: z.string(),
+  /** Optional (WP17). No body (or an empty one) = incomplete. */
+  body: z.string().optional(),
   footnote: z.string().optional(),
   hidden,
   ...schedule,
@@ -117,7 +122,8 @@ export const TextBlockSchema = z.object({
 export const SectionBlockSchema = z.object({
   id,
   type: z.literal('section'),
-  title: z.string().min(1),
+  /** Optional (WP17). No title = incomplete. */
+  title: z.string().min(1).optional(),
   hidden,
   ...schedule,
 }).strict()
@@ -126,9 +132,9 @@ export const MapBlockSchema = z.object({
   id,
   type: z.literal('map'),
   size,
-  label: z.string().min(1),
+  label: z.string().min(1).optional(),
   sublabel: z.string().optional(),
-  url,
+  url: url.optional(),
   hidden,
   ...schedule,
   noUtm,
@@ -138,7 +144,7 @@ export const VideoBlockSchema = z.object({
   id,
   type: z.literal('video'),
   size,
-  url,
+  url: url.optional(),
   title: z.string().optional(),
   thumbnail: z.string().optional(),
   hidden,
@@ -220,13 +226,15 @@ export const HIGHLIGHTS_MAX = 3
 export const HIGHLIGHT_MAX_CHARS = 80
 
 export const ProfileInfoSchema = z.object({
+  /** The one required text. The editor lets the FIELD be empty and keeps the last valid name (WP17). */
   name: z.string().min(1),
-  handle: z.string().min(1),
-  bio: z.string(),
+  /** Optional (WP17), like `bio` and `email`: an emptied field removes the key. */
+  handle: z.string().min(1).optional(),
+  bio: z.string().optional(),
   /** Up to 3 short lines under the bio. Empty = nothing renders. */
   highlights: z.array(z.string().min(1).max(HIGHLIGHT_MAX_CHARS)).max(HIGHLIGHTS_MAX).default([]),
-  /** Required. Private unless `showEmail` is true: the build removes it from the public profile. */
-  email: z.email(),
+  /** Optional (WP17). Private unless `showEmail` is true. No email = no Gravatar lookup and no email line, whatever `showEmail` says. */
+  email: z.email().optional(),
   showEmail: z.boolean().default(false),
   avatar: z.string().nullable().optional(),
   status: z.string().optional(),
@@ -344,7 +352,8 @@ export const GRAVATAR_PUBLIC_PATH = '/avatar.gravatar.webp'
 /** Emails that mean "not set yet". No Gravatar lookup, and `check:profile` warns on a personal file. */
 export const PLACEHOLDER_EMAILS: readonly string[] = ['you@example.com', 'hello@example.com']
 
-export function isPlaceholderEmail(email: string): boolean {
+export function isPlaceholderEmail(email: string | undefined): boolean {
+  if (email === undefined) return false
   return PLACEHOLDER_EMAILS.includes(email.trim().toLowerCase())
 }
 
@@ -361,7 +370,7 @@ export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): P
   const resolvedAvatar = avatar || gravatarPath
   return {
     ...rest,
-    ...(showEmail ? { email } : {}),
+    ...(showEmail && email ? { email } : {}),
     ...(resolvedAvatar ? { avatar: resolvedAvatar } : {}),
   }
 }
@@ -396,14 +405,14 @@ export function toPublicBlock(block: Block, context: PublicBlockContext = {}): B
   switch (block.type) {
     case 'link': {
       const { startsAt: _startsAt, noUtm: skip, enrich: _enrich, meta: _meta, image, imageAlt, ...rest } = block
-      const next = { ...rest, url: tagged(rest.url, skip) }
+      const next = { ...rest, ...(rest.url === undefined ? {} : { url: tagged(rest.url, skip) }) }
       return block.showImage && image ? { ...next, image, ...(imageAlt ? { imageAlt } : {}) } : next
     }
     case 'social':
     case 'map':
     case 'video': {
       const { startsAt: _startsAt, noUtm: skip, ...rest } = block
-      return { ...rest, url: tagged(rest.url, skip) }
+      return { ...rest, ...(rest.url === undefined ? {} : { url: tagged(rest.url, skip) }) }
     }
     default: {
       const { startsAt: _startsAt, ...rest } = block
@@ -413,11 +422,44 @@ export function toPublicBlock(block: Block, context: PublicBlockContext = {}): B
 }
 
 /** Why the build leaves a block out. `null` = the block is on the page. */
-export type BlockDropReason = 'hidden' | 'scheduled' | 'expired' | 'no-contact-file' | 'no-qr-file'
+export type BlockDropReason = 'hidden' | 'incomplete' | 'scheduled' | 'expired' | 'no-contact-file' | 'no-qr-file'
+
+/**
+ * What an INCOMPLETE block still needs (WP17), as the end of "Incomplete: ...". `null` = it has its essential value.
+ * Every text of a block is optional in the file, so an emptied field never blocks a save. The ESSENTIAL one decides
+ * if the tile can exist: a link, social, map or video block needs a URL, an image a file, a text block a body,
+ * a section a title. One rule for the build, `check:profile`, the editor badges and the tests.
+ */
+export function incompleteReason(block: Block): string | null {
+  switch (block.type) {
+    case 'link':
+    case 'social':
+      return block.url ? null : 'add a URL'
+    case 'map':
+      return block.url ? null : 'add a map URL'
+    case 'video':
+      return block.url ? null : 'add a video URL'
+    case 'image':
+      return block.src ? null : 'add an image'
+    case 'text':
+      return block.body?.trim() ? null : 'add some text'
+    case 'section':
+      return block.title ? null : 'add a title'
+    default:
+      return null
+  }
+}
+
+/** "Incomplete: add a URL", or `null`. The badge of the editor and the warning of `check:profile`. */
+export function incompleteMessage(block: Block): string | null {
+  const reason = incompleteReason(block)
+  return reason === null ? null : `Incomplete: ${reason}`
+}
 
 /** One rule for the build, `check:profile` and the tests. `assets` = the generated files that exist. */
 export function blockDropReason(block: Block, now: Date, assets: PublicSiteExtras['assets'] = {}): BlockDropReason | null {
   if (block.hidden) return 'hidden'
+  if (incompleteReason(block) !== null) return 'incomplete'
   if (!isOnPage(block, now)) return block.endsAt && Date.parse(block.endsAt) <= now.getTime() ? 'expired' : 'scheduled'
   if (block.type === 'contact' && !assets.contactCard) return 'no-contact-file'
   if (block.type === 'qr' && !assets.qrCode) return 'no-qr-file'
@@ -427,6 +469,7 @@ export function blockDropReason(block: Block, now: Date, assets: PublicSiteExtra
 /**
  * Removed here, with their ids in both layouts, so they are in no HTML, payload or JS file of the built site:
  * - hidden blocks (`hidden: true`, WP10a);
+ * - incomplete blocks (WP17, `incompleteReason()`): a link without a URL, an image without a file, ...;
  * - blocks outside their schedule at `build.now` (WP11): a future `startsAt`, a past `endsAt`;
  * - `contact` and `qr` blocks whose generated file does not exist (`siteExtras.assets`).
  * `site` (WP10b) goes through `toPublicSite()`. Everything that reads the public

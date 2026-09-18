@@ -6,7 +6,8 @@
   is used. The result shows inline.
 -->
 <script setup lang="ts">
-const props = defineProps<{ email: string }>()
+/** WP17: the email is optional. Without one there is nothing to ask Gravatar for: the button is off and says why. */
+const props = defineProps<{ email?: string }>()
 const emit = defineEmits<{ saved: [], resolved: [exists: boolean] }>()
 
 type Status = 'saved' | 'none' | 'offline'
@@ -31,7 +32,7 @@ function messageOf(error: unknown): string {
 }
 
 async function run() {
-  if (busy.value) return
+  if (busy.value || !props.email) return
   busy.value = true
   message.value = null
   try {
@@ -55,7 +56,7 @@ async function run() {
   <div class="flex flex-col gap-1">
     <button
       type="button"
-      :disabled="busy"
+      :disabled="busy || !email"
       :class="FOCUS_RING"
       class="min-h-11 self-start rounded-full border border-line bg-ground px-4 text-sm font-medium text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-40"
       @click="run"
@@ -63,7 +64,14 @@ async function run() {
       {{ busy ? 'Asking Gravatar...' : 'Use my Gravatar' }}
     </button>
     <p
-      v-if="message"
+      v-if="!email"
+      class="text-xs text-muted"
+      data-gravatar-no-email
+    >
+      Add your email above to look for a Gravatar picture.
+    </p>
+    <p
+      v-else-if="message"
       :class="failed ? 'text-pop' : 'text-muted'"
       class="text-xs"
       role="status"

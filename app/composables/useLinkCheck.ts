@@ -17,7 +17,7 @@ interface LinkCheckState {
 
 /** The URL of a block that the check covers. `null` for a block without one. */
 export function checkedUrlOf(block: Block): string | null {
-  if (block.type === 'link' || block.type === 'social' || block.type === 'map' || block.type === 'video') return block.url
+  if (block.type === 'link' || block.type === 'social' || block.type === 'map' || block.type === 'video') return block.url ?? null
   if (block.type === 'image') return block.source?.url ?? null
   return null
 }

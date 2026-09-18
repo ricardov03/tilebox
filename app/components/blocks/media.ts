@@ -49,7 +49,8 @@ export function imageCredit(source: ImageCreditSource | null | undefined): Image
 export type TileVariant = 'tile' | 'accent' | 'pop'
 
 /** Host of a URL without a leading `www.`. Empty for `mailto:` and invalid URLs. */
-export function hostOf(url: string): string {
+export function hostOf(url: string | undefined): string {
+  if (!url) return ''
   try {
     return new URL(url).hostname.replace(/^www\./, '')
   }
@@ -59,7 +60,8 @@ export function hostOf(url: string): string {
 }
 
 /** Text shown as the "domain" line on a link tile. `mailto:` shows the address, `tel:` the number. */
-export function domainLabel(url: string): string {
+export function domainLabel(url: string | undefined): string {
+  if (!url) return ''
   const host = hostOf(url)
   if (host) return host
   return url.replace(/^(mailto|tel):/i, '').split('?')[0] ?? ''
@@ -76,7 +78,8 @@ export function isSafeHref(url: string): boolean {
 }
 
 /** YouTube video id for watch, shorts, embed, live and youtu.be URLs. `null` otherwise. */
-export function youtubeId(url: string): string | null {
+export function youtubeId(url: string | undefined): string | null {
+  if (!url) return null
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -113,9 +116,10 @@ const FALLBACK_LINK_ICON = 'line-md:link'
  * Icon of a link tile, in order (WP10a): the owner's `icon`, the brand icon
  * from the URL (no network), the local favicon file, then `line-md:link`.
  */
-export function resolveLinkIcon(block: { url: string, icon?: string, favicon?: string }): LinkIcon {
+export function resolveLinkIcon(block: { url?: string, icon?: string, favicon?: string }): LinkIcon {
   if (block.icon) return { kind: 'icon', name: block.icon, source: 'manual' }
-  const brand = brandIconFor(block.url)
+  // WP17: no URL yet (an incomplete block in the editor) = the default link icon.
+  const brand = block.url ? brandIconFor(block.url) : undefined
   if (brand) return { kind: 'icon', name: brand, source: 'brand' }
   if (block.favicon && LOCAL_FAVICON.test(block.favicon)) return { kind: 'favicon', src: block.favicon }
   return { kind: 'icon', name: FALLBACK_LINK_ICON, source: 'fallback' }

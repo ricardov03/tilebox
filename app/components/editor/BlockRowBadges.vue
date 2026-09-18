@@ -3,10 +3,12 @@
   (a row) and one in PreviewTile.vue (`schedule-only`, over the tile).
   - Schedule: a calendar badge for a block that is scheduled, has an end date, or expired.
   - Link check: ok / blocked / broken with the reason, from the last "Check links" (memory only).
-  Renders nothing for a block with neither.
+  - Incomplete (WP17): "Incomplete: add a URL" for a block without its essential value, in the row AND on
+    the tile. The block saves like any other; the build leaves it out (`incompleteReason()` in types/profile.ts).
+  Renders nothing for a block with none of them.
 -->
 <script setup lang="ts">
-import type { Block } from '~~/types/profile'
+import { incompleteMessage, type Block } from '~~/types/profile'
 import { UI_ICONS } from '~/utils/networks'
 import { scheduleState } from '~/utils/schedule'
 
@@ -31,6 +33,7 @@ const schedule = computed(() => {
   return state === 'live' ? null : { state, label: SCHEDULE_LABELS[state] }
 })
 
+const incomplete = computed(() => incompleteMessage(props.block))
 const link = computed(() => (props.scheduleOnly ? null : resultFor(props.block)))
 const LINK_CLASSES = { ok: 'border-line text-muted', blocked: 'border-line text-ink', broken: 'border-pop text-ink' } as const
 const badgeClass = 'flex items-center gap-1 rounded-full border bg-tile px-2 py-0.5 font-mono text-xs'
@@ -38,9 +41,17 @@ const badgeClass = 'flex items-center gap-1 rounded-full border bg-tile px-2 py-
 
 <template>
   <span
-    v-if="schedule || link"
+    v-if="schedule || link || incomplete"
     class="flex flex-wrap items-center gap-1"
   >
+    <span
+      v-if="incomplete"
+      :class="badgeClass"
+      class="border-line text-ink"
+      data-incomplete-badge
+    >
+      {{ incomplete }}
+    </span>
     <span
       v-if="schedule"
       :class="badgeClass"

@@ -78,7 +78,8 @@ function cancel() {
 }
 
 /** A whole http(s) URL with a dot in the host. `https://nu` is still being typed. */
-function looksComplete(url: string): boolean {
+function looksComplete(url: string | undefined): boolean {
+  if (!url) return false
   try {
     const parsed = new URL(url)
     const host = parsed.hostname
@@ -95,6 +96,10 @@ async function load(force: boolean) {
   reason.value = null
   note.value = null
   const url = props.block.url
+  if (!url) {
+    // WP17: an emptied URL. Nothing to ask, nothing to complain about.
+    return
+  }
   if (!isHttpUrl(url)) {
     reason.value = 'Only http and https links have a preview.'
     return
@@ -142,7 +147,7 @@ function apply(answer: Extract<UnfurlAnswer, { ok: true }>) {
     imageAlt: answer.image ? answer.imageAlt : props.block.imageAlt,
   }
   // Pre-fill only what is empty. The placeholder title of a new link counts as empty.
-  if (answer.title && (!props.block.title.trim() || props.block.title === NEW_LINK_TITLE)) changes.title = answer.title
+  if (answer.title && (!props.block.title?.trim() || props.block.title === NEW_LINK_TITLE)) changes.title = answer.title
   if (answer.description && !props.block.description) changes.description = answer.description
   emit('patch', changes, OPTIONAL)
 }

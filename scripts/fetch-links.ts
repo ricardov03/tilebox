@@ -90,17 +90,18 @@ async function run(): Promise<void> {
   await mkdir(THUMBS_DIR, { recursive: true })
 
   // Link previews. One after the other: a personal page has a few links, and one host is never hit twice at once.
-  const links = profile.blocks.flatMap(block => (block.type === 'link' && linkNeedsFetch(block) ? [block] : []))
+  // `linkNeedsFetch()` is false for a link without a URL (WP17: incomplete, the build leaves it out).
+  const links = profile.blocks.flatMap(block => (block.type === 'link' && block.url && linkNeedsFetch(block) ? [{ url: block.url, showImage: block.showImage ?? false }] : []))
   let linksOk = 0
-  for (const block of links) {
-    const result = await unfurl(block.url, { showImage: block.showImage ?? false })
+  for (const link of links) {
+    const result = await unfurl(link.url, { showImage: link.showImage })
     if (result.ok) linksOk++
-    else process.stdout.write(`skip ${block.url}: ${result.reason}\n`)
+    else process.stdout.write(`skip ${link.url}: ${result.reason}\n`)
   }
 
   const thumbJobs = new Map<string, Job>()
   for (const block of profile.blocks) {
-    if (block.type !== 'video') continue
+    if (block.type !== 'video' || !block.url) continue
     const id = youtubeId(block.url)
     if (!id || thumbJobs.has(id)) continue
     thumbJobs.set(id, { key: id, file: `${id}.jpg`, dir: THUMBS_DIR, url: THUMB_URL(id) })

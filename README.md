@@ -84,7 +84,9 @@ npm run dev
 3. `npm run publish`. Your page goes to Cloudflare Pages or Netlify from your machine (see Publish).
 
 Text fields in the editor keep what you type. The check runs 0.6 s after your last key, and at once when you leave the field, press Enter or press Cmd/Ctrl+S.
-A value that fails the check stays in the field with the reason under it; the file keeps the last valid value. The save bar lists those fields under **Not saved yet**, and Save waits until you fix them.
+**An empty field is never an error.** Clear a field and the key leaves your file: the tile keeps working, the editor says what is missing, and Save writes the change. Only the profile **Name** is kept: an empty name field saves the last name you gave, with the note "Name is empty: kept the last saved name".
+A value with a bad FORMAT (text that is not a URL, not an email, not an icon name) stays in the field with the reason under it; the file keeps the last valid value. The save bar lists those under **Not saved:**, and Save still writes everything else. Nothing blocks Save.
+A tile that lost the value it needs to exist (a link without a URL, an image without a file) shows an **Incomplete: add a URL** badge in the list and on the preview. It saves like any other tile, and the published page leaves it out until you complete it.
 
 The first `npm run dev` creates `content/profile.json` from `content/profile.example.json`.
 Restart `npm run dev` after you change the color preset, the font preset or an icon name.
@@ -156,9 +158,10 @@ Profile fields:
 
 | Field | Required | What it is |
 |---|---|---|
-| `name`, `handle`, `bio`, `theme` | yes | The basics |
-| `email` | yes | A valid email. Hidden unless `showEmail` is true. Also used to find your Gravatar picture |
-| `showEmail` | no, default `false` | `true` shows the email as a `mailto:` link under the highlights |
+| `name`, `theme` | yes | The two values a page cannot do without |
+| `handle`, `bio` | no | Leave them out and the page simply shows nothing there |
+| `email` | no | A valid email. Hidden unless `showEmail` is true. Also used to find your Gravatar picture. No email = no Gravatar lookup and no email line |
+| `showEmail` | no, default `false` | `true` shows the email under the highlights. It is published as a token, never as a raw address (see [Email protection](#email-protection)) |
 | `highlights` | no, default `[]` | Up to 3 short lines under the bio, 1 to 80 characters each. With 3 of them, each gets one line on phones |
 | `avatar` | no | Path of an uploaded picture. It wins over the Gravatar picture. Without both, the page shows your initials |
 | `status` | no | The line with the pinging dot: a halo grows and fades behind a solid dot (no halo with `prefers-reduced-motion`) |
@@ -171,14 +174,16 @@ Rules: every block `id` is unique. `layout.desktop` lists every block id. `layou
 Every block type takes `"hidden": true`: the block stays in your file and in the editor, and the build leaves it out (no HTML, no payload, no JS).
 Every block type also takes `"startsAt"` and `"endsAt"` (see [Scheduling](#scheduling)). `link`, `social`, `map` and `video` blocks take `"noUtm": true` (see [UTM tags](#utm-tags)).
 
-| Type | Required fields | Optional fields |
+Every text of a block is OPTIONAL in the file. The column "Needs to be published" is the one value a tile cannot exist without: while it is missing the tile is *incomplete*, it still saves, and the build leaves it out.
+
+| Type | Needs to be published | Other fields |
 |---|---|---|
-| `link` | `title`, `url` | `description`, `icon`, `accent`, `pop`, `spotlight`, `enrich`, `showImage`, `favicon`, `image`, `imageAlt`, `meta` |
-| `social` | `network`, `url` | `label` |
-| `image` | `src`, `alt`, `source` (or `null`) | `caption` |
+| `link` | `url` | `title` (default: the host of the URL), `description`, `icon`, `accent`, `pop`, `spotlight`, `enrich`, `showImage`, `favicon`, `image`, `imageAlt`, `meta` |
+| `social` | `url` | `network` (required by the schema), `label` |
+| `image` | `src` | `alt` (missing = `alt=""`, a decorative image), `caption`, `source` (required by the schema, `null` for your own file) |
 | `text` | `body` | `title`, `footnote` |
 | `section` | `title` | |
-| `map` | `label`, `url` | `sublabel` |
+| `map` | `url` | `label` (default "Map"), `sublabel` |
 | `video` | `url` | `title`, `thumbnail` |
 | `contact` | | `title` (default "Save my contact"), `description`, `icon` (default `line-md:account`). See [Save contact](#save-contact) |
 | `qr` | | `caption` (default: the host of your site). `size` is `1x1` or `2x2` only. See [QR code](#qr-code) |
@@ -457,7 +462,7 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
 | `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the status dot pings (no halo with reduced motion, no layout shift). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back). `field-draft.spec.ts`: the state machine of an editor text field, with a fake clock (no browser). `second-wave.spec.ts` (WP11): with no browser and a fixed date, the schedule matrix, the UTM matrix, the vCard text (escaping, CRLF, no `PHOTO`, no profile email), the QR file only with a site URL, the link checker with a mocked connection; on the built page, the end-date script, the share button (copy, announce, `navigator.share`, clear of the theme toggle at 1280 and 390), the contact tile download. `pexels.spec.ts` (WP12, mocked connection, no key): the search mapping, 401, 429 with the reset time, the 10-minute memory, input checks, the pick route refuses a file that is not on `images.pexels.com`, a redirect to another host and a fake jpeg, writes a WebP without metadata, a second pick downloads nothing, the credit line, and the key canary (the key and the name of its variable are in no built file) | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `editor-inputs.spec.ts`: the text fields (a cleared field stays empty, typing through an invalid text is never rewritten, no message while typing, "Required" after a blur, the draft keeps the last valid value, Save is blocked with a message, Cmd/Ctrl+S checks first, an emptied optional field leaves the file, a change from outside, the email and the Site URL fields). `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `second-wave-editor.spec.ts` (WP11): the schedule inputs round-trip to ISO in the saved file, the contact panel, the live UTM example, the share checkbox, "Check links" with a mocked route, the guards of the two new dev routes and the 1024 px QR PNG. `pexels-editor.spec.ts`: the Pexels tab with mocked routes (no key state, search, grid, pick, save, keyboard pick, rate limit, offline) and the guards of the real routes. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `editor-inputs.spec.ts`: the text fields (a cleared field stays empty, typing through an invalid text is never rewritten, no message while typing, the draft keeps the last valid value, Cmd/Ctrl+S checks first, a change from outside, the email and the Site URL fields) and WP17 (a cleared URL is no error and makes the tile "Incomplete" but still saves, a bad format is listed under "Not saved:" while Save writes the rest, cleared title / handle / bio / email save as absent keys, an emptied name keeps the last name with a soft note). `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `second-wave-editor.spec.ts` (WP11): the schedule inputs round-trip to ISO in the saved file, the contact panel, the live UTM example, the share checkbox, "Check links" with a mocked route, the guards of the two new dev routes and the 1024 px QR PNG. `pexels-editor.spec.ts`: the Pexels tab with mocked routes (no key state, search, grid, pick, save, keyboard pick, rate limit, offline) and the guards of the real routes. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -778,7 +783,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | The tag exists but there is no GitHub Release | The pipeline failed or `gh` was missing. Make the release: `npm run release:publish -- vX.Y.Z --no-push`. See why the pipeline failed: `gh run list --workflow=release.yml`, then `gh run view <id> --log-failed`. After the fix is on `main`, run it again: `gh workflow run release.yml -f tag=vX.Y.Z` |
 | The tag exists and the GitHub Release exists, but it has no zip | The pipeline is still running (`gh run watch`) or it failed. Run `npm run release:publish -- vX.Y.Z --no-push --rerun --watch`: it checks the files of the release, starts the pipeline again (`gh workflow run release.yml -f tag=vX.Y.Z`) and waits for that new run. Without `--rerun` it asks first, or prints the command when there is no terminal. Do not upload a local zip: it holds your personal data |
 | `release:publish` said `pipeline: FAILED` but the release has the zip | Fixed. Old versions watched the newest run of the tag, also an old failed one, and never looked at the release. Now the script checks the files first and prints `release is complete` |
-| The editor says `Save is blocked` | A text field holds a value the check refused (empty but required, not a URL, not an email). The save bar lists it under **Not saved yet**. Fix it, or type the old value again. The file was not changed |
+| A field shows a message and Save does not write that value | The text has a bad FORMAT (not a URL, not an email, not an icon name). Save is never blocked: it writes everything else, and the file keeps the last valid value of that one field. The save bar lists it under **Not saved:**. Fix the text, or clear the field to remove the key |
+| A tile says `Incomplete: add a URL` | The tile lost the value it needs to exist. It is saved and kept in the editor; the published page leaves it out until you fill that value. `npm run check:profile` prints one warning line per incomplete tile |
 | Playwright says the browser is missing | `npx playwright install chromium` |
 
 ## More docs

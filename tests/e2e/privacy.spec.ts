@@ -43,14 +43,17 @@ test.describe('the built site', () => {
   })
 
   test('a hidden email is in no file of dist/', () => {
+    const email = profile.profile.email
+    test.skip(!email, 'this profile has no email (WP17: it is optional)')
+    if (!email) return
     test.skip(profile.profile.showEmail, 'this profile shows its email on purpose')
     // A block that links to the same address (a mailto tile) publishes it on purpose.
-    const inBlocks = JSON.stringify(profile.blocks).toLowerCase().includes(profile.profile.email.toLowerCase())
+    const inBlocks = JSON.stringify(profile.blocks).toLowerCase().includes(email.toLowerCase())
     test.skip(inBlocks, 'a block of this profile uses the same address')
     // WP11: `contact.email` is public by intent. Typing the same address there publishes it on purpose.
-    const inCard = profile.contact?.enabled === true && profile.contact.email?.toLowerCase() === profile.profile.email.toLowerCase()
+    const inCard = profile.contact?.enabled === true && profile.contact.email?.toLowerCase() === email.toLowerCase()
     test.skip(inCard, 'the contact card of this profile uses the same address')
-    expect(filesContaining(distDir(), profile.profile.email)).toEqual([])
+    expect(filesContaining(distDir(), email)).toEqual([])
   })
 
   test('a hidden block is in no file of dist/', () => {
@@ -93,8 +96,9 @@ test.describe('the built site', () => {
     if (!existsSync(card)) return
     const text = readFileSync(card, 'utf8')
     expect(text).not.toMatch(/PHOTO/i)
-    const sameOnPurpose = profile.contact?.email?.toLowerCase() === profile.profile.email.toLowerCase()
-    if (!profile.profile.showEmail && !sameOnPurpose) expect(text.toLowerCase()).not.toContain(profile.profile.email.toLowerCase())
+    const email = profile.profile.email?.toLowerCase()
+    const sameOnPurpose = profile.contact?.email?.toLowerCase() === email
+    if (email && !profile.profile.showEmail && !sameOnPurpose) expect(text.toLowerCase()).not.toContain(email)
   })
 
   test('the example email is in no file of dist/', () => {

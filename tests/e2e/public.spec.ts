@@ -44,10 +44,12 @@ test('highlights render as a list under the bio', async ({ page }) => {
 
 test('the email shows as a mailto link only when showEmail is true', async ({ page }) => {
   await page.goto('/')
-  const { email, showEmail } = profile.profile
+  const { showEmail } = profile.profile
+  // WP17: the email is optional. No email = no line, whatever `showEmail` says.
+  const email = profile.profile.email ?? 'no-email-in-this-profile@tilebox.invalid'
   if (!profileIsPersonal()) expect(showEmail).toBe(false)
   const link = page.locator(`a[href="mailto:${email}"]`)
-  if (showEmail) {
+  if (showEmail && profile.profile.email) {
     await expect(link).toHaveCount(1)
     await expect(link).toContainText(email)
     return
@@ -83,14 +85,14 @@ test('the status dot pings: a halo behind a solid dot, both hidden from assistiv
 })
 
 test('a link without an icon shows the brand icon of its URL', async ({ page }) => {
-  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && brandIconFor(b.url) !== undefined)
+  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && b.url !== undefined && brandIconFor(b.url) !== undefined)
   if (!profileIsPersonal()) expect(block?.id).toBe('b10')
   test.skip(!block || block.type !== 'link', 'this profile has no such link')
-  if (!block || block.type !== 'link') return
+  if (!block || block.type !== 'link' || !block.url) return
   if (!profileIsPersonal()) expect(brandIconFor(block.url)).toBe('line-md:github')
   await page.goto('/')
   const tile = page.locator(`${TILES} a[href="${block.url}"]`).first()
-  await expect(tile).toContainText(block.title)
+  if (block.title) await expect(tile).toContainText(block.title)
   // Inline SVG from the client bundle: no favicon <img>, no request to another host.
   await expect(tile.locator('svg').first()).toBeVisible()
   await expect(tile.locator('img')).toHaveCount(0)

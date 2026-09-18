@@ -103,7 +103,7 @@ test('edits the site fields, shows the previews, refuses a bad URL and saves', a
   })
 })
 
-test('a bad URL blocks the save, and an emptied field leaves the file', async ({ page }) => {
+test('a bad URL is not saved and never blocks the save, and an emptied field leaves the file', async ({ page }) => {
   await openSiteTab(page)
   const panel = page.locator('#panel-site')
   const url = panel.getByLabel('Site URL')
@@ -112,7 +112,8 @@ test('a bad URL blocks the save, and an emptied field leaves the file', async ({
   await url.blur()
   await expect(panel.getByRole('alert')).toContainText('https URL')
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
+  await expect(page.locator('[data-field-problems]')).toContainText('Not saved:')
   expect(readProfile().site?.url).toBe('https://ada.example')
 
   // The old value again: the field is fine, the save works.

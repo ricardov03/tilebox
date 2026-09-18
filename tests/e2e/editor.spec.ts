@@ -145,7 +145,7 @@ test('adds a link block, edits it, moves it on mobile and saves with the keyboar
   expect(saved.layout.mobile?.at(-1)).toBe(mobileBefore.at(-2))
 })
 
-test('an invalid URL shows an error, blocks the save and is not written', async ({ page }) => {
+test('an invalid URL shows an error and is not written, and the save is never blocked (WP17)', async ({ page }) => {
   const before = readFileSync(PROFILE_PATH, 'utf8')
   await openEditor(page)
 
@@ -158,9 +158,10 @@ test('an invalid URL shows an error, blocks the save and is not written', async 
   await expect(form.getByRole('alert')).toContainText('Invalid URL')
   await expect(url).toHaveValue('not a url')
 
-  // The invalid value never reached the draft, and the save key says why it does nothing.
+  // The invalid value never reached the draft: there is nothing to write, and nothing says "blocked".
+  await expect(page.locator('[data-field-problems]')).toContainText('Not saved:')
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
   await page.waitForTimeout(500)
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
   expect(before).not.toContain('not a url')
@@ -173,9 +174,10 @@ test('an empty profile name never leaves the editor, and the save route rejects 
   await page.getByRole('tab', { name: 'Profile' }).click()
   await page.locator('#p-name').fill('')
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('#p-name-error')).toHaveText('Required')
-  await expect(page.locator('[data-field-problems]')).toContainText('Profile > Name: Required')
-  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  // WP17: a soft note, no error, no blocked save. The draft keeps the last valid name, so nothing changed.
+  await expect(page.locator('#p-name-error')).toHaveCount(0)
+  await expect(page.locator('[data-field-problems]')).toContainText('Name is empty: kept the last saved name')
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
 
   // The route has its own check: a client that skips the editor gets the schema error.
@@ -242,9 +244,9 @@ test('an invalid email shows an inline error and is not written', async ({ page 
   await expect(page.locator('#p-email')).toHaveAttribute('aria-invalid', 'true')
   await expect(page.locator('#p-email')).toHaveValue('not-an-email')
 
-  // The invalid value never reached the draft, and the save is blocked.
+  // The invalid value never reached the draft. The save is not blocked (WP17): there is nothing else to write.
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-save-blocked]')).toBeVisible()
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
   await page.waitForTimeout(500)
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
   expect(before).not.toContain('not-an-email')
@@ -522,7 +524,7 @@ test('a failed fetch shows the reason, and turning the preview off keeps your te
   await form.locator('input[id$="-url"]').fill('https://unfurl.test/blocked')
   await expect(form.locator('[data-link-reason]')).toContainText('http 403')
   expect(calls).toHaveLength(1)
-  await expect(form.locator('input[id$="-title"]')).toHaveValue(block.title)
+  await expect(form.locator('input[id$="-title"]')).toHaveValue(block.title ?? '')
 
   await form.locator('input[id$="-preview-enrich"]').uncheck()
   await expect(form.locator('[data-link-card]')).toHaveCount(0)

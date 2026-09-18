@@ -5,15 +5,17 @@
   that passes reaches `patch()`. Each one has a `key` with the block id, so
   another block gets fresh fields. Selects and checkboxes patch at once.
   `patch()` builds the whole block, runs it through BlockSchema and emits it
-  only when valid, so the preview never sees a broken block. Optional string
-  fields are removed when emptied (strict schema, no "").
+  only when valid, so the preview never sees a broken block. EVERY text field
+  is optional (WP17): an emptied field removes its key (strict schema, no ""),
+  shows no error and never blocks the save. A block without its essential value
+  (a link without a URL) is "Incomplete": it saves, and the build leaves it out.
   Link blocks (WP10a): the link preview (LinkEnrich), the icon with its "auto"
   label (LinkIconField) and the Spotlight select with a live sample.
   The last controls: Hide / Show, Duplicate, then "Delete this block", which
   opens the shared inline confirm.
 -->
 <script setup lang="ts">
-import { BlockSchema, QR_SIZES, SPOTLIGHTS, type Block, type Spotlight } from '~~/types/profile'
+import { BlockSchema, incompleteMessage, QR_SIZES, SPOTLIGHTS, type Block, type Spotlight } from '~~/types/profile'
 import { SIZES } from '~/utils/sizes'
 import { NETWORK_IDS, NETWORKS, UI_ICONS } from '~/utils/networks'
 
@@ -33,6 +35,9 @@ const emit = defineEmits<{
   'cancelDelete': []
   'duplicate': [id: string]
 }>()
+
+/** "Incomplete: add a URL", or `null`. The same rule as the build (`incompleteReason()` in types/profile.ts). */
+const incomplete = computed(() => incompleteMessage(props.block))
 
 const errors = ref<string[]>([])
 watch(() => props.block.id, () => {
@@ -102,16 +107,14 @@ function checked(event: Event): boolean {
   return target instanceof HTMLInputElement && target.checked
 }
 
-/** A new local file replaces any stock-photo source. The picker never sends an empty `src`: it is required. */
+/** A new local file replaces any stock-photo source. An emptied path removes `src` (WP17): the block is incomplete until it has a file again. */
 function onImageSrc(value: string | null | undefined) {
-  if (!value) return
-  patch({ src: value, source: null })
+  patch({ src: value || undefined, source: null }, ['src'])
 }
 
-/** `alt` is required for image blocks. The picker never sends an empty one. */
+/** An emptied alt text removes `alt` (WP17): the page renders `alt=""`, the picker shows a soft hint. */
 function onImageAlt(value: string | undefined) {
-  if (!value) return
-  patch({ alt: value })
+  patch({ alt: value || undefined }, ['alt'])
 }
 
 const SPOTLIGHT_LABELS: Record<Spotlight, string> = { pop: 'Pop', wobble: 'Wobble', buzz: 'Buzz' }
@@ -130,6 +133,13 @@ const labelClass = LABEL_CLASS
   >
     <p class="font-mono text-xs text-muted">
       {{ block.type }} · id {{ block.id }}
+    </p>
+    <p
+      v-if="incomplete"
+      data-form-incomplete
+      class="rounded-xl border border-line px-3 py-2 text-xs text-ink"
+    >
+      {{ incomplete }}. You can save it like this: the published page leaves this block out until it is complete.
     </p>
 
     <ul
@@ -176,20 +186,18 @@ const labelClass = LABEL_CLASS
         :id="fid('title')"
         :key="fid('title')"
         label="Title"
-        required
         :model-value="block.title"
         :validate="checkOf('title')"
-        @commit="patch({ title: $event })"
+        @commit="patch({ title: $event }, ['title'])"
       />
       <EditorTextField
         :id="fid('url')"
         :key="fid('url')"
         label="URL"
         type="url"
-        required
         :model-value="block.url"
         :validate="checkOf('url')"
-        @commit="patch({ url: $event })"
+        @commit="patch({ url: $event }, ['url'])"
         @paste="linkEnrich?.urlPasted()"
         @blur="linkEnrich?.urlBlurred()"
       />
@@ -302,10 +310,9 @@ const labelClass = LABEL_CLASS
         :key="fid('url')"
         label="URL"
         type="url"
-        required
         :model-value="block.url"
         :validate="checkOf('url')"
-        @commit="patch({ url: $event })"
+        @commit="patch({ url: $event }, ['url'])"
       />
       <EditorTextField
         :id="fid('label')"
@@ -325,9 +332,8 @@ const labelClass = LABEL_CLASS
         :key="fid('image')"
         :src="block.src"
         :alt="block.alt"
-        require-src
         :stock-size="block.size"
-        require-alt
+        with-alt
         @update:src="onImageSrc"
         @update:alt="onImageAlt"
         @stock="patch({ src: $event.src, alt: $event.alt, source: $event.source })"
@@ -360,7 +366,7 @@ const labelClass = LABEL_CLASS
         :rows="5"
         :model-value="block.body"
         :validate="checkOf('body')"
-        @commit="patch({ body: $event })"
+        @commit="patch({ body: $event }, ['body'])"
       />
       <EditorTextField
         :id="fid('footnote')"
@@ -378,10 +384,9 @@ const labelClass = LABEL_CLASS
         :id="fid('title')"
         :key="fid('title')"
         label="Title"
-        required
         :model-value="block.title"
         :validate="checkOf('title')"
-        @commit="patch({ title: $event })"
+        @commit="patch({ title: $event }, ['title'])"
       />
     </template>
 
@@ -391,10 +396,9 @@ const labelClass = LABEL_CLASS
         :id="fid('label')"
         :key="fid('label')"
         label="Label"
-        required
         :model-value="block.label"
         :validate="checkOf('label')"
-        @commit="patch({ label: $event })"
+        @commit="patch({ label: $event }, ['label'])"
       />
       <EditorTextField
         :id="fid('sublabel')"
@@ -410,10 +414,9 @@ const labelClass = LABEL_CLASS
         :key="fid('url')"
         label="Map URL"
         type="url"
-        required
         :model-value="block.url"
         :validate="checkOf('url')"
-        @commit="patch({ url: $event })"
+        @commit="patch({ url: $event }, ['url'])"
       />
     </template>
 
@@ -424,10 +427,9 @@ const labelClass = LABEL_CLASS
         :key="fid('url')"
         label="Video URL"
         type="url"
-        required
         :model-value="block.url"
         :validate="checkOf('url')"
-        @commit="patch({ url: $event })"
+        @commit="patch({ url: $event }, ['url'])"
       />
       <EditorTextField
         :id="fid('title')"

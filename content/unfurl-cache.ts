@@ -250,7 +250,8 @@ export function localFileExists(publicPath: string | undefined, dirs: UnfurlDirs
  * A tile with its own `icon` or a brand icon never shows a favicon, so none is needed.
  */
 export function linkNeedsFetch(block: LinkBlock, dirs: UnfurlDirs = DEFAULT_DIRS): boolean {
-  if (!block.enrich) return false
+  // WP17: a link without a URL is incomplete. There is nothing to fetch.
+  if (!block.enrich || !block.url) return false
   if (block.showImage && !localFileExists(block.image, dirs)) return true
   if (block.icon || brandIconFor(block.url)) return false
   return !localFileExists(block.favicon, dirs)
@@ -266,7 +267,7 @@ export function linkNeedsFetch(block: LinkBlock, dirs: UnfurlDirs = DEFAULT_DIRS
 function withLocalFiles(block: LinkBlock, cache: Record<string, CacheEntry>, dirs: UnfurlDirs): LinkBlock {
   const { favicon, image, imageAlt, ...rest } = block
   if (!block.enrich) return rest
-  const key = normalizeUrl(block.url)
+  const key = block.url ? normalizeUrl(block.url) : null
   const cached = key ? cache[key]?.data : undefined
   const pick = (own: string | undefined, fromCache: string | undefined) =>
     [own, fromCache].find(path => localFileExists(path, dirs))

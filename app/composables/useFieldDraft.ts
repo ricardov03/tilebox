@@ -2,7 +2,8 @@
  * One text field of the editor (NOTES.md, "Editor input fix"). The rules are in
  * `app/utils/field-draft.ts`; this file makes the state reactive, follows the
  * model, and tells the page about the field so the save bar can list the
- * fields that are "not saved yet" and the save key can check them first.
+ * values that were "not saved" and the save key can check the fields first.
+ * A field never blocks the save (WP17).
  */
 import type { InjectionKey } from 'vue'
 import { createFieldDraft, fieldDraftState, type FieldDraftOptions } from '~/utils/field-draft'
@@ -10,6 +11,8 @@ import { createFieldDraft, fieldDraftState, type FieldDraftOptions } from '~/uti
 interface FieldDraftEntry {
   label: () => string
   error: () => string | undefined
+  /** The field is empty and the model kept its last valid value (`keepLast`). */
+  kept: () => boolean
   flush: () => boolean
 }
 
@@ -23,8 +26,9 @@ const GROUP_KEY: InjectionKey<string> = Symbol('tilebox-field-draft-group')
 
 /**
  * The page calls this once. `problems` = one line per mounted field whose text
- * is not in the draft. `flushAll()` checks every field with waiting keys now
- * and answers `true` when no field has a problem.
+ * is not in the draft (a FORMAT error). `kept` = one line per emptied field that
+ * kept its last value (the name). `flushAll()` checks every field with waiting
+ * keys now. The save goes on in every case: it writes everything else.
  */
 export function provideFieldDrafts() {
   const entries = shallowReactive(new Set<FieldDraftEntry>())
@@ -38,12 +42,18 @@ export function provideFieldDrafts() {
     return error === undefined ? [] : [`${entry.label()}: ${error}`]
   }))
 
-  function flushAll(): boolean {
+  const kept = computed(() => [...entries].flatMap((entry) => {
+    if (!entry.kept()) return []
+    const label = entry.label()
+    const name = (label.split(' > ').pop() ?? label)
+    return [`${name} is empty: kept the last saved ${name.toLowerCase()}`]
+  }))
+
+  function flushAll(): void {
     for (const entry of entries) entry.flush()
-    return problems.value.length === 0
   }
 
-  return { problems, flushAll }
+  return { problems, kept, flushAll }
 }
 
 /** The tab of the fields below this component. The save bar shows it in front of the label: "Blocks > URL". */
@@ -67,6 +77,7 @@ export function useFieldDraft(options: UseFieldDraftOptions) {
   const entry: FieldDraftEntry = {
     label: () => (group ? `${group} > ${options.label()}` : options.label()),
     error: () => state.error,
+    kept: () => state.kept,
     flush: field.flush,
   }
   onMounted(() => registry?.add(entry))

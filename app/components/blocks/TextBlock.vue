@@ -8,7 +8,7 @@ import Tile from './Tile.vue'
 const props = defineProps<{ block: TextBlock }>()
 
 const paragraphs = computed(() =>
-  props.block.body
+  (props.block.body ?? '')
     .split(/\n\s*\n/)
     .map(p => p.trim())
     .filter(p => p.length > 0),
