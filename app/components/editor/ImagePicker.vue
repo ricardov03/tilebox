@@ -16,8 +16,26 @@ const props = defineProps<{
 const uploading = ref(false)
 const error = ref<string | null>(null)
 
+interface FetchErrorLike {
+  data?: { statusMessage?: string, message?: string }
+}
+
+/** The shape $fetch rejects with when the route answered with an error. */
+function isFetchErrorLike(value: unknown): value is FetchErrorLike {
+  return typeof value === 'object' && value !== null && 'data' in value
+}
+
+function messageOf(err: unknown): string {
+  if (isFetchErrorLike(err)) {
+    const message = err.data?.statusMessage ?? err.data?.message
+    if (message) return message
+  }
+  return err instanceof Error ? err.message : 'Upload failed'
+}
+
 async function onFile(event: Event) {
-  const input = event.target as HTMLInputElement
+  const input = event.target
+  if (!(input instanceof HTMLInputElement)) return
   const file = input.files?.[0]
   if (!file) return
   uploading.value = true
@@ -29,8 +47,7 @@ async function onFile(event: Event) {
     src.value = res.src
   }
   catch (err) {
-    const data = (err as { data?: { statusMessage?: string, message?: string } }).data
-    error.value = data?.statusMessage ?? data?.message ?? (err instanceof Error ? err.message : 'Upload failed')
+    error.value = messageOf(err)
   }
   finally {
     uploading.value = false
@@ -38,13 +55,27 @@ async function onFile(event: Event) {
   }
 }
 
+function onSrcInput(event: Event) {
+  const target = event.target
+  if (target instanceof HTMLInputElement) src.value = target.value || null
+}
+
+function onAltInput(event: Event) {
+  const target = event.target
+  if (target instanceof HTMLInputElement) alt.value = target.value
+}
+
 const fileId = computed(() => `${props.id}-file`)
 const srcId = computed(() => `${props.id}-src`)
 const altId = computed(() => `${props.id}-alt`)
+const inputClass = INPUT_CLASS
 </script>
 
 <template>
-  <fieldset class="flex flex-col gap-2 border-0 p-0">
+  <fieldset
+    :aria-busy="uploading"
+    class="flex flex-col gap-2 border-0 p-0"
+  >
     <legend class="text-sm font-medium text-ink">
       {{ label ?? 'Image' }}
     </legend>
@@ -65,7 +96,7 @@ const altId = computed(() => `${props.id}-alt`)
       <div class="flex min-w-0 flex-1 flex-col gap-2">
         <label
           :for="fileId"
-          class="flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-line bg-ground px-3 text-sm font-medium text-ink hover:border-accent"
+          class="flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-line bg-ground px-3 text-sm font-medium text-ink hover:border-accent focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent"
         >
           {{ uploading ? 'Uploading...' : 'Upload png, jpg, webp or gif' }}
           <input
@@ -85,9 +116,10 @@ const altId = computed(() => `${props.id}-alt`)
           :id="srcId"
           :value="src ?? ''"
           type="text"
-          placeholder="/blocks/photo.jpg"
-          class="min-h-11 rounded-xl border border-line bg-ground px-3 font-mono text-sm text-ink"
-          @input="src = ($event.target as HTMLInputElement).value || null"
+          placeholder="/blocks/sample.jpg"
+          :class="inputClass"
+          class="font-mono"
+          @input="onSrcInput"
         >
       </div>
     </div>
@@ -110,8 +142,8 @@ const altId = computed(() => `${props.id}-alt`)
         :value="alt ?? ''"
         type="text"
         required
-        class="min-h-11 rounded-xl border border-line bg-ground px-3 text-sm text-ink"
-        @input="alt = ($event.target as HTMLInputElement).value"
+        :class="inputClass"
+        @input="onAltInput"
       >
     </template>
   </fieldset>

@@ -20,6 +20,8 @@ const searching = ref(false)
 const searchError = ref<string | null>(null)
 const failed = ref<Set<string>>(new Set())
 let timer: ReturnType<typeof setTimeout> | undefined
+/** Id of the latest search. A response for an older id is dropped. */
+let requestId = 0
 
 const inkHex = ref('000000')
 onMounted(() => {
@@ -27,34 +29,45 @@ onMounted(() => {
   if (/^#[0-9a-f]{6}$/i.test(value)) inkHex.value = value.slice(1)
 })
 
-function previewUrl(name: string): string {
+/** Preview URL for `prefix:name`. `null` for a name without a prefix. */
+function previewUrl(name: string): string | null {
   const [prefix, icon] = name.split(':')
-  return `https://api.iconify.design/${prefix}/${icon}.svg?color=%23${inkHex.value}`
+  if (!prefix || !icon) return null
+  return `https://api.iconify.design/${encodeURIComponent(prefix)}/${encodeURIComponent(icon)}.svg?color=%23${inkHex.value}`
 }
 
 async function search() {
   const q = query.value.trim()
+  const id = ++requestId
   if (!q) {
     results.value = []
+    searching.value = false
+    searchError.value = null
     return
   }
   searching.value = true
   searchError.value = null
   try {
     const res = await $fetch<{ icons: string[] }>('/api/icons/search', { query: { q } })
-    results.value = res.icons
+    if (id !== requestId) return
+    results.value = res.icons.filter(name => name.includes(':'))
   }
   catch (error) {
+    if (id !== requestId) return
     searchError.value = error instanceof Error ? error.message : 'Search failed'
   }
   finally {
-    searching.value = false
+    if (id === requestId) searching.value = false
   }
 }
 
-watch(query, () => {
+watch(query, (value) => {
   clearTimeout(timer)
-  timer = setTimeout(search, 300)
+  if (!value.trim()) {
+    void search()
+    return
+  }
+  timer = setTimeout(() => void search(), 300)
 })
 
 onBeforeUnmount(() => clearTimeout(timer))
@@ -64,7 +77,9 @@ function pick(name: string) {
 }
 
 function onManual(event: Event) {
-  const value = (event.target as HTMLInputElement).value.trim()
+  const target = event.target
+  if (!(target instanceof HTMLInputElement)) return
+  const value = target.value.trim()
   model.value = value || undefined
 }
 
@@ -73,6 +88,7 @@ function markFailed(name: string) {
 }
 
 const inputId = computed(() => `${props.id}-icon`)
+const inputClass = INPUT_CLASS
 </script>
 
 <template>
@@ -106,12 +122,14 @@ const inputId = computed(() => `${props.id}-icon`)
         type="text"
         placeholder="line-md:github"
         spellcheck="false"
-        class="min-h-11 min-w-0 flex-1 rounded-xl border border-line bg-ground px-3 font-mono text-sm text-ink"
+        :class="inputClass"
+        class="min-w-0 flex-1 font-mono"
         @change="onManual"
       >
       <button
         v-if="model"
         type="button"
+        :class="FOCUS_RING"
         class="min-h-11 rounded-xl px-3 text-sm text-muted hover:text-ink"
         @click="model = undefined"
       >
@@ -128,7 +146,7 @@ const inputId = computed(() => `${props.id}-icon`)
       v-model="query"
       type="search"
       placeholder="Search line-md and simple-icons"
-      class="min-h-11 rounded-xl border border-line bg-ground px-3 text-sm text-ink"
+      :class="inputClass"
     >
 
     <p
@@ -167,14 +185,14 @@ const inputId = computed(() => `${props.id}-icon`)
           :title="name"
           :aria-label="name"
           :aria-pressed="model === name"
-          :class="model === name ? 'border-accent' : 'border-line hover:border-accent'"
+          :class="[FOCUS_RING, model === name ? 'border-accent' : 'border-line hover:border-accent']"
           class="flex size-11 w-full items-center justify-center overflow-hidden rounded-xl border bg-ground"
           @click="pick(name)"
         >
           <img
-            v-if="!failed.has(name)"
-            :src="previewUrl(name)"
-            :alt="name"
+            v-if="!failed.has(name) && previewUrl(name)"
+            :src="previewUrl(name) ?? undefined"
+            alt=""
             width="24"
             height="24"
             class="size-6"
@@ -193,7 +211,8 @@ const inputId = computed(() => `${props.id}-icon`)
       href="https://icones.js.org/collection/line-md"
       target="_blank"
       rel="noopener noreferrer"
-      class="text-xs text-muted underline hover:text-hover"
-    >Browse all on icones.js.org</a>
+      :class="FOCUS_RING"
+      class="self-start rounded-sm text-xs text-muted underline hover:text-hover"
+    >Browse all on icones.js.org<span class="sr-only"> (opens in a new tab)</span></a>
   </fieldset>
 </template>
