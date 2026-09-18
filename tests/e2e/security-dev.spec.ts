@@ -72,11 +72,12 @@ test.describe('S6: the dev write routes take only what the editor sends', () => 
   for (const route of JSON_ROUTES) {
     test(`${route}: a form-encoded or text/plain body is refused with 415`, async ({ request }) => {
       // What an HTML form on another website can send without a CORS preflight.
-      const form = await request.post(route, { form: { url: 'https://example.com/' } })
+      // The URL is a loopback address on purpose: if this gate ever breaks, the engine still refuses it and no test reaches the network.
+      const form = await request.post(route, { form: { url: 'http://127.0.0.1/' } })
       expect(form.status()).toBe(415)
-      const plain = await request.post(route, { headers: { 'content-type': 'text/plain' }, data: '{"url":"https://example.com/"}' })
+      const plain = await request.post(route, { headers: { 'content-type': 'text/plain' }, data: '{"url":"http://127.0.0.1/"}' })
       expect(plain.status()).toBe(415)
-      const none = await request.post(route, { headers: { 'content-type': '' }, data: Buffer.from('{"url":"https://example.com/"}') })
+      const none = await request.post(route, { headers: { 'content-type': '' }, data: Buffer.from('{"url":"http://127.0.0.1/"}') })
       expect(none.status()).toBe(415)
     })
   }
