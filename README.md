@@ -1,7 +1,29 @@
 # Tilebox
 
 Bento-style personal link page. One profile, a grid of tiles you arrange yourself.
-Edit locally in the browser, commit a JSON file, host it static on Cloudflare Pages.
+Edit it in your browser on your own machine. Publish it with one command to Cloudflare Pages or Netlify.
+Your profile and photos stay on your machine. They are never committed to git.
+
+A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree. No backend, no database, no account on a third-party editor.
+
+## Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Your personal data](#your-personal-data)
+- [Editing by hand](#editing-by-hand)
+- [Scripts](#scripts)
+- [Tests](#tests)
+- [CI](#ci)
+- [Publish](#publish)
+- [Commit messages](#commit-messages)
+- [Release](#release)
+- [Stack](#stack)
+- [Project layout](#project-layout)
+- [Troubleshooting](#troubleshooting)
+- [More docs](#more-docs)
+- [Roadmap](#roadmap)
 
 ## Features
 
@@ -11,6 +33,18 @@ Edit locally in the browser, commit a JSON file, host it static on Cloudflare Pa
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
 - Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
 - Static output. No backend, no database, no runtime network calls on the public page.
+- Private by default: `content/profile.json` and your images are ignored by git. The repo ships a sample profile.
+- One-command publish: `npm run publish` logs you in with the browser, checks that the site name is free, creates the project and uploads. Cloudflare Pages or Netlify.
+- Local releases: `npm run release` picks the version from your commits, writes the changelog and the release notes, and tags. A pushed tag makes the GitHub Release with a ready-to-host zip.
+- No API keys, tokens or bots anywhere in the repo or the pipeline.
+- Tested: Playwright end-to-end tests, axe accessibility checks, WCAG contrast check on every preset.
+
+## Requirements
+
+- Node `^22.19` or `^24.11` (`.nvmrc` and `.node-version` say 24). npm.
+- git. The commit hook installs itself on `npm install`.
+- For `npm run publish`: a free Cloudflare or Netlify account. You log in through the browser on the first run.
+- Optional, for the release summary draft: the `claude` or `grok` CLI on your `PATH`. Without one you type the summary yourself.
 
 ## Quick start
 
@@ -128,7 +162,7 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 serious or critical issues at 1280 and 390, light and dark). Plus `repo.spec.ts`: no personal file is tracked by git | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin. Plus `repo.spec.ts`: no personal file is tracked by git | `node scripts/serve-dist.mjs` on :4173 | yes |
 | `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
@@ -140,6 +174,17 @@ npm run test:e2e -- --project=dev
 ```
 
 Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` then `npx --yes lighthouse http://localhost:4173/ --chrome-flags="--headless=new"`. Scores are recorded in `NOTES.md` (WP5).
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and on every pull request:
+
+1. `build` job: `npm ci`, lint, typecheck, `npm run generate`, then checks that `dist/index.html` exists and that neither `dist/edit` nor `dist/edit.html` exists. Uploads `dist` as an artifact for 7 days.
+2. `e2e` job: downloads that `dist`, installs Chromium, runs the Playwright `static` project.
+
+CI has no `content/profile.json`, so it always builds the **sample** site. It never deploys. `actions/checkout`, `actions/setup-node` and the release action are pinned to full commit SHAs. The workflow token is read-only. A failed e2e run uploads the Playwright report as an artifact.
+
+`.github/workflows/release.yml` runs only when a `v*` tag is pushed. See [Release](#release).
 
 ## Publish
 
@@ -263,12 +308,25 @@ What it does, in order:
 4. Summary: a local AI CLI (`claude`, else `grok`) drafts 2 to 4 plain sentences for non-developers. You see it in the terminal and choose `[a]ccept`, `[e]dit` (opens `$EDITOR`), `[w]rite my own` or `[s]kip`. No AI CLI installed: you write it yourself.
 5. Apply: bumps `package.json` and `package-lock.json`, updates `CHANGELOG.md`, writes `releases/vX.Y.Z.md`, commits `chore(release): vX.Y.Z` and makes the annotated tag `vX.Y.Z`.
 
-Nothing is pushed. Review, then publish:
+Nothing is pushed. Review, then push:
 
 ```sh
 git show --stat HEAD
 git push --follow-tags origin main
 ```
+
+### First release
+
+The history before v0.1.0 is not in Conventional Commits, so the first release is tagged as it is. Its notes are already written in `releases/v0.1.0.md`.
+
+```sh
+npm run release -- --first-release
+git push --follow-tags origin main
+```
+
+Every release after that is just `npm run release`.
+
+### Flags
 
 | Flag | Effect |
 |---|---|
@@ -281,9 +339,83 @@ git push --follow-tags origin main
 | `--skip-tests` | Skip Playwright |
 | `--skip-checks` | Skip the branch and origin sync checks. The tree must still be clean |
 
+The script stops before it changes anything when: the tag already exists, there are no commits since the last tag, or a personal file (`content/profile.json`, `public/avatar.*`, anything in `public/blocks/` except `sample.jpg`) is tracked by git.
+
+### What the pipeline does
+
 The pushed tag starts `.github/workflows/release.yml`. It checks that the tag equals `package.json` version, runs lint, typecheck, generate and Playwright, zips `dist/` into `tilebox-vX.Y.Z.zip` with a `.sha256` file, and publishes a GitHub Release named `tilebox vX.Y.Z` with `releases/vX.Y.Z.md` as the body and the zip attached. It uses the built-in `GITHUB_TOKEN`. It does not deploy.
 
 The zip lands on https://github.com/ricardov03/tilebox/releases under the tag. A tag with a `-` (for example `v1.0.0-beta.1`) is marked as a pre-release.
+
+## Stack
+
+| Part | Choice |
+|---|---|
+| Framework | Nuxt 4, static output (`nuxt generate`) |
+| CSS | Tailwind CSS 4 through `@tailwindcss/vite` |
+| Fonts | `@nuxt/fonts`. Google Fonts, downloaded at build, self-hosted. Only the chosen font preset is downloaded |
+| Icons | `@nuxt/icon` with local Iconify packs (`line-md`, `simple-icons`). Bundled at build, no runtime API |
+| Schema | zod (`types/profile.ts`), strict objects |
+| Editor drag and drop | `vue-draggable-plus` |
+| Release | `commit-and-tag-version`, `commitlint`, `simple-git-hooks` |
+| Publish | `wrangler` and `netlify-cli`, run by `scripts/publish.mjs` |
+| Tests | Playwright, `@axe-core/playwright` |
+
+## Project layout
+
+```
+content/
+  profile.example.json   the sample. Tracked
+  profile.json           yours. Ignored by git
+  resolve.ts             picks profile.json, else the example. Used by every entry point
+  README.md              the personal data rules
+app/
+  pages/index.vue        the public page (prerendered)
+  pages/edit.vue         the editor. Development only
+  components/            ProfileHeader, BentoGrid, ThemeToggle
+  components/blocks/     the 7 tile types, Tile, BlockRenderer
+  components/editor/     forms, pickers, theme panel, drag grid
+  composables/           useProfile, useTheme, useEditor
+  utils/                 presets, networks, sizes
+  assets/css/            main.css, presets.css (generated)
+server/api/              development-only routes: profile, save, upload, icon search
+types/profile.ts         the zod schema and the types
+scripts/
+  release.mjs            npm run release
+  publish.mjs            npm run publish
+  build-presets.ts  check-contrast.ts  check-icons.ts  fetch-favicons.ts
+  validate-profile.ts  ensure-profile.ts  serve-dist.mjs
+releases/                one notes file per version, used as the GitHub Release body
+tests/e2e/               public, a11y, repo, editor specs
+public/                  og.png, blocks/sample.jpg. Your images land here and are ignored
+design/canvas/           the design boards (light and dark)
+docs/review-tools.md     notes on the two code review tools used on this project
+.github/workflows/       ci.yml, release.yml
+PLAN.md  NOTES.md        the plan with every decision, and the build log per work package
+```
+
+## Troubleshooting
+
+| You see | Do this |
+|---|---|
+| A new color preset, font preset or icon does not show in dev | Restart `npm run dev`. `nuxt.config.ts` reads the profile once at start |
+| `git commit` is rejected with a commitlint error | Use `type(scope): subject`, lower case, max 72 characters. See [Commit messages](#commit-messages) |
+| The hook does not run | `npx simple-git-hooks` |
+| `npm run generate` says `(example)` but you expected your profile | `content/profile.json` is missing. Run `npm run dev` once or `npm run ensure:profile`, then edit |
+| `npm run check:icons` fails | The icon name is not in an installed pack. Pick one at https://icones.js.org or install `@iconify-json/<prefix>` |
+| `npm run publish` says the name is taken | Pick another name. `<name>.pages.dev` and `<name>.netlify.app` are shared by everyone |
+| `npm run publish` stops with a broken state message | Fix `.tilebox/publish.json` or run `npm run publish -- --reset` |
+| `npm run release` says `pull or push first` | `git pull` or `git push` so `main` equals `origin/main` |
+| `npm run release` says a personal file is tracked | `git rm --cached <file>`, commit, run it again |
+| Playwright says the browser is missing | `npx playwright install chromium` |
+
+## More docs
+
+- `PLAN.md`: the plan, the design tokens, every decision and the roadmap.
+- `NOTES.md`: what each work package built, the deviations, the review findings and the test numbers.
+- `content/README.md`: the personal data rules in detail.
+- `docs/review-tools.md`: a comparison of the two code review tools used during the build.
+- `releases/`: the notes of every version. `CHANGELOG.md` appears with the first release.
 
 ## Roadmap
 
