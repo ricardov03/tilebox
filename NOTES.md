@@ -837,3 +837,78 @@ $ E2E_STATIC_PORT=4392 E2E_DEV_PORT=3392 npx playwright test      (both projects
 43 passed, 1 skipped      (38 + the 5 new gravatar tests; the skip is the known "example email" guard)
 $ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks      -> exit 0
 ```
+
+## WP10b
+
+Branch: `wp/10b-site-meta` (from `origin/main`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. WP10a (link blocks) runs in parallel on `wp/10a-smart-links`.
+
+Goal (asked by Ricardo): "a section in the editor for the basic metadata: OG, favicon and metadata". Decision: the social image is generated from the profile at build time, and an optional upload wins.
+
+### What was built
+- A. Schema. New file `types/site.ts` (its own file, so the merge with WP10a's edits of `types/profile.ts` stays small): `SiteSchema` (zod strict, every key optional), `SiteAssetsSchema`, `PublicSiteSchema`, `toPublicSite()`, `isSiteUrl()`, the limits. `types/profile.ts` (frozen contract, so noted here): `site: SiteSchema.optional()` in `ProfileSchema`, `site: PublicSiteSchema.optional()` in `PublicProfileSchema`, and `toPublicProfile(profile, gravatarPath?, siteExtras?)`. The public `site` has no `favicon` / `ogImage` upload paths; it gets `assets` (the generated files that exist) and `builtAt`. No migration: an old profile is valid. `lang` and `noindex` have NO zod default (a default would write `lang: "en"` into every saved file); the defaults are applied when the head is built. `content/profile.example.json` has a small `site` (lang, jobTitle, location, no URL).
+- B. Site URL precedence: `NUXT_PUBLIC_SITE_URL` > `site.url` > '' (`resolveSiteUrl()` in `app/utils/site-head.ts`). Unknown = no canonical, no `og:url`, relative `og:image`. The asset script uses the same function for the host line of the card.
+- C + D. `content/site-assets.ts` `buildSiteAssets()` (shared by `scripts/build-site-assets.ts` through tsx and by `POST /api/site/assets` through Nitro; every path from `ROOT`, the WP7 lesson) and `content/site-files.ts` (node built-ins only: names, paths, `siteAssetsIfPresent()`; `modules/public-profile.ts` loads it at config time without loading sharp). Output `public/site/`: `favicon.ico`, `icon.svg` (initials or SVG upload only; removed when the source changes to a raster), `apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, `icon-mask.png`, `manifest.webmanifest`, `og.png`.
+  - Favicon source: `site.favicon` > avatar (`profile.avatar`, else `public/avatar.gravatar.jpg`; cover 512, circle mask with `dest-in`) > initials. Each source is tried in a `try`; a failure adds one line to `messages` and the next source runs. A remote `profile.avatar` (http URL) is skipped: no network in this script.
+  - Initials tile: satori renders the letters with Geist SemiBold and returns SVG outlines (`<path d>`). The script lifts the path data and writes its own SVG: a rounded `rect` (rx 22%) in `accent`, the glyphs in `accent-soft`, and for `icon.svg` a `<style>` with a `prefers-color-scheme: dark` block (the preset's dark values). Outlines, so no renderer needs the font. The PNG master uses inline fills (librsvg ignores media queries anyway).
+  - Apple icon and maskable icon: for initials, a full-bleed square (the system cuts the corners), with smaller letters inside the 80% safe zone for the maskable one. For an avatar or an upload: the art on the preset's light `ground`, at 70% (circle) or 56% (square) for the maskable icon. Both files have no alpha channel. sharp gotcha: inside one pipeline `flatten()` / `removeAlpha()` run BEFORE `composite()`, so the composite is written to a buffer first.
+  - ICO: written by hand, `icoFromPng()`: ICONDIR 6 bytes + one ICONDIRENTRY 16 bytes (32x32, 1 plane, 32 bpp, size, offset 22) + the PNG bytes.
+  - `og.png`: upload -> `resize(1200, 630, cover)`; when the PNG is over 1 MB it is written again with a 256-color palette. Generated -> satori element tree of plain objects (no React, no JSX), `sharp(svg).png()`. Layout: ground background, a large rounded tile, avatar circle (embedded as a data URI) or initials circle, name (SemiBold 76, `lineClamp: 2`), bio (`lineClamp: 3`), an accent bar, `@handle · host`. Example result: 37 550 bytes.
+  - The card ALWAYS uses Geist and the LIGHT colors. "Mono" line: only Geist Regular and SemiBold ship (as asked), so the line is Geist with wide tracking, not Geist Mono.
+- E. `app/utils/site-head.ts`: pure `buildHead(publicProfile, envSiteUrl)` -> `{ htmlAttrs, title, meta, link, script }`, plus `resolveSiteUrl`, `siteTitle`, `siteDescription`, `splitName`, `initialsOf`, `ogLocale`, `sameAsOf`, `buildJsonLd`, `jsonForScript` (`<` becomes `\u003c`). `app/composables/useSiteHead.ts` hands it to `useHead`. `app/pages/index.vue` calls it. Favicon links: ico (32), `icon.svg` when it exists, `icon-192.png`, apple-touch-icon = 4 for the example, plus the manifest. `og:locale` comes from `lang` (`pt-BR` -> `pt_BR`, `en` -> `en_US`, unknown language without a region -> no tag). `sameAs` = the http(s) URLs of the social blocks of the PUBLIC profile (a `mailto:` social tile is left out; a block with `hidden: true` is left out too, ready for WP10a). `dateModified` = `builtAt`, one ISO date per config load, written into the public profile, so the server HTML and the client agree. `Tile.vue` has a `rel` prop; `SocialBlock.vue` passes `rel="me"` -> `rel="me noopener noreferrer"`.
+- F. Editor. `app/components/editor/SitePanel.vue` + the 4th tab in `edit.vue` (same ARIA model: the `tabs` array drives arrows, Home, End). Text fields keep what you type; the draft only gets a value the schema accepts (URL, lang, X handle show an inline `role="alert"`). An emptied field removes its key; no keys left removes `site`. Counters `n/70` and `n/160`. Favicon block: source label, 32 and 180 previews, upload, Remove upload. Social image block: preview with `?v=<version>`, Regenerate, upload, remove. Search result and social card previews from the draft. Routes: `POST /api/site/upload?kind=favicon|og` -> `public/site-uploads/<kind>-<6 hex>.<ext>`; `POST /api/site/assets` with the DRAFT profile -> `buildSiteAssets()` -> `{ files, faviconSource, ogSource, messages, version }`. Both start with the inline `if (!import.meta.dev) throw createError({ statusCode: 404 })`, and the builder is a dynamic import behind it, so a production build drops the branch. `nuxt generate` keeps no `.output/server` at all, and its log never names `sharp` or `satori`.
+- G. `.gitignore` "Personal data": `public/site/`, `public/site-uploads/`. `tests/e2e/repo.spec.ts` asserts both with `git check-ignore`. `scripts/release.mjs` preflight lists the two folders too. CI builds the sample: `site: favicon from initials, social image generated (8 files in public/site/)`.
+
+### Font source, license, checksums
+- Source: the official `geist` npm package by Vercel, version 1.7.2, `https://registry.npmjs.org/geist/-/geist-1.7.2.tgz` (sha256 `88cbfaca51646078f3172802643691bb8fe2df15ca4c455b1b101e49b7d469a6`). Files `package/dist/fonts/geist-sans/Geist-Regular.ttf` and `Geist-SemiBold.ttf` (static instances; satori reads them as they are), and `package/LICENSE.txt` copied as `assets/fonts/OFL.txt`.
+- License: SIL Open Font License 1.1, Copyright (c) 2023 Vercel, in collaboration with basement.studio.
+- sha256: `Geist-Regular.ttf` `5c8968eafb98a4c4f47033daf29e38e284a6f2a82eb017d171ab040fe7c4b615` (126 048 bytes), `Geist-SemiBold.ttf` `612ec98df33935354f39e81e54101656961ab6e5549f64b63eb57868ba7bab8d` (127 872 bytes), `OFL.txt` `930853ee1daa68554d9e35c8a9175affb74f699fad9a5da6ee5ebe76379d9137`.
+- New dev dependencies: `sharp` 0.35.4 (was in the tree through wrangler), `satori` 0.33.4.
+
+### Deviations and why
+- `public/site/` has no `.gitkeep`: the script creates the folder, nothing watches it, and a `.gitkeep` would land in `dist/site/`.
+- `public/site/` is NOT watched by `modules/public-profile.ts`. A refresh of `#profile` remounts the app (the known save behavior), and "Regenerate" with an unsaved draft would lose the draft. Which files exist is read at config time and on the next profile change. The file names are stable, so this only matters when `icon.svg` appears or goes away: restart `npm run dev`.
+- "Remove upload" clears the field. The file stays in `public/site-uploads/` (ignored). No delete route.
+- Upload and Remove run "Regenerate" right away with the draft, so the previews show the result. It writes `public/site/` before a save; `predev` and every build write it again from the saved profile.
+- The default title is now `Name (@handle)`. `tests/e2e/public.spec.ts` (WP5's file) had `toHaveTitle(name)`: one line changed to `siteTitle(...)`.
+- `buildHead()` returns plain `string` names. unhead types every meta name as a literal union, so `useSiteHead` has one cast: `head as Parameters<typeof useHead>[0]`. No `any`.
+- The editor preview of the host shows `site.url` only: the client does not know `NUXT_PUBLIC_SITE_URL`.
+- PLAN.md status line not edited (WP10a edits it too); section 6 and section 8 are.
+
+### Requests to other WPs
+- WP1 (`useTheme.ts`), older than this WP: after hydration the DOM has the two `theme-color` metas twice. unhead's dedupe key for a meta with a `key` is `meta:theme-color:key:<key>`, the server HTML has no key, so the client appends a second identical pair. Harmless (same values). Checked by building with `useSiteHead()` commented out: same 4 tags. `site.spec.ts` therefore counts them in the raw HTML (2). Fix idea: drop the `key`s and let unhead match by `name` + `media`, then test the toggle again.
+- WP10a: `sameAsOf()` already skips a social block with `hidden: true`. If hidden blocks are removed in `toPublicProfile()` instead, nothing changes here.
+
+### Verified
+- `public/site/og.png` looked at by eye (example): ground, tile, initials circle, name, 2-line bio, accent bar, `@ricardov03`. `icon-mask.png`: full-bleed accent, letters inside the safe zone. Site tab looked at in a screenshot at 1400 px.
+- `git check-ignore -v public/site/og.png public/site-uploads/x.png` -> the two new rules.
+- `npm run generate`: the log has 0 lines with `sharp` or `satori`, and `.output/` holds `public/` and `nitro.json` only.
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+avatar: placeholder email, gravatar skipped
+site: favicon from initials, social image generated (8 files in public/site/)
+OK  27 icons found in installed Iconify packs
+Prerendered 4 routes
+$ ls dist/site
+apple-touch-icon.png favicon.ico icon-192.png icon-512.png icon-mask.png icon.svg manifest.webmanifest og.png
+$ grep -r "hello@example.com" dist | wc -l
+0
+$ E2E_STATIC_PORT=4402 E2E_DEV_PORT=3402 npx playwright test --project=static
+60 passed      (26 new in site.spec.ts, 1 new in repo.spec.ts)
+$ E2E_STATIC_PORT=4402 E2E_DEV_PORT=3402 npx playwright test      (both projects)
+75 passed, 1 skipped      (dev: 16, 5 new in site-editor.spec.ts; the skip is the known "example email" guard)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+personal data: not tracked
+would commit "chore(release): v0.1.1" and tag v0.1.1
+working tree: still clean
+$ sharp metadata of public/site/*
+og.png 1200x630 png 37550 bytes
+apple-touch-icon.png 180x180 png 5221 bytes
+icon-192.png 192x192 png 7997 bytes
+icon-512.png 512x512 png 16092 bytes
+icon-mask.png 512x512 png 9023 bytes
+```
