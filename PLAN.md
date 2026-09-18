@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: v1 done 2026-09-17. All WPs merged to main. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
+Status: v1 done. WP6 release tooling in progress. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -392,6 +392,11 @@ Done when: CI runs lint + typecheck + generate on push. README says how to edit,
 Owns: nothing new. Fixes across WPs allowed here only.
 Done when: Lighthouse mobile 94+ performance and 100 on the other three; the page-load stagger costs ~1 point by design. axe has 0 serious issues. Headless Chromium verified by Playwright; Safari and Firefox are a manual check by Ricardo. Real content in `profile.json` (from Ricardo).
 
+### WP6. Release and deploy tooling
+Owns: `scripts/release.mjs`, `.versionrc.json`, `commitlint.config.mjs`, `releases/`, `.github/workflows/release.yml`, `package.json` scripts (`release`, `deploy`, `deploy:preview`, `prepare`, `simple-git-hooks`).
+Design (decided by Ricardo): releases start locally with `npm run release`. No bot, no PAT, no API keys. The pipeline only validates a pushed tag and publishes the GitHub Release with `GITHUB_TOKEN`. Deploy to Cloudflare Pages is a manual local wrangler command. Commit messages are checked by a local git hook (commitlint), not in CI. The plain-words release summary is drafted by a local AI CLI (`claude`, fallback `grok`), shown in the terminal, and accepted, edited or replaced by the user.
+Done when: `git commit -m "bad message"` is rejected by the hook and `chore: x` passes. `node scripts/release.mjs --dry-run --no-ai --skip-tests` prints the next version and the release file preview and leaves the tree clean. `node scripts/release.mjs --dry-run --skip-tests --yes` shows a draft from `claude -p`. `.github/workflows/release.yml` is valid YAML and fails when the tag differs from `package.json`. `releases/v0.1.0.md` exists. README has "Commit messages", "Release" and "Deploy" sections. `npm run lint`, `npm run typecheck`, `npm run generate` green.
+
 ## 9. Code review with Grok
 
 - Reviewer: Grok. Tools to run it: TBD (Ricardo provides).
@@ -448,7 +453,7 @@ Goal: pick a photo in the editor without leaving it. The public page stays stati
 - The page shows a small credit line on the photo tile when `source` is set: "Photo by <author> on Unsplash". Both providers require attribution. Unsplash also requires a call to its download endpoint on pick. The dev route does that.
 - Rate limits (verify before starting): Unsplash demo 50 req/h, Pexels 200 req/h. Fine for one person.
 - Provider decided 2026-09-17: **Pexels** first. Unsplash later if wanted. Pexels rules: show "Photos provided by Pexels" somewhere on the page and credit the photographer with a link. Key: `PEXELS_API_KEY`.
-- Owner: a new WP6. Depends on WP3. Grok review as usual.
+- Owner: a new WP7 (WP6 is the release tooling). Depends on WP3. Grok review as usual.
 
 ### 13.2 Personal images on Cloudflare R2 (or similar)
 Goal: use your own photos without committing big files to Git.
