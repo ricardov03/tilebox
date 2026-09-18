@@ -47,6 +47,9 @@ const MAX_FILES = 20_000
 const MAX_FILE_BYTES = 25 * 1024 * 1024
 const MAX_NAME_LENGTH = 37
 
+/** The site URL of a build. https only: both providers serve https, and the canonical and OG tags use it. */
+const HTTPS_URL = /^https:\/\/[^\s/]+\S*$/
+
 const PROVIDERS = {
   cloudflare: { label: 'Cloudflare Pages', domain: 'pages.dev', cli: 'wrangler', dashboard: 'Cloudflare dashboard > Workers & Pages > your project > Custom domains' },
   netlify: { label: 'Netlify', domain: 'netlify.app', cli: 'netlify', dashboard: 'Netlify dashboard > your site > Domain management' },
@@ -622,7 +625,10 @@ function build(state) {
   step(opts['no-build'] ? 'Build (skipped by --no-build)' : 'Build')
   const siteUrl = opts['site-url'] || process.env.NUXT_PUBLIC_SITE_URL || state.url
   if (!opts['no-build']) {
-    if (!/^https?:\/\/\S+$/.test(siteUrl)) usageError(`--site-url must start with https:// (got ${siteUrl})`)
+    if (!HTTPS_URL.test(siteUrl)) {
+      const source = opts['site-url'] ? '--site-url' : process.env.NUXT_PUBLIC_SITE_URL ? 'NUXT_PUBLIC_SITE_URL' : `url in ${STATE_FILE}`
+      usageError(`${source} must start with https:// (got ${siteUrl})`)
+    }
     const res = run(npmCli(), ['run', 'generate'], { inherit: true, timeout: BUILD_TIMEOUT_MS, env: { NUXT_PUBLIC_SITE_URL: siteUrl } })
     if (res.timedOut) fail('npm run generate timed out after 10 min')
     if (!res.ok) fail('npm run generate failed')
@@ -661,6 +667,9 @@ async function main() {
   }
   if (opts.provider && !PROVIDERS[opts.provider]) usageError(`--provider must be cloudflare or netlify, not ${opts.provider}`)
   if (opts.name !== undefined && nameProblem(opts.name)) usageError(`--name ${opts.name}: ${nameProblem(opts.name)}`)
+  if (opts['site-url'] !== undefined && !HTTPS_URL.test(opts['site-url'])) {
+    usageError(`--site-url must start with https:// (got ${opts['site-url']})`)
+  }
 
   if (opts.reset) {
     step('Reset')
