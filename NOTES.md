@@ -1345,3 +1345,58 @@ $ ls public/blocks        -> sample.jpg
 - The real value of `X-Ratelimit-Reset`: the documentation says "UNIX timestamp". The code reads it as seconds.
 - Safari and Firefox: not checked (headless Chromium only).
 - Grok review of this WP (PLAN.md section 9).
+
+## WP13 integration
+
+Branch: `wp/13-integration` (from `origin/main` `df09fa4` = WP10 + the editor input fix). Date: 2026-09-18. It merges `origin/wp/11-second-wave`, then `origin/wp/12-pexels`. Both were built from the commit BEFORE the input fix. Work was done in a separate worktree. Not merged into `main`, no tag.
+
+### Merge 1: `wp/11-second-wave` (3 conflict files)
+- `playwright.config.ts`: union. `static` = main's list (with `field-draft.spec.ts`) + `second-wave.spec.ts`. `dev` = main's list (with `editor-inputs.spec.ts`) + `second-wave-editor.spec.ts`.
+- `README.md`: the two rows of the Tests table = main's text + the WP11 sentence. Project layout: `useFieldDraft` AND `useSiteDraft`, `useLinkCheck`.
+- `NOTES.md`: `## Editor input fix`, then the whole `## WP11`.
+- Merged by git with no conflict, read by hand: `BlockForm.vue` (main's `EditorTextField` pattern + the two WP11 includes before the last div), `SitePanel.vue` (7 converted fields + `<EditorSiteExtras />`; `withKey()` still spreads `site.value`, so `share` and `utm` stay when another field changes), `useEditor.ts` (`provide(EDITOR_DRAFT, draft)` is the first line; the field registry of main lives in `useFieldDraft.ts` / `edit.vue`, untouched), `modules/public-profile.ts` (passes `{ now: new Date(), envSiteUrl: process.env.NUXT_PUBLIC_SITE_URL }` as the 4th argument), `package.json`, `package-lock.json` (`uqr`).
+
+### Merge 2: `wp/12-pexels` (8 conflict files)
+- `content/unfurl.ts`: `RequestOptions` has all three: `method` (WP11), `onlyHosts` and `headers` (WP12). In `safeRequest()` every hop runs the `onlyHosts` check, then `checkTarget()`; `headers` go on hop 0 only; `method` goes to the transport on every hop.
+- `BlockForm.vue`: the image field has `require-src` (main) + `:stock-size` and `@stock` (WP12). One `stock` patch = `src`, `alt`, `source`.
+- `ImagePicker.vue`: main's two `EditorTextField`s (path, alt) + the Upload / Pexels tabs and the `stock` event. The old `onSrcInput` / `onAltInput` of WP12 are gone (the fields commit). The path field is inside the Upload panel (`v-show`), so it stays mounted and follows a pick.
+- `playwright.config.ts`: + `pexels.spec.ts` (static), + `pexels-editor.spec.ts` (dev).
+- `README.md` (Tests table rows: + the two Pexels sentences; project layout: `content/pexels.ts`, the three routes, all spec names), `PLAN.md` (status line rewritten for this branch; section 8 has `### WP11` then `### WP12`), `docs/security.md` (the WP11 sections, then "The Pexels picker"), `NOTES.md` (`## WP11`, then `## WP12`).
+- `CLAUDE.md`: the stale "Later Pexels picker" line now says that the picker exists (key in `.env`, dev only).
+- `.gitignore`, `.env.example`, `content/README.md`, `package.json`: merged by git, checked. `package-lock.json`: `npm install` changed nothing, `npm ci` passes.
+- Hook order (unchanged): `predev` = ensure:profile, presets, check:profile, fetch:avatar, build:site-assets. `pregenerate` = presets, check:profile, check:contrast, check:icons, fetch:avatar, fetch:links, build:site-assets.
+
+### WP11 text fields converted to `EditorTextField` (13)
+- `BlockExtraFields.vue` (3): contact tile title, description; QR caption. `:key` holds the block id. The check is `BlockSchema` on the whole block, like `BlockForm.vue`. The icon picker got a `:key` too.
+- `ContactPanel.vue` (7): full name, company, role, phone (`type="tel"`, new in the `type` union of `TextField.vue`), public email, website, note (multiline). Model = the draft (`contact[key]`), check = `ContactSchema.shape[key]`, values are trimmed. Save bar name: `Site > Contact card, Public email`.
+- `UtmPanel.vue` (3): source, medium, campaign. The draft has no place for half a setting, so the panel keeps `values` = the CHECKED text of each field; `site.utm` is written only while source and medium are both there. **Behavior change:** the example and the "tags are off" note follow the checked values (about 600 ms after the last key), and a refused campaign no longer turns the example off: the draft keeps the last valid tags, the field shows the reason, and Save is blocked. `second-wave-editor.spec.ts` was changed for that (contact: error after blur + save bar; UTM: example keeps source and medium).
+- NOT converted, on purpose: the two `datetime-local` inputs of `BlockAdvanced.vue` (a picker, commits at once) and the Pexels search box (a search box, its own 800 ms wait).
+
+### Follow-ups
+- `ci.yml`: the Generate step sets `PEXELS_API_KEY: tilebox-canary-pexels-key-0f3a9c`. It is the same text as `CANARY` in `tests/e2e/pexels.spec.ts`, so the `e2e` job proves on CI that a key in the build environment reaches no file of `dist/`. Not a secret.
+- `pexels-editor.spec.ts` +1: after a pick the alt FIELD and the path field follow the block (a change from outside, no focus), a pick replaces the text it filled in itself, the owner's typed text stays.
+- `second-wave-editor.spec.ts` +1: contact card and UTM fields are clearable, show no message while typing, check about 600 ms after the last key, alert only after a blur, and Cmd/Ctrl+S on a refused value writes nothing.
+
+### Verification output (last lines)
+```
+$ npm ci                                   -> exit 0
+$ npm run lint && npm run typecheck        -> clean
+$ PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate   -> exit 0, 13 blocks, 68 icons, "contact card written"
+$ ls dist                                  -> _headers, site/ (8 files + contact.vcf), no edit
+$ find dist -name '*.svg' -path '*icons*'  -> empty
+$ grep -r "hello@example.com" dist | wc -l        -> 0
+$ grep -rl "Scheduled draft tile" dist | wc -l    -> 0
+$ E2E_STATIC_PORT=4431 E2E_DEV_PORT=3431 npx playwright test           (both projects, ONE run)
+  298 passed, 2 skipped   (static 222 passed + 2 skipped, dev 76 passed)
+$ E2E_STATIC_PORT=4431 E2E_DEV_PORT=3431 npx playwright test --project=static   -> 224 passed
+$ npm run check:icons                      -> OK  68 icons
+$ npm run check:links                      -> exit 0 (6 ok, 0 blocked, 4 broken: the example.com/* sample paths answer 404)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+$ npm run dev -- --port 3432 (25 s)        -> /, /edit, /api/profile, /api/images/pexels/status = 200, no ERROR line
+```
+The 2 skips of the one-run are the two "example only" tests (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before the static tests start, and they skip when that file exists. Alone, `static` runs them: 224 passed. Numbers: static 159 (main) + 39 (WP11) + 26 (WP12) = 224. dev 55 (main) + 9 (WP11) + 10 (WP12) + 2 (this branch) = 76.
+
+### Open
+- Review (Grok or OCR) of this branch: not run. Security-relevant: the merged `safeRequest()` in `content/unfurl.ts`.
+- `ImagePicker.vue` decides "is the alt text the owner's own?" from the draft (`block.alt`), not from the text in the field. A cleared alt field (refused, "Required") keeps the old alt in the draft, so a pick then does not replace it. Small; the owner can type the new alt.
+- Still open from WP11 / WP12: one live Pexels run with Ricardo's key, `npm run publish` with the link check against a real provider, Safari and Firefox.
