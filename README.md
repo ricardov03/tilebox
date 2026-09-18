@@ -159,6 +159,8 @@ Exit codes: 0 ok, 1 error, 2 wrong usage. Every command the script runs is print
 
 No token or API key is ever written there or anywhere in the repo. Login tokens live where the CLIs put them, in your home folder (`npx wrangler whoami` and `npx netlify status` show who is logged in; `npx wrangler logout` and `npx netlify logout` remove the login). `.wrangler/` and `.netlify/` are ignored by git.
 
+The script runs the `wrangler` and `netlify-cli` versions installed in `node_modules` (both are dev dependencies), unless another one is first on your `PATH`. It prints which one it uses (`using ...`).
+
 To reattach an existing project (for example after `--reset`), write `.tilebox/publish.json` by hand with the fields above (`siteId` and `accountSlug` for Netlify) and run `npm run publish`.
 
 ### Custom domain
