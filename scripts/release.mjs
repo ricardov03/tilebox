@@ -442,6 +442,10 @@ if (dryRun) {
 
 step('Apply')
 
+const existingTag = git('tag', '-l', `v${nextVersion}`)
+if (!existingTag.ok) fail(`git tag -l failed:\n${errorText(existingTag)}`)
+if (existingTag.out) fail(`tag v${nextVersion} already exists. Nothing was changed.`)
+
 stdout.write('    commit-and-tag-version ... ')
 const apply = run('npx', ['commit-and-tag-version', ...catvArgs])
 if (!apply.ok) {
@@ -471,7 +475,15 @@ const commit = git('commit', '-m', `chore(release): v${nextVersion}`)
 if (!commit.ok) fail(`git commit failed:\n${errorText(commit)}`)
 log(`    committed: chore(release): v${nextVersion}`)
 const tag = git('tag', '-a', `v${nextVersion}`, '-m', `tilebox v${nextVersion}`)
-if (!tag.ok) fail(`git tag failed:\n${errorText(tag)}`)
+if (!tag.ok) {
+  log(`git tag failed:\n${errorText(tag)}`)
+  log('')
+  log(`    The release commit "chore(release): v${nextVersion}" is in place but has no tag.`)
+  log('    To undo the commit and keep the release files staged, run:')
+  log('      git reset --soft HEAD~1')
+  log(`    Or make the tag yourself: git tag -a v${nextVersion} -m "tilebox v${nextVersion}"`)
+  fail(`tag v${nextVersion} was not created`)
+}
 log(`    tagged: v${nextVersion}`)
 
 log('')
