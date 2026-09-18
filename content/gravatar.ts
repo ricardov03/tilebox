@@ -39,9 +39,12 @@ export function gravatarHash(email: string): string {
   return createHash('sha256').update(email.trim().toLowerCase()).digest('hex')
 }
 
-/** `.jpg` makes Gravatar answer with a JPEG, so the file name tells the truth. `d=404`: no default picture. */
+/**
+ * `d=404`: no default picture, a 404 instead. Gravatar picks the format (JPEG or PNG).
+ * The file is always named `.jpg`; browsers read the real format from the bytes.
+ */
 export function gravatarUrl(email: string): string {
-  return `https://gravatar.com/avatar/${gravatarHash(email)}.jpg?s=${SIZE_PX}&d=404`
+  return `https://gravatar.com/avatar/${gravatarHash(email)}?s=${SIZE_PX}&d=404`
 }
 
 export function gravatarFileExists(): boolean {
