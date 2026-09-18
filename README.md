@@ -14,6 +14,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Your personal data](#your-personal-data)
 - [Editing by hand](#editing-by-hand)
 - [Link previews](#link-previews)
+- [Stock photos (Pexels)](#stock-photos-pexels)
 - [Site metadata](#site-metadata)
 - [Scripts](#scripts)
 - [Tests](#tests)
@@ -39,6 +40,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
 - Smart links: paste a URL and the tile finds its brand icon (about 60 sites, no network). With link previews on, your machine reads the title, the description, the icon and, only if you switch it on, the image of the website. Everything is saved as local files. Visitors never call another host.
 - Featured look: a 2x1, 1x2 or 2x2 link tile can show the website's image next to its text.
+- Stock photos: search Pexels inside the editor and pick a photo. Your machine saves it as a local WebP file, and the tile credits the photographer and Pexels. Optional, with your own free key, which never leaves your machine.
 - Hide a block without deleting it: a hidden block stays in the editor and is in no file of the built site.
 - Duplicate a block with one click. Spotlight: one tile can ask for attention with a gentle move every 6 seconds (off with reduced motion).
 - Local editor at `/edit`: drag tiles, edit text, pick icons, save. Never shipped to production.
@@ -47,7 +49,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Private by default: `content/profile.json` and your images are ignored by git. The repo ships a sample profile.
 - One-command publish: `npm run publish` logs you in with the browser, checks that the site name is free, creates the project and uploads. Cloudflare Pages or Netlify.
 - Local releases: `npm run release` picks the version from your commits, writes the changelog and the release notes, and tags. A pushed tag makes the GitHub Release with a ready-to-host zip.
-- No API keys, tokens or bots anywhere in the repo or the pipeline.
+- No API keys, tokens or bots anywhere in the repo or the pipeline. The optional Pexels key lives in your `.env` (ignored by git) and only the dev server reads it.
 - Tested: Playwright end-to-end tests, axe accessibility checks, WCAG contrast check on every preset.
 
 ## Requirements
@@ -182,7 +184,7 @@ Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/coll
 Brand icons that `line-md` lacks come from `simple-icons`. Icons that simple-icons marks as hidden (LinkedIn, Twitter, Amazon, Slack: removed brands) fail `npm run check:icons`.
 Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
-Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/` as `avatar.<ext>`. Both are ignored by git (see "Your personal data").
+Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). `source` is `null` for your own file; the Pexels tab of the editor fills it (see [Stock photos](#stock-photos-pexels)). Avatar goes in `public/` as `avatar.<ext>`. Both are ignored by git (see "Your personal data").
 
 ## Link previews
 
@@ -225,6 +227,32 @@ A link tile can read its icon, title, description and image from the website it 
 **Sites that give no data.** X profiles, Medium, and sometimes LinkedIn block unknown clients or need a login. The tile still gets its brand icon, and you type the title yourself. The editor shows the reason (`http 403`, `timeout`, `not html`, `blocked address`...).
 
 Debug one link: `npm run fetch:links -- --url https://nuxt.com --image` prints the answer as JSON. It is a real run: it writes the cache and the fetched files.
+
+## Stock photos (Pexels)
+
+Optional. The image form in `/edit` has two tabs: **Upload** (your own file) and **Pexels** (free stock photos). The public page stays static: a picked photo is a local file.
+
+**Set it up (once).**
+
+1. Make a free account and copy your key: https://www.pexels.com/api/ ("Your API key").
+2. Put it in the file `.env` in the project folder (copy `.env.example` when there is none): `PEXELS_API_KEY=your-key`.
+3. Stop `npm run dev` and start it again. The Pexels tab now shows a search box.
+
+**Pick a photo.** Open an image block, tab **Pexels**, type 2 letters or more. The search starts 0.8 s after you stop typing, or with Enter. **Shape** is preset from the tile size (2x1 landscape, 1x2 portrait, 1x1 and 2x2 square); you can change it. Arrow keys move in the grid, Enter picks, **Load more** gets the next 24.
+
+| Step | What happens |
+|---|---|
+| Search | The dev-only route `GET /api/images/pexels/search` asks `api.pexels.com` with your key and answers a small list (id, size, alt, color, photographer, links, thumbnail). The same search is answered from memory for 10 minutes. The thumbnails in the grid load from `images.pexels.com`, in the dev editor only |
+| Pick | `POST /api/images/pexels/pick` gets the photo ID. Your machine asks Pexels for that photo, downloads the `large2x` file from `images.pexels.com` (https only, 15 MB and 20 s at most), checks that it is a real jpeg, png or webp, and writes a NEW file with sharp: WebP, quality 82, 1600 px on the long side, no metadata |
+| The file | `public/blocks/pexels-<id>.webp`. Ignored by git, like every file of `public/blocks/`. Picking the same photo again downloads nothing |
+| The block | `src`, `source: { provider: "pexels", id, url, author, authorUrl }`, and `alt` from Pexels when you had none of your own (empty or the sample text). Your own alt text stays. Edit it as you like |
+| The page | The tile shows "Photo by {author} on Pexels": the name links to the photographer, "Pexels" to the photo page. Always, for a Pexels photo: Pexels asks for the credit. An upload in the same block removes the source and the credit |
+
+**The key.** It stays on your machine. Only the dev server reads it (`process.env`, from `.env`, which git ignores). It is never sent to the browser, it is in no file of `dist/`, and nothing needs it to build, on CI, to release or to publish: the photos are already local files. `tests/e2e/pexels.spec.ts` looks for the key and for the name of the variable in every built file.
+
+**The quota.** Free keys get 200 requests per hour and 20,000 per month. One search = 1 request, one pick = 1 request (the download itself is not counted). The tab shows how many are left. At the limit you read "Pexels rate limit reached, try again at <time>".
+
+Without a key nothing breaks: the tab shows the 3 steps above, **Upload** works as before.
 
 ## Site metadata
 
@@ -315,8 +343,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back) | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back). `pexels.spec.ts` (WP12, mocked connection, no key): the search mapping, 401, 429 with the reset time, the 10-minute memory, input checks, the pick route refuses a file that is not on `images.pexels.com`, a redirect to another host and a fake jpeg, writes a WebP without metadata, a second pick downloads nothing, the credit line, and the key canary (the key and the name of its variable are in no built file) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `pexels-editor.spec.ts`: the Pexels tab with mocked routes (no key state, search, grid, pick, save, keyboard pick, rate limit, offline) and the guards of the real routes. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -615,6 +643,10 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | The hook does not run | `npx simple-git-hooks` |
 | `npm run generate` says `(example)` but you expected your profile | `content/profile.json` is missing. Run `npm run dev` once or `npm run ensure:profile`, then edit |
 | `npm run check:icons` fails | The icon name is not in an installed pack, or the pack marks it hidden. Pick one at https://icones.js.org or install `@iconify-json/<prefix>` |
+| The Pexels tab says "Pexels needs a free key" | `.env` has no `PEXELS_API_KEY`, or the dev server started before you added it. Add the key, stop `npm run dev`, start it again, click **Check again** |
+| "The Pexels key is wrong" | Pexels answered 401. Copy the key again from https://www.pexels.com/api/ (no quotes, no spaces), restart `npm run dev` |
+| "Pexels rate limit reached, try again at ..." | 200 requests per hour on a free key. Wait until the time shown. Searches you did in the last 10 minutes still answer from memory |
+| A Pexels photo is missing on another machine or on CI | `public/blocks/` is not in git. Copy the folder (see `content/README.md`), or pick the photo again: same ID, same file name |
 | A link tile shows the plain link icon | The host is not in `app/utils/brand-icons.ts` and the link has no fetched icon. Turn on "Load info from the website", or pick an icon |
 | The link preview says `http 403`, `timeout` or `not html` | The website refuses unknown clients or is not a web page (X profiles, Medium, sometimes LinkedIn). Type the title yourself. The brand icon still works |
 | The link preview says `blocked address` or `blocked port` | The URL points at your own network (localhost, 192.168.x.x, a port other than 80 and 443). The engine never reads those |
@@ -635,12 +667,11 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 - `NOTES.md`: what each work package built, the deviations, the review findings and the test numbers.
 - `content/README.md`: the personal data rules in detail.
 - `docs/review-tools.md`: a comparison of the two code review tools used during the build, and what to use for large or security-critical files.
-- `docs/security.md`: the threat model of the link preview engine and of the dev routes.
+- `docs/security.md`: the threat model of the link preview engine, of the Pexels picker and of the dev routes.
 - `releases/`: the notes of every version. `CHANGELOG.md` appears with the first release.
 
 ## Roadmap
 
-- Pexels photo picker in the editor, with attribution on the tile.
 - Personal photo uploads to Cloudflare R2.
 - Left-rail layout preset.
 - Import a Bento.me export zip.
