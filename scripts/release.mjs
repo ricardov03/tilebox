@@ -36,7 +36,9 @@
  *   --push              after the tag: push and make the GitHub Release, do not ask
  *   --no-push           never push, never ask. Print the manual commands.
  *                       With --publish-only: skip the push, do the gh steps only.
- *   --watch             after the publish: wait for the release pipeline (gh run watch)
+ *   --watch             after the publish: wait for the pipeline run of THIS command (gh run watch)
+ *   --rerun             the release has no zip and no run is on its way: start the
+ *                       pipeline for the tag (gh workflow run release.yml -f tag=<tag>), do not ask
  *   --publish-only <tag>  no version bump. The publish steps for a tag that exists locally.
  */
 import { spawnSync } from 'node:child_process'
@@ -57,7 +59,7 @@ function parseCli(config) {
   }
   catch (error) {
     stdout.write(`\nError: ${error.message}\n`)
-    stdout.write('Usage: npm run release -- [flags]   or   npm run release:publish -- vX.Y.Z\n')
+    stdout.write('Usage: npm run release -- [flags]   or   npm run release:publish -- vX.Y.Z [--no-push] [--watch] [--rerun] [--dry-run]\n')
     process.exit(1)
   }
 }
@@ -75,6 +77,7 @@ const { values: opts } = parseCli({
     'push': { type: 'boolean', default: false },
     'no-push': { type: 'boolean', default: false },
     'watch': { type: 'boolean', default: false },
+    'rerun': { type: 'boolean', default: false },
     'publish-only': { type: 'string' },
   },
   strict: true,
@@ -82,7 +85,9 @@ const { values: opts } = parseCli({
 
 const dryRun = opts['dry-run']
 const VERSION_TAG_RE = /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
-const PIPELINE_WAIT_MS = 30_000
+const PIPELINE_WAIT_MS = 45_000
+const CLOCK_SKEW_MS = 60_000
+const RUN_FIELDS = 'databaseId,createdAt,event,headBranch,status,conclusion,displayTitle'
 
 // On Windows, npm and npx are .cmd files. Node refuses to spawn a .cmd file
 // without a shell (EINVAL), so those two run through the shell there.
@@ -287,7 +292,11 @@ function publishCommands(tag) {
     edit: ['release', 'edit', tag, '--title', title, '--notes-file', notes],
     create,
     url: ['release', 'view', tag, '--json', 'url', '--jq', '.url'],
-    runList: ['run', 'list', '--workflow=release.yml', '--branch', tag, '--limit', '1', '--json', 'databaseId', '--jq', '.[0].databaseId'],
+    remoteTag: ['ls-remote', '--tags', 'origin', `refs/tags/${tag}`],
+    assets: ['release', 'view', tag, '--json', 'assets', '--jq', '[.assets[].name]'],
+    // No --branch filter: a manual run (workflow_dispatch) has headBranch "main", not the tag.
+    runList: ['run', 'list', '--workflow=release.yml', '--limit', '10', '--json', RUN_FIELDS],
+    dispatch: ['workflow', 'run', 'release.yml', '-f', `tag=${tag}`],
   }
 }
 
@@ -319,40 +328,193 @@ function printGhHint(tag, reason) {
   log('    This is not an error: the pipeline makes the release too when it is missing.')
 }
 
-/** Find the pipeline run of the tag, wait for it, and say what to do when it fails. */
-async function watchPipeline(tag) {
+function expectedAssets(tag) {
+  return [`tilebox-${tag}.zip`, `tilebox-${tag}.sha256`]
+}
+
+/** Which of the two pipeline files are on the release? Read-only. */
+function checkAssets(tag) {
   const cmds = publishCommands(tag)
-  logCommand('gh', cmds.runList)
-  const deadline = Date.now() + PIPELINE_WAIT_MS
-  let runId = null
-  for (;;) {
-    const res = run('gh', cmds.runList)
-    const out = res.out.trim()
-    if (res.ok && /^\d+$/.test(out)) {
-      runId = out
-      break
-    }
-    if (Date.now() >= deadline) break
+  logCommand('gh', cmds.assets)
+  const res = run('gh', cmds.assets)
+  let names = null
+  try {
+    const parsed = JSON.parse(res.out)
+    if (res.ok && Array.isArray(parsed)) names = parsed.map(String)
+  }
+  catch {
+    // not JSON: handled below
+  }
+  if (!names) {
+    log('    could not read the files of the release')
+    names = []
+  }
+  const missing = expectedAssets(tag).filter(name => !names.includes(name))
+  return { complete: missing.length === 0, missing }
+}
+
+/** The last runs of release.yml, newest first. Null when gh fails. Read-only. */
+function listRuns(tag, { quiet = false } = {}) {
+  const cmds = publishCommands(tag)
+  if (!quiet) logCommand('gh', cmds.runList)
+  const res = run('gh', cmds.runList)
+  if (!res.ok) return null
+  try {
+    const runs = JSON.parse(res.out)
+    if (!Array.isArray(runs)) return null
+    return runs.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+  }
+  catch {
+    return null
+  }
+}
+
+/**
+ * The run that belongs to THIS invocation. Never a run older than `sinceMs`.
+ * A tag push gives a run with event "push" and headBranch = the tag.
+ * A manual run (gh workflow run) gives event "workflow_dispatch" and headBranch "main".
+ * Returns { run, runs }. Polls until `waitMs` is over (0 = look one time).
+ */
+async function findRun(tag, { sinceMs, waitMs, dispatchOnly = false, knownIds = new Set() }) {
+  const deadline = Date.now() + waitMs
+  let runs = null
+  for (let first = true; ; first = false) {
+    runs = listRuns(tag, { quiet: !first }) ?? runs
+    const fresh = (runs ?? []).filter(r => Date.parse(r.createdAt) >= sinceMs && !knownIds.has(r.databaseId))
+    const pushed = dispatchOnly ? [] : fresh.filter(r => r.event === 'push' && r.headBranch === tag)
+    const dispatched = fresh.filter(r => r.event === 'workflow_dispatch')
+    const found = pushed[0] ?? dispatched[0] ?? null
+    if (found || Date.now() >= deadline) return { run: found, runs }
     await sleep(3000)
   }
-  if (!runId) {
-    log(`    no pipeline run for ${tag} after ${PIPELINE_WAIT_MS / 1000} s.`)
-    log(`    Look later with: gh run list --workflow=release.yml`)
-    log(`    Start it by hand with: gh workflow run release.yml -f tag=${tag}`)
-    return
-  }
-  const watchArgs = ['run', 'watch', runId, '--exit-status']
+}
+
+function rerunCommand(tag) {
+  return shown('gh', publishCommands(tag).dispatch)
+}
+
+/** Say that the release has both files. An older failed run is history, not the state. */
+function reportComplete(tag, url, runs, skipId) {
+  log(`    release is complete: ${expectedAssets(tag).join(', ')}`)
+  log(`    ${url}`)
+  const oldFailed = (runs ?? []).find(r => r.headBranch === tag && r.conclusion === 'failure' && r.databaseId !== skipId)
+  if (oldFailed) log(`    note: an older run for this tag failed (${oldFailed.databaseId}); it is not the current state`)
+}
+
+/** --watch: yes. --yes: no question, no watch. Else ask (no terminal means no). */
+async function wantsWatch() {
+  return opts.watch || (!opts.yes && await askYesNo('    Watch the pipeline now? [y/N] '))
+}
+
+/**
+ * Wait for one run, then look at the release again. The files on the release
+ * are the truth, not only the exit code of the run. `ours`: this invocation
+ * pushed or started the run, so a bad end is the failure of this command (exit 1).
+ */
+async function watchRun(tag, found, { ours, url, runs }) {
+  const id = found.databaseId
+  const watchArgs = ['run', 'watch', String(id), '--exit-status']
   logCommand('gh', watchArgs)
-  if (runLive('gh', watchArgs).ok) {
-    log(`    pipeline: ok. tilebox-${tag}.zip and tilebox-${tag}.sha256 are on the release.`)
+  const ok = runLive('gh', watchArgs).ok
+  const assets = checkAssets(tag)
+  if (ok && assets.complete) {
+    log('    pipeline: ok.')
+    reportComplete(tag, url, runs, id)
     return
   }
   log('')
-  log('    pipeline: FAILED. The release has no zip yet. Next step:')
-  log(`      gh run view ${runId} --log-failed`)
+  if (ok) {
+    log(`    pipeline: ok, but the release does not have ${assets.missing.join(' and ')}. Look at the log:`)
+    log(`      gh run view ${id} --log`)
+  }
+  else {
+    log(assets.complete
+      ? '    pipeline: FAILED. The files on the release are from an earlier run. Next step:'
+      : `    pipeline: FAILED. The release does not have ${assets.missing.join(' and ')}. Next step:`)
+    log(`      gh run view ${id} --log-failed`)
+  }
   log('    After the fix is on main, run the pipeline again for the same tag:')
-  log(`      gh workflow run release.yml -f tag=${tag}`)
-  process.exitCode = 1
+  log(`      ${rerunCommand(tag)}`)
+  if (ours) process.exitCode = 1
+}
+
+/**
+ * No fresh run and the files are missing: offer a manual pipeline run.
+ * --rerun: no question. No terminal (or --yes) without --rerun: print the command only.
+ */
+async function offerRerun(tag, { url, runs, watch }) {
+  const cmds = publishCommands(tag)
+  const rerun = opts.rerun || (!opts.yes && await askYesNo(`    Start the pipeline for ${tag} now (${rerunCommand(tag)})? [y/N] `))
+  if (!rerun) {
+    log('    Next step: start the pipeline for the tag (or pass --rerun next time):')
+    log(`      ${rerunCommand(tag)}`)
+    return
+  }
+  const knownIds = new Set((runs ?? listRuns(tag) ?? []).map(r => r.databaseId))
+  const dispatchedAt = Date.now()
+  logCommand('gh', cmds.dispatch)
+  const started = run('gh', cmds.dispatch)
+  if (!started.ok) {
+    log(errorText(started).split('\n').slice(-10).map(l => `      ${l}`).join('\n'))
+    fail('gh workflow run failed. The pipeline was not started.')
+  }
+  log('    pipeline: started')
+  if (!(watch ?? await wantsWatch())) {
+    log('    Find the run with: gh run list --workflow=release.yml   then: gh run watch <id>')
+    return
+  }
+  // Runs seen before the dispatch are out. The skew covers a local clock that runs ahead of GitHub.
+  const found = await findRun(tag, { sinceMs: dispatchedAt - CLOCK_SKEW_MS, waitMs: PIPELINE_WAIT_MS, dispatchOnly: true, knownIds })
+  if (!found.run) {
+    log(`    the new run did not show up after ${PIPELINE_WAIT_MS / 1000} s. Look later with: gh run list --workflow=release.yml`)
+    return
+  }
+  await watchRun(tag, found.run, { ours: true, url, runs: found.runs })
+}
+
+/**
+ * After the GitHub Release exists: look at its files first, then at the pipeline.
+ * `pushedTag`: this invocation put the tag on GitHub, so a fresh run is on its way.
+ * `startedAt`: ms, taken before the push (minus the clock skew). No older run is ever picked.
+ */
+async function afterRelease(tag, { pushedTag, startedAt, url }) {
+  const assets = checkAssets(tag)
+  if (assets.complete && !pushedTag) {
+    reportComplete(tag, url, listRuns(tag))
+    return
+  }
+
+  if (pushedTag) {
+    log(`    The tag push started the pipeline. It attaches ${expectedAssets(tag).join(' and ')} in a few minutes.`)
+    if (!await wantsWatch()) {
+      log('    Watch it with: gh run watch   (or pass --watch next time)')
+      return
+    }
+    const found = await findRun(tag, { sinceMs: startedAt, waitMs: PIPELINE_WAIT_MS })
+    if (found.run) {
+      await watchRun(tag, found.run, { ours: true, url, runs: found.runs })
+      return
+    }
+    log(`    no new pipeline run for ${tag} after ${PIPELINE_WAIT_MS / 1000} s.`)
+    if (assets.complete) {
+      reportComplete(tag, url, found.runs)
+      return
+    }
+    await offerRerun(tag, { url, runs: found.runs, watch: true })
+    return
+  }
+
+  log(`    the release does not have ${assets.missing.join(' and ')}.`)
+  const found = await findRun(tag, { sinceMs: startedAt, waitMs: 0 })
+  if (found.run) {
+    const id = found.run.databaseId
+    log(`    a pipeline run started a moment ago: ${id} (${found.run.event}, ${found.run.status})`)
+    if (await wantsWatch()) await watchRun(tag, found.run, { ours: false, url, runs: found.runs })
+    else log(`    Watch it with: gh run watch ${id}`)
+    return
+  }
+  log('    No pipeline run was started by this command: the tag was already on GitHub, so nothing new was pushed.')
+  await offerRerun(tag, { url, runs: found.runs })
 }
 
 /** Dry run: print every command of the publish steps. Run none. */
@@ -365,13 +527,13 @@ function printPublishPlan(tag, { push }) {
   log(`         release exists:  ${shown('gh', cmds.edit)}`)
   log(`         no release yet:  ${shown('gh', cmds.create)}`)
   log(`    4. would run: ${shown('gh', cmds.url)}`)
-  if (opts.watch) {
-    log(`    5. would run: ${shown('gh', cmds.runList)}  (retry up to ${PIPELINE_WAIT_MS / 1000} s)`)
-    log('       would run: gh run watch <id> --exit-status')
-  }
-  else {
-    log('    5. would offer to watch the pipeline (--watch does it without asking)')
-  }
+  log(`    5. would run: ${shown('gh', cmds.assets)}`)
+  log('         both files there and no new tag pushed: say "release is complete", stop, exit 0')
+  log(`    6. would ${opts.watch ? 'watch' : 'offer to watch (--watch: no question)'} the pipeline run of this command only:`)
+  log(`         ${shown('gh', cmds.runList)}`)
+  log(`         a run made after this command started (tag push, or workflow_dispatch). Retry up to ${PIPELINE_WAIT_MS / 1000} s.`)
+  log('         gh run watch <id> --exit-status, then look at the files of the release again')
+  log(`    7. no such run and the files are missing: would ${opts.rerun ? 'run' : 'offer (--rerun: no question)'}: ${shown('gh', cmds.dispatch)}`)
   log('    never uploads a local zip: the pipeline builds and attaches it')
 }
 
@@ -387,8 +549,16 @@ async function publish(tag, { push }) {
     return
   }
 
-  // 1. push main and the tag. The tag push starts the pipeline.
+  // 1. push main and the tag. The tag push starts the pipeline, but only a NEW tag does.
+  // Runs older than this moment belong to an earlier command. 60 s for clock skew.
+  const startedAt = Date.now() - CLOCK_SKEW_MS
+  let pushedTag = false
   if (push) {
+    logCommand('git', cmds.remoteTag)
+    const remoteTag = run('git', cmds.remoteTag)
+    // ls-remote failed: the push below fails too. Tag not on origin yet: this push starts a run.
+    pushedTag = remoteTag.ok && !remoteTag.out.trim()
+    log(`    tag ${tag} on origin: ${pushedTag ? 'not yet. This push starts the pipeline.' : remoteTag.ok ? 'yes, already. This push starts no new pipeline run.' : 'unknown'}`)
     logCommand('git', cmds.push)
     if (!runLive('git', cmds.push).ok) {
       fail(`git push failed. Nothing is on GitHub. Fix it, then run: npm run release:publish -- ${tag}`)
@@ -426,14 +596,12 @@ async function publish(tag, { push }) {
 
   // 4. the URL
   logCommand('gh', cmds.url)
-  const url = run('gh', cmds.url)
-  log(`    GitHub Release: ${url.ok && url.out.trim() ? url.out.trim() : `${REPO}/releases/tag/${tag}`}`)
+  const urlRes = run('gh', cmds.url)
+  const url = urlRes.ok && urlRes.out.trim() ? urlRes.out.trim() : `${REPO}/releases/tag/${tag}`
+  log(`    GitHub Release: ${url}`)
 
-  // 5. the assets come later, from the pipeline
-  log(`    The pipeline attaches tilebox-${tag}.zip and tilebox-${tag}.sha256 in a few minutes.`)
-  const watch = opts.watch || (!opts.yes && await askYesNo('    Watch the pipeline now? [y/N] '))
-  if (watch) await watchPipeline(tag)
-  else log('    Watch it with: gh run watch   (or pass --watch next time)')
+  // 5. the files of the release first, then the pipeline run of THIS command
+  await afterRelease(tag, { pushedTag, startedAt, url })
 }
 
 // ---------------------------------------------------------------- publish only (no version bump)
