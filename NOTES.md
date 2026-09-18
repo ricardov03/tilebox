@@ -798,3 +798,27 @@ $ npm run generate        -> exit 0
 $ E2E_STATIC_PORT=4391 E2E_DEV_PORT=3391 npx playwright test      (both projects)
 38 passed, 1 skipped      (the skip is the known "example email" guard, see WP9 deviations)
 ```
+
+### Review (OCR, range)
+Range: the WP9 branch against `main`. Fixes, one commit each:
+1. `content/gravatar.ts`: `fetchGravatar(email, { allowDelete })`. The caller says who it is. `scripts/fetch-avatar.ts` passes `true` (the SAVED email: a 404 removes a stale `public/avatar.gravatar.jpg`). `POST /api/avatar/gravatar` runs with the editor's UNSAVED draft email. It passes `true` only when the draft email equals the email in the saved profile file (`readProfileFile()` in `server/utils/editor.ts`, trimmed, lower case). A read or parse problem = `false`. A try with another email can never delete the picture of the saved profile.
+2. `content/gravatar.ts`: atomic write. `writeAtomic()` writes `${file}.tmp`, then `rename` over the target. The tmp file is removed on failure. `git check-ignore -v public/avatar.gravatar.jpg.tmp` answers with the rule `public/avatar.*` (`.gitignore` line 19).
+3. `content/gravatar.ts`: raster types only, `/^image\/(jpeg|png|webp)(;|$)/i`. Any other type (for example `image/svg+xml`) = no usable picture: status `offline`, the old file stays.
+4. `app/components/editor/GravatarButton.vue` + `app/pages/edit.vue`: the POST answer is typed `{ status, exists }`. The button emits `resolved: [exists: boolean]` on EVERY answer, then `saved` when the status is `saved`. `edit.vue` sets `gravatar.value` from `resolved`, so the preview never points at a deleted file.
+5. `app/pages/edit.vue`: no literal `/avatar.gravatar.jpg`. `GRAVATAR_PUBLIC_PATH` moved to `types/profile.ts` (client-safe). `content/gravatar.ts` imports Node built-ins, so the page cannot import from it. `content/gravatar.ts` imports the constant, exports it again, and builds `GRAVATAR_FILE` from it.
+6. `playwright.config.ts`: `Number(process.env.E2E_STATIC_PORT) || 4173` and `Number(process.env.E2E_DEV_PORT) || 3111`. An empty or non-numeric value gives the default, not port 0 or `NaN`.
+
+Tests: new `tests/e2e/gravatar.spec.ts` (static project, no browser, no network). `globalThis.fetch` is a stub. The file lives in a temp folder through the new optional `targetFile` option of `fetchGravatar`. Cases: 404 + `allowDelete: false` keeps the file; 404 + `allowDelete: true` removes it; `image/svg+xml` is rejected and the file stays; a JPEG is written and no `.tmp` is left; a failed write leaves no `.tmp` and answers `offline`.
+
+Not reviewed: part of the review timed out on the provider side. Groups without a result: (a) `ProfileHeader` / `BentoGrid` / `useProfile` / types, (b) the `public-profile` module / `nuxt.config.ts` / `content/migrate.ts`. `tests/e2e/privacy.spec.ts` covers the sanitizer (`toPublicProfile`) and the built `dist/` for those groups.
+
+Verification (last lines):
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0   (profile: content/profile.example.json (example))
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4392 E2E_DEV_PORT=3392 npx playwright test      (both projects)
+43 passed, 1 skipped      (38 + the 5 new gravatar tests; the skip is the known "example email" guard)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks      -> exit 0
+```
