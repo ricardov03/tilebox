@@ -107,6 +107,8 @@ export interface TransportResponse {
 }
 
 export interface TransportInit {
+  /** Default `GET`. `HEAD` is for the link checker (WP11, content/link-check.ts). */
+  method?: 'GET' | 'HEAD'
   headers: Record<string, string>
   signal: AbortSignal
   /** The address that passed the check. The connection must use it. `null` for an allowed test host. */
@@ -181,6 +183,7 @@ const defaultTransport: Transport = async (url, init) => {
   try {
     const response = await undiciFetch(url, {
       dispatcher: agent,
+      method: init.method ?? 'GET',
       redirect: 'manual',
       headers: init.headers,
       signal: init.signal,
@@ -259,7 +262,9 @@ export async function checkTarget(url: URL, options: Pick<UnfurlOptions, 'allowH
   return first
 }
 
-interface RequestOptions {
+export interface RequestOptions {
+  /** Default `GET`. With `HEAD` no body is read. */
+  method?: 'GET' | 'HEAD'
   accept: string
   maxBytes: number
   /** `cut`: keep the first `maxBytes`. `fail`: a larger body is an error. */
@@ -336,7 +341,7 @@ function stopReason(options: UnfurlOptions): string {
 }
 
 /**
- * One GET through the guard. Follows redirects by hand. Throws `UnfurlError` only.
+ * One GET (or HEAD, for the link checker) through the guard. Follows redirects by hand. Throws `UnfurlError` only.
  * It spends from `options.budget` (one request, and one redirect per hop), so all
  * requests of one `unfurl()` share the 20 s, the 8 requests and the 8 redirects.
  */
@@ -355,7 +360,7 @@ export async function safeRequest(target: string | URL, request: RequestOptions,
     if (hop === 0 && request.lastModified) headers['if-modified-since'] = request.lastModified
     let response: TransportResponse
     try {
-      response = await transport(url, { headers, signal: AbortSignal.any([budget.signal, AbortSignal.timeout(TIMEOUT_MS)]), pinned })
+      response = await transport(url, { method: request.method ?? 'GET', headers, signal: AbortSignal.any([budget.signal, AbortSignal.timeout(TIMEOUT_MS)]), pinned })
     }
     catch (error) {
       throw new UnfurlError(budget.signal.aborted ? stopReason(options) : networkReason(error))
