@@ -484,6 +484,51 @@ Goal: use your own photos without committing big files to Git.
 - Open Graph image built at generate time from the profile.
 - Blog or notes tile that reads a markdown folder.
 
+### 13.4 Handle = site name, two-way between the editor and `npm run publish` (planned, NOT built)
+
+Decided by Ricardo on 2026-09-18: plan only. Build when he asks.
+
+**Goal.** The `handle` gets a real job: it is the site name, so `ricardov03` becomes `ricardov03.pages.dev` or `ricardov03.netlify.app`. The user picks the provider and checks the name in the editor, before any publish. `npm run publish` uses that choice when it exists. When the choice is made in `npm run publish` first, the editor shows it afterwards. Two directions, one truth.
+
+**Where the truth lives.**
+- `profile.handle` stays in `content/profile.json` (personal, ignored). It is display text (`@handle`) and the wanted site name.
+- `.tilebox/publish.json` (ignored) stays the publish state. It gets a new optional `status`: `planned` (chosen in the editor, nothing created yet) or `live` (project exists). Today's files have no `status`: treat them as `live`.
+- No provider data goes into `profile.json`. The public page never sees it.
+
+**Editor side (new "Publish" panel in the Profile tab).**
+1. Provider choice: Cloudflare Pages, Netlify, or "I host it myself" (no checks).
+2. Live preview of the address: `https://<handle>.pages.dev`.
+3. Rule check while typing, same rules as the script: lowercase letters, digits, dashes, no dash at the ends, max 37. It is a warning, not a schema error (see Risks).
+4. "Check availability" button. Calls a dev-only route `GET /api/publish/check?provider=&name=`. States: free, taken, yours (matches `publish.json`), unknown (offline or timeout). Never blocks a save.
+5. On save: writes `{ provider, name, status: "planned" }` to `.tilebox/publish.json` only when no `live` state exists.
+6. When a `live` state exists: shows "Published at <url>", the date, and a copy button. The handle field shows a note: the address does not change when you edit the handle (see Risks).
+
+**Script side (`scripts/publish.mjs`).**
+1. No state file: works exactly as today.
+2. `status: planned`: uses provider and name as the defaults, skips those two prompts, still does login, account pick, availability check and create. A taken name asks again, as today.
+3. After a successful create: state becomes `live`. If the final name differs from `profile.handle` (Netlify suffix, or the user typed another name), the script asks "Update your handle to <name>? [Y/n]" and writes `profile.handle` into `content/profile.json` atomically, keeping 2-space JSON and the trailing newline. With `--yes`: it updates. Only the personal file is ever written, never the example.
+4. `--reset` removes the state, not the handle.
+
+**Shared code (so both sides can never disagree).** Move the name rules and the two availability checks out of `scripts/publish.mjs` into `scripts/lib/site-name.mjs` (node built-ins only). The script imports it. The dev route imports it through a path from `ROOT` in `content/resolve.ts`. Lesson from the WP7 regression: no path logic from the bundled file location.
+
+**Risks and how the design avoids them.**
+| Risk | Answer |
+|---|---|
+| Tightening `handle` in the zod schema breaks existing profiles (today it is any non-empty text) | The schema stays as it is. The site-name rules are an editor warning and a publish-time check only |
+| The script writes `profile.json` while the editor has unsaved changes | Atomic write. The editor compares the file time on focus and offers "Reload from disk". The script refuses to write when the dev server reports a dirty draft (`GET /api/editor/state`), and prints the manual step instead |
+| The user renames the handle after a publish | Providers cannot rename a project. The editor says so and offers two paths: keep the address, or `npm run publish -- --reset` for a new project. Nothing is renamed silently |
+| Name free at check time, taken at create time | Already handled by the script (asks again). The editor check is advice only |
+| Offline, or the provider check is slow | State "unknown". Never blocks saving or editing |
+| Display handle and site name must differ (for example `Ricardo.V` vs `ricardov`) | The state file may hold a `name` that differs from the handle. The editor then shows both and stops suggesting a sync |
+| A hidden email or other private data leaks through the new route | The route returns only `{ provider, name, url, status }`. Dev only, guarded with `import.meta.dev` |
+| The static build changes | It does not. Nothing in `dist/` depends on the publish state |
+
+**Tests to write with it.** Shim tests as in WP8 for: planned state is used, live state wins, handle write-back (yes, no, `--yes`, example file never written, dirty draft refused). Playwright `dev` project: rule warning, the four check states with a mocked route, the published badge. Static project must stay untouched.
+
+**Done when.** A new user can type a handle in the editor, see that the address is free, run `npm run publish` with zero prompts except the login, and see the live URL back in the editor. An old user with an existing `publish.json` sees no change in behavior.
+
+**Size.** One work package. Owner files: `scripts/publish.mjs`, `scripts/lib/site-name.mjs`, `server/api/publish/*`, `server/api/editor/state.get.ts`, `app/components/editor/PublishPanel.vue`, a few lines in `edit.vue` and `useEditor.ts`.
+
 ## Sources
 - https://tailwindcss.com/docs/installation/framework-guides/nuxt
 - https://tailwindcss.com/docs/theme
