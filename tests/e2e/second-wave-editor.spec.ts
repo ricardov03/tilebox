@@ -142,12 +142,19 @@ test('contact panel: says that everything is public, refuses a bad email, saves,
   await panel.getByLabel('Company').fill('Analytical Engines, Ltd.')
   await panel.getByLabel('Role').fill('Mathematician')
   await panel.getByLabel('Phone').fill('+44 20 7946 0000')
+  // The fields are `EditorTextField`: the check runs on blur, the reason shows under the field and in the save bar.
   await panel.getByLabel('Public email').fill('not-an-email')
-  await expect(panel.getByRole('alert')).toContainText('Not saved')
+  await panel.getByLabel('Public email').blur()
+  await expect(panel.locator('[data-field-error]')).toHaveCount(1)
+  await expect(panel.getByRole('alert')).toBeVisible()
+  await expect(page.locator('[data-field-problems]')).toContainText('Site > Contact card, Public email')
   await panel.getByLabel('Public email').fill('ada.public@a.example')
-  await expect(panel.getByRole('alert')).toHaveCount(0)
+  await panel.getByLabel('Public email').blur()
+  await expect(panel.locator('[data-field-error]')).toHaveCount(0)
+  await expect(page.locator('[data-field-problems]')).toHaveCount(0)
   await panel.getByLabel('Website').fill('https://ada.example')
   await panel.getByLabel('Note').fill('Met at the engine fair.')
+  await panel.getByLabel('Note').blur()
 
   // The preview is the text the build writes, made from the draft.
   const href = await panel.locator('[data-contact-preview]').getAttribute('href')
@@ -181,7 +188,7 @@ test('contact panel: says that everything is public, refuses a bad email, saves,
   expect(existsSync(resolve(SITE_DIR, 'contact.vcf'))).toBe(false)
 })
 
-test('UTM panel: the example updates live, a bad value is refused, the tags are saved', async ({ page }) => {
+test('UTM panel: the example follows the checked fields, a bad value is refused, the tags are saved', async ({ page }) => {
   await openSiteTab(page)
   const panel = page.locator('[data-utm-panel]')
   const example = panel.locator('[data-utm-example]')
@@ -192,9 +199,13 @@ test('UTM panel: the example updates live, a bad value is refused, the tags are 
   await expect(example).not.toContainText('utm_')
   await panel.getByLabel('Medium (utm_medium)').fill('profile')
   await expect(example).toContainText('utm_source=tilebox&utm_medium=profile')
+  // A refused value never reaches the draft: the example keeps the last checked tags, and the save bar names the field.
   await panel.getByLabel('Campaign (utm_campaign), optional').fill('Spring 2027')
-  await expect(panel.getByRole('alert')).toContainText('lowercase')
-  await expect(example).not.toContainText('utm_')
+  await panel.getByLabel('Campaign (utm_campaign), optional').blur()
+  await expect(panel.locator('[data-field-error]')).toContainText('lowercase')
+  await expect(page.locator('[data-field-problems]')).toContainText('Campaign')
+  await expect(example).toContainText('utm_source=tilebox&utm_medium=profile')
+  await expect(example).not.toContainText('utm_campaign')
   await panel.getByLabel('Campaign (utm_campaign), optional').fill('spring-2027')
   await expect(example).toContainText('utm_source=tilebox&utm_medium=profile&utm_campaign=spring-2027')
 

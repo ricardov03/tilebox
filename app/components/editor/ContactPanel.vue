@@ -3,7 +3,9 @@
   EVERYTHING typed here is PUBLIC: with the switch on, the build writes it to
   `/site/contact.vcf`, a file anyone can download. The private profile email is
   never copied into it: `contact.email` is its own field.
-  Text fields keep what you type; the draft only gets a value the schema accepts.
+  Text fields are `EditorTextField` (NOTES.md, "Editor input fix"): they keep
+  what you type, the check waits until you stop typing, the draft only gets a
+  value the schema accepts, and a refused value blocks the save.
   "Download preview" is the same text the build writes (app/utils/vcard.ts), from the draft.
 -->
 <script setup lang="ts">
@@ -22,32 +24,23 @@ const FIELDS: readonly { key: TextKey, label: string, type: 'text' | 'tel' | 'em
   { key: 'email', label: 'Public email', type: 'email', autocomplete: 'off', placeholder: 'hi@your-site.example' },
   { key: 'url', label: 'Website', type: 'url', autocomplete: 'url', placeholder: 'https://your-site.example' },
 ]
-const KEYS: readonly TextKey[] = [...FIELDS.map(field => field.key), 'note']
+const trim = (raw: string) => raw.trim()
 
-const text = reactive<Record<TextKey, string>>({ fullName: '', org: '', title: '', phone: '', email: '', url: '', note: '' })
-const fieldErrors = reactive<Partial<Record<TextKey, string>>>({})
-
-// Re-sync only when the draft changed from outside (load), not on our own write.
-watch(contact, (next) => {
-  for (const key of KEYS) {
-    if (!fieldErrors[key] && text[key].trim() !== (next[key] ?? '')) text[key] = next[key] ?? ''
-  }
-}, { immediate: true, deep: true })
-
-function setText(key: TextKey, event: Event) {
-  const control = formControl(event)
-  if (!control) return
-  text[key] = control.value
-  const value = control.value.trim()
-  if (value !== '') {
+/** One stable check per key, so a render does not give the field a new prop. */
+function checkOf(key: TextKey) {
+  return (value: string): string | undefined => {
     const result = ContactSchema.shape[key].safeParse(value)
-    if (!result.success) {
-      fieldErrors[key] = result.error.issues[0]?.message ?? 'Not valid'
-      return
-    }
+    return result.success ? undefined : (result.error.issues[0]?.message ?? 'Not valid')
   }
-  Reflect.deleteProperty(fieldErrors, key)
-  setContactKey(key, value)
+}
+const checks: Record<TextKey, ReturnType<typeof checkOf>> = {
+  fullName: checkOf('fullName'),
+  org: checkOf('org'),
+  title: checkOf('title'),
+  phone: checkOf('phone'),
+  email: checkOf('email'),
+  url: checkOf('url'),
+  note: checkOf('note'),
 }
 
 function setEnabled(event: Event) {
@@ -61,7 +54,6 @@ const fileName = computed(() => contactFileName(contact.value.fullName ?? profil
 /** The exact text the build writes, as a download link. Made from the draft: no request, no file. */
 const previewHref = computed(() => `data:text/vcard;charset=utf-8,${encodeURIComponent(buildVCard(contact.value, profileName.value))}`)
 
-const inputClass = INPUT_CLASS
 const labelClass = LABEL_CLASS
 </script>
 
@@ -95,52 +87,33 @@ const labelClass = LABEL_CLASS
       Make the contact card (contact.vcf)
     </label>
 
-    <div
+    <EditorTextField
       v-for="field in FIELDS"
+      :id="`c-${field.key}`"
       :key="field.key"
-      class="flex flex-col gap-1"
-    >
-      <label
-        :for="`c-${field.key}`"
-        :class="labelClass"
-      >{{ field.label }}</label>
-      <input
-        :id="`c-${field.key}`"
-        :value="text[field.key]"
-        :type="field.type"
-        :maxlength="CONTACT_TEXT_MAX"
-        :autocomplete="field.autocomplete"
-        :placeholder="field.key === 'fullName' ? profileName : field.placeholder"
-        :aria-invalid="fieldErrors[field.key] ? true : undefined"
-        :aria-describedby="fieldErrors[field.key] ? `c-${field.key}-error` : undefined"
-        :class="inputClass"
-        @input="setText(field.key, $event)"
-      >
-      <p
-        v-if="fieldErrors[field.key]"
-        :id="`c-${field.key}-error`"
-        class="text-xs text-pop"
-        role="alert"
-      >
-        {{ fieldErrors[field.key] }}. Not saved.
-      </p>
-    </div>
-
-    <div class="flex flex-col gap-1">
-      <label
-        for="c-note"
-        :class="labelClass"
-      >Note</label>
-      <textarea
-        id="c-note"
-        :value="text.note"
-        rows="2"
-        :maxlength="CONTACT_NOTE_MAX"
-        :class="inputClass"
-        class="py-2"
-        @input="setText('note', $event)"
-      />
-    </div>
+      :label="field.label"
+      :problem-label="`Contact card, ${field.label}`"
+      :type="field.type"
+      :maxlength="CONTACT_TEXT_MAX"
+      :autocomplete="field.autocomplete"
+      :placeholder="field.key === 'fullName' ? profileName : field.placeholder"
+      :model-value="contact[field.key]"
+      :normalize="trim"
+      :validate="checks[field.key]"
+      @commit="setContactKey(field.key, $event)"
+    />
+    <EditorTextField
+      id="c-note"
+      label="Note"
+      problem-label="Contact card, Note"
+      multiline
+      :rows="2"
+      :maxlength="CONTACT_NOTE_MAX"
+      :model-value="contact.note"
+      :normalize="trim"
+      :validate="checks.note"
+      @commit="setContactKey('note', $event)"
+    />
 
     <div class="flex flex-wrap items-center gap-2">
       <a

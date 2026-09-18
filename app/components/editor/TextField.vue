@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<{
   required?: boolean
   /** Shows "(required)" after the label. */
   requiredMark?: boolean
-  type?: 'text' | 'url' | 'email'
+  type?: 'text' | 'url' | 'email' | 'tel'
   multiline?: boolean
   rows?: number
   /** The reason a non-empty value is refused, or `undefined`. */

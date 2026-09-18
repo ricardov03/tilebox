@@ -4,6 +4,9 @@
   - `contact` ("Save my contact"): title, description, icon. The vCard fields
     live in the Site tab ("Contact card"), because they are one per profile.
   - `qr` (QR code of the page): caption. Sizes 1x1 and 2x2 only (the schema refuses the rest).
+  Text fields are `EditorTextField` (NOTES.md, "Editor input fix"), with a `key`
+  that holds the block id: the check waits until you stop typing, and only a
+  value the schema accepts is emitted. An emptied field removes its key.
   Every change builds the whole block, runs it through BlockSchema and emits it only when valid.
 -->
 <script setup lang="ts">
@@ -33,41 +36,45 @@ function patch(changes: Record<string, string | undefined>) {
   emit('update:block', result.data)
 }
 
-const text = (event: Event) => formControl(event)?.value ?? ''
+/** Why the schema refuses `value` for one key of this block, or `undefined`. */
+function fieldError(key: string, value: string): string | undefined {
+  const result = BlockSchema.safeParse({ ...props.block, [key]: value })
+  if (result.success) return undefined
+  return result.error.issues.find(issue => issue.path[0] === key)?.message
+}
+
+/** One stable function per key, so a render does not give the field a new prop. */
+const checks = {
+  title: (value: string) => fieldError('title', value),
+  description: (value: string) => fieldError('description', value),
+  caption: (value: string) => fieldError('caption', value),
+}
+
 const fid = (name: string) => `extra-${props.block.id}-${name}`
 </script>
 
 <template>
   <template v-if="block.type === 'contact'">
-    <div class="flex flex-col gap-1">
-      <label
-        :for="fid('title')"
-        :class="LABEL_CLASS"
-      >Title</label>
-      <input
-        :id="fid('title')"
-        :value="block.title ?? ''"
-        type="text"
-        placeholder="Save my contact"
-        :class="INPUT_CLASS"
-        @input="patch({ title: text($event) })"
-      >
-    </div>
-    <div class="flex flex-col gap-1">
-      <label
-        :for="fid('description')"
-        :class="LABEL_CLASS"
-      >Description</label>
-      <input
-        :id="fid('description')"
-        :value="block.description ?? ''"
-        type="text"
-        :class="INPUT_CLASS"
-        @input="patch({ description: text($event) })"
-      >
-    </div>
+    <EditorTextField
+      :id="fid('title')"
+      :key="fid('title')"
+      label="Title"
+      placeholder="Save my contact"
+      :model-value="block.title"
+      :validate="checks.title"
+      @commit="patch({ title: $event })"
+    />
+    <EditorTextField
+      :id="fid('description')"
+      :key="fid('description')"
+      label="Description"
+      :model-value="block.description"
+      :validate="checks.description"
+      @commit="patch({ description: $event })"
+    />
     <EditorIconPicker
       :id="fid('icon')"
+      :key="fid('icon')"
       :model-value="block.icon"
       label="Icon (default: line-md:account)"
       @update:model-value="patch({ icon: $event })"
@@ -78,20 +85,15 @@ const fid = (name: string) => `extra-${props.block.id}-${name}`
   </template>
 
   <template v-else-if="block.type === 'qr'">
-    <div class="flex flex-col gap-1">
-      <label
-        :for="fid('caption')"
-        :class="LABEL_CLASS"
-      >Caption</label>
-      <input
-        :id="fid('caption')"
-        :value="block.caption ?? ''"
-        type="text"
-        placeholder="Default: the address of your site"
-        :class="INPUT_CLASS"
-        @input="patch({ caption: text($event) })"
-      >
-    </div>
+    <EditorTextField
+      :id="fid('caption')"
+      :key="fid('caption')"
+      label="Caption"
+      placeholder="Default: the address of your site"
+      :model-value="block.caption"
+      :validate="checks.caption"
+      @commit="patch({ caption: $event })"
+    />
     <p class="text-xs text-muted">
       Sizes: 1x1 and 2x2. The build draws the code from your site address (Site tab). Without an address the build leaves this tile out.
     </p>

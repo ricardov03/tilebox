@@ -3,6 +3,10 @@
   of link, social, map and video tiles (app/utils/utm.ts). The URLs you typed
   stay clean in the file. Source and medium are both needed; campaign is optional.
   The live example is the same function the build calls, on the first link of the draft.
+  Text fields are `EditorTextField` (NOTES.md, "Editor input fix"): the check
+  waits until you stop typing, and a refused value blocks the save. `values`
+  holds the CHECKED text of each field; the draft gets `site.utm` only while
+  source and medium are both there. The example follows the checked values.
 -->
 <script setup lang="ts">
 import { resolveSiteUrl } from '~/utils/site-head'
@@ -19,34 +23,33 @@ const FIELDS: readonly { key: Key, label: string, placeholder: string }[] = [
 ]
 const KEYS: readonly Key[] = ['source', 'medium', 'campaign']
 
-const text = reactive<Record<Key, string>>({ source: '', medium: '', campaign: '' })
+/** The checked text of each field. A lone source lives here: the draft has no place for half a setting. */
+const values = reactive<Record<Key, string>>({ source: '', medium: '', campaign: '' })
 const FORMAT_ERROR = 'Use lowercase letters, digits, _ and - (40 at most)'
 
-const bad = (key: Key) => text[key].trim() !== '' && !UTM_VALUE.test(text[key].trim())
-const hasError = computed(() => KEYS.some(bad))
+const trim = (raw: string) => raw.trim()
+const check = (value: string) => (UTM_VALUE.test(value) ? undefined : FORMAT_ERROR)
 
-/** What the fields say right now. `undefined` = the tags are off. */
+/** What the checked fields say. `undefined` = the tags are off. */
 const typed = computed<UtmSettings | undefined>(() => {
-  const [source, medium, campaign] = KEYS.map(key => text[key].trim())
-  if (hasError.value || !source || !medium) return undefined
+  const { source, medium, campaign } = values
+  if (!source || !medium) return undefined
   return { source, medium, ...(campaign ? { campaign } : {}) }
 })
-const incomplete = computed(() => !hasError.value && !typed.value && KEYS.some(key => text[key].trim() !== ''))
+const incomplete = computed(() => !typed.value && KEYS.some(key => values[key] !== ''))
 
 const same = (a: UtmSettings | undefined, b: UtmSettings | undefined) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 
 // Re-sync only when the draft changed from outside (load), not on our own write.
 watch(() => site.value.utm, (next) => {
   if (same(next, typed.value)) return
-  // Half-typed or refused text stays while the draft has no tags.
-  if (!next && (hasError.value || incomplete.value)) return
-  for (const key of KEYS) text[key] = next?.[key] ?? ''
+  // A half-filled setting stays while the draft has no tags.
+  if (!next && incomplete.value) return
+  for (const key of KEYS) values[key] = next?.[key] ?? ''
 }, { immediate: true, deep: true })
 
-function setText(key: Key, event: Event) {
-  const control = formControl(event)
-  if (!control) return
-  text[key] = control.value
+function setValue(key: Key, value: string) {
+  values[key] = value
   if (!same(site.value.utm, typed.value)) setSiteKey('utm', typed.value)
 }
 
@@ -69,38 +72,21 @@ const rewritten = computed(() => withUtm(sample.value, typed.value, siteUrl.valu
     <p class="text-xs text-muted">
       The build adds these tags to the links that leave your site, so the other site sees where the visit came from. Your saved links stay clean.
     </p>
-    <div
+    <EditorTextField
       v-for="field in FIELDS"
+      :id="`u-${field.key}`"
       :key="field.key"
-      class="flex flex-col gap-1"
-    >
-      <label
-        :for="`u-${field.key}`"
-        :class="LABEL_CLASS"
-      >{{ field.label }}</label>
-      <input
-        :id="`u-${field.key}`"
-        :value="text[field.key]"
-        type="text"
-        maxlength="40"
-        autocapitalize="none"
-        spellcheck="false"
-        :placeholder="field.placeholder"
-        :aria-invalid="bad(field.key) ? true : undefined"
-        :aria-describedby="bad(field.key) ? `u-${field.key}-error` : undefined"
-        :class="INPUT_CLASS"
-        class="font-mono"
-        @input="setText(field.key, $event)"
-      >
-      <p
-        v-if="bad(field.key)"
-        :id="`u-${field.key}-error`"
-        class="text-xs text-pop"
-        role="alert"
-      >
-        {{ FORMAT_ERROR }}. Not saved.
-      </p>
-    </div>
+      :label="field.label"
+      :maxlength="40"
+      mono
+      autocapitalize="none"
+      spellcheck="false"
+      :placeholder="field.placeholder"
+      :model-value="values[field.key]"
+      :normalize="trim"
+      :validate="check"
+      @commit="setValue(field.key, $event)"
+    />
     <p
       v-if="incomplete"
       class="text-xs text-ink"
