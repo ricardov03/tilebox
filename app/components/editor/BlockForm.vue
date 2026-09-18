@@ -312,9 +312,11 @@ const labelClass = LABEL_CLASS
         :id="fid('image')"
         :src="block.src"
         :alt="block.alt"
+        :stock-size="block.size"
         require-alt
         @update:src="onImageSrc"
         @update:alt="onImageAlt"
+        @stock="patch({ src: $event.src, alt: $event.alt, source: $event.source })"
       />
       <div class="flex flex-col gap-1">
         <label
