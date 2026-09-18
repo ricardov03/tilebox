@@ -455,3 +455,70 @@ Deferred:
 - `IconPicker` preview via `api.iconify.design` (editor only, never in `dist/`).
 - Firefox and WebKit Playwright projects.
 - Real content from Ricardo.
+
+## WP6
+
+Branch: `wp/6-release`. Date: 2026-09-17. Node used: 22.23.1.
+
+### What was built
+- Dev deps: `commit-and-tag-version` 12.7.3, `@commitlint/cli` + `@commitlint/config-conventional` 21.2.2, `simple-git-hooks` 2.14.0, `wrangler` 4.134.0.
+- `commitlint.config.mjs`: config-conventional, header max 72. `package.json`: `"simple-git-hooks": { "commit-msg": "npx --no -- commitlint --edit $1" }`, `prepare: simple-git-hooks`. Hook installed with `npx simple-git-hooks`.
+- `.versionrc.json`: header, `tagPrefix: v`, feat/fix/perf/refactor shown, docs/chore/ci/test/build/style hidden, bumps `package.json` + `package-lock.json`, `skip.commit` + `skip.tag` (the script commits and tags).
+- `scripts/release.mjs` (`npm run release`): preflight (main, clean tree, `git fetch origin`, main == origin/main), checks (lint, typecheck, generate, Playwright static), next version from `commit-and-tag-version --dry-run`, commit list since the last tag, AI draft with `claude -p ... --output-format text` (90 s timeout; fallback `grok`), terminal prompt `[a]ccept, [e]dit, [w]rite my own, [s]kip`, then bump + `CHANGELOG.md` + `releases/vX.Y.Z.md` + `chore(release): vX.Y.Z` commit + annotated tag. Never pushes. Flags: `--release-as`, `--first-release`, `--skip-tests`, `--skip-checks`, `--summary`, `--no-ai`, `--dry-run`, `--yes`.
+- `releases/v0.1.0.md`: hand-written body of the first GitHub Release.
+- `.github/workflows/release.yml`: on `v*` tag push. Tag must equal `package.json` version. Lint, typecheck, generate, Playwright static, zip `dist/` + sha256, `softprops/action-gh-release@v3` with `releases/<tag>.md` as body (fallback "See CHANGELOG.md"), zip + sha256 attached, prerelease when the tag has `-`. `GITHUB_TOKEN` only. No deploy.
+- `package.json`: `deploy` and `deploy:preview` (wrangler pages deploy, project `tilebox`). `.wrangler/` ignored. No `wrangler.toml` (direct upload needs none).
+- Docs: README sections "Commit messages", "Release", "Deploy" (wrangler login, project create, turn off automatic production deployments if Git-connected). CLAUDE.md: commit rule and the two commands. PLAN.md: WP6 section, status line, Pexels owner renamed to WP7.
+
+### Deviations and why
+- `--skip-checks` skips the branch check as well as the origin sync check (the brief named only the sync check). Needed to run the end-to-end tests on `wp/6-release`. The clean-tree check is never skipped.
+- No terminal on stdin: the prompt prints `(no terminal)` and the summary is skipped (`_No summary._`). Without this the script hung when stdin was closed.
+- Added a guard: 0 commits since the last tag exits 1 unless `--release-as` or `--first-release`.
+- `make_latest` is set to `false` for a pre-release tag, `true` otherwise.
+
+### Verified
+- Hook: `git commit --allow-empty -m "bad message"` exit 1 (`subject may not be empty`, `type may not be empty`). `chore: test hook` exit 0, then removed with `git reset --hard HEAD~1`.
+- `node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null`: exit 0. `Next version: v0.1.1 (from v0.1.0)`, 87 commits listed, release file preview printed with the Features and Bug fixes sections, `working tree: still clean`.
+- `node scripts/release.mjs --dry-run --skip-tests --skip-checks --yes`: `drafting with claude (up to 90 s) ... ok`. Draft (4 sentences): "tilebox v0.1.1 shows your links, social profiles, images, videos, and a map as tiles on one page. The page fits phones and desktops, has a light and dark mode, and offers three color presets and three font presets. You edit the page on your own computer with a built-in editor, where you drag tiles to reorder them, pick icons, and add images. Keyboard and screen reader users can reach every tile."
+- Fake `claude` that sleeps 300 s first on PATH: `drafting with claude (up to 90 s) ... timed out`, then the fallback prompt, summary skipped, exit 0, tree clean.
+- `--dry-run --first-release`: `Next version: v0.1.0 (from v0.1.0)`, `releases/v0.1.0.md exists. Keeping it. No draft.`, prints the existing file.
+- Real apply on the branch, then undone: `--first-release --no-ai` made `CHANGELOG.md` (15 lines, `## 0.1.0`), commit `chore(release): v0.1.0`, tag `v0.1.0`. Then `--release-as 0.2.0 --summary "..."` bumped both package files to 0.2.0, wrote `releases/v0.2.0.md` from the `## [0.2.0](compare) (date)` section, commit + tag. Undo: `git tag -d v0.1.0 v0.2.0 && git reset --hard <base>`. No tag was pushed.
+- Workflow: `ruby -ryaml` parses it (12 steps). The tag check step run locally: `GITHUB_REF_NAME=v9.9.9` exit 1 with `::error::Tag v9.9.9 does not match package.json version (v0.1.0).`; `v0.1.0` exit 0. Body step: missing file writes the fallback and a `::warning::`.
+- `npx commitlint --from=main --to=HEAD`: every branch commit passes.
+- Not verified: `npx wrangler login` and a real `npm run deploy` (needs Ricardo's Cloudflare account). A real workflow run on GitHub (needs a pushed tag).
+
+### Verification output (last lines)
+
+`npm run lint`
+```
+> eslint .
+(exit 0)
+```
+
+`npm run typecheck`
+```
+> nuxt typecheck
+ℹ Nuxt Icon server bundle mode is set to local
+ℹ Nuxt Icon client bundle consist of 26 icons with 22.33KB(uncompressed) in size
+(exit 0)
+```
+
+`npm run generate`
+```
+[nitro] ℹ Prerendered 4 routes in 1.168 seconds
+[nitro] ✔ Generated public .output/public
+└  ✨ You can now deploy .output/public to any static hosting!
+(exit 0)
+```
+
+### Review (OCR, range)
+Fixes applied on `wp/6-release` after the review of `scripts/release.mjs` and `.github/workflows/release.yml`. One commit per fix.
+1. `ci`: actions pinned to full commit SHAs in `release.yml` and `ci.yml`: `softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64` (v3.0.3), `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1), `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020` (v7.0.0). Checkout and setup-node moved from `v4` to `v7` in the same change.
+2. `run()` returns `out` (stdout only) and `err` (stderr only). `git status --porcelain`, `git rev-parse`, and the commit-and-tag-version version line are parsed from stdout. Error messages print stderr, then stdout (`errorText()`).
+3. Apply step starts with `git tag -l v<next>`; a non-empty result exits 1 before anything changes. Commit first, then tag. When `git tag` fails the script prints the recovery command `git reset --soft HEAD~1` (and the manual tag command) and exits 1.
+4. `versionHeadingRe()` escapes every regex metacharacter in the version (`escapeRegExp()`), not only the dot.
+5. `npx playwright install chromium` runs before `npx playwright test --project=static` (no-op when the browser is installed).
+6. Repository URL comes from `git config --get remote.origin.url` (`git@github.com:owner/repo.git`, `ssh://git@...`, and `https://github.com/owner/repo.git` all become `https://github.com/owner/repo`). Fallback: the old hardcoded URL when there is no remote.
+7. Windows: `npm` and `npx` spawn with `shell: true` on `win32` (Node refuses to spawn `.cmd` files without a shell). `\r\n` in captured output is normalized to `\n`.
+
+Note: `.wrangler/` in `.gitignore` is a WP0-owned file edit, accepted by the architect.

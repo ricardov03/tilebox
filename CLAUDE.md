@@ -23,6 +23,9 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 - Icons: Iconify, default set `line-md`, brand fallback `simple-icons`. Picker links to icones.js.org.
 - Images: v1 local files. Later Pexels picker (decided over Unsplash). Later R2 uploads.
 - Deploy: Cloudflare Pages, build `npm run generate`, output `dist`, `NODE_VERSION=24`.
+- Commit messages: Conventional Commits (`type(scope): subject`, present tense, lower case, max 72 chars). A local commitlint hook rejects the rest. No attribution lines.
+- Release: `npm run release` (local, makes the version commit and the tag), then `git push --follow-tags origin main`. The tag starts the GitHub release workflow.
+- Deploy: `npm run deploy` (wrangler, local, manual). Preview: `npm run deploy:preview`. The pipeline never deploys.
 
 ## Still needed from Ricardo (not blocking WP0)
 - Real links (GitHub, LinkedIn, X, email, CONDOMERA URL), city, avatar, one photo.

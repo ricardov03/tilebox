@@ -1,0 +1,21 @@
+{
+  "header": "# Changelog\n",
+  "tagPrefix": "v",
+  "types": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactoring" },
+    { "type": "docs", "hidden": true },
+    { "type": "chore", "hidden": true },
+    { "type": "ci", "hidden": true },
+    { "type": "test", "hidden": true },
+    { "type": "build", "hidden": true },
+    { "type": "style", "hidden": true }
+  ],
+  "bumpFiles": [
+    { "filename": "package.json", "type": "json" },
+    { "filename": "package-lock.json", "type": "json" }
+  ],
+  "skip": { "commit": true, "tag": true }
+}
