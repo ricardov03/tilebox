@@ -322,7 +322,11 @@ Answer `y` (or pass `--push`) and the script runs these steps. It prints each co
 2. Checks that the `gh` CLI is on `PATH` and logged in (`gh auth status`).
 3. Release exists already: `gh release edit vX.Y.Z --title "tilebox vX.Y.Z" --notes-file releases/vX.Y.Z.md`. Else: `gh release create vX.Y.Z --title "tilebox vX.Y.Z" --notes-file releases/vX.Y.Z.md --verify-tag`, with `--prerelease` when the version has a `-`.
 4. Prints the release URL.
-5. Says that the pipeline adds `tilebox-vX.Y.Z.zip` and the checksum in a few minutes, and asks `Watch the pipeline now? [y/N]`. With yes (or `--watch`) it runs `gh run watch <id> --exit-status`. When the pipeline fails, it prints the next step: `gh run view <id> --log-failed`.
+5. Looks at the files of the release first: `gh release view vX.Y.Z --json assets`. Both `tilebox-vX.Y.Z.zip` and `tilebox-vX.Y.Z.sha256` are there and this command pushed no new tag: it prints `release is complete: ...` and the URL, and stops. No watch question.
+6. This command pushed the tag: it asks `Watch the pipeline now? [y/N]`. With yes (or `--watch`) it finds the run of **this** command (`gh run list --workflow=release.yml --limit 10 --json ...`: made after the command started, from the tag push or from a manual `workflow_dispatch`; retry up to 45 s) and runs `gh run watch <id> --exit-status`. It never picks an older run. After the run it looks at the files again. It says "complete" only when both files are there. When the run fails, it prints `gh run view <id> --log-failed` and the re-run command, and exits 1.
+7. The files are missing and no run is on its way (the tag was on GitHub already, so nothing new was pushed): it says so and asks `Start the pipeline for vX.Y.Z now? [y/N]`. With yes (or `--rerun`) it runs `gh workflow run release.yml -f tag=vX.Y.Z`, finds the new run and watches it when you asked for that. Without a terminal and without `--rerun` it prints that command as the next step and exits 0.
+
+An older failed run does not change the result. When the release is complete, the script prints one line: `note: an older run for this tag failed (<id>); it is not the current state`.
 
 Answer `n` (or pass `--no-push`) and the script prints the manual commands:
 
@@ -345,6 +349,7 @@ The tag exists but there is no GitHub Release, or the pipeline failed? No versio
 ```sh
 npm run release:publish -- v0.1.0            # push + the gh steps for a tag that exists locally
 npm run release:publish -- v0.1.0 --no-push  # the tag is on GitHub already: the gh steps only
+npm run release:publish -- v0.1.0 --no-push --rerun --watch  # no zip on the release: start the pipeline again and wait for it
 npm run release:publish -- v0.1.0 --dry-run  # print the commands, run none
 gh workflow run release.yml -f tag=v0.1.0    # run the pipeline again for the tag (zip + checksum)
 ```
@@ -373,7 +378,8 @@ Every release after that is just `npm run release`.
 | `--yes` | Accept the AI draft without asking. Does not push: add `--push` |
 | `--push` | After the tag: push and make the GitHub Release. No question |
 | `--no-push` | Never push, never ask. Print the manual commands. With `--publish-only`: skip the push, run the `gh` steps only |
-| `--watch` | After the publish: wait for the release pipeline with `gh run watch` |
+| `--watch` | After the publish: wait for the pipeline run of this command with `gh run watch`. Never an older run. No effect when the release is complete already |
+| `--rerun` | The release has no zip and no run is on its way: start the pipeline for the tag with `gh workflow run release.yml -f tag=vX.Y.Z`. No question |
 | `--publish-only vX.Y.Z` | No version bump. The publish steps for a tag that exists locally. Same as `npm run release:publish -- vX.Y.Z` |
 | `--skip-tests` | Skip Playwright |
 | `--skip-checks` | Skip the branch and origin sync checks. The tree must still be clean |
@@ -447,7 +453,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | `npm run release` says `pull or push first` | `git pull` or `git push` so `main` equals `origin/main` |
 | `npm run release` says a personal file is tracked | `git rm --cached <file>`, commit, run it again |
 | The tag exists but there is no GitHub Release | The pipeline failed or `gh` was missing. Make the release: `npm run release:publish -- vX.Y.Z --no-push`. See why the pipeline failed: `gh run list --workflow=release.yml`, then `gh run view <id> --log-failed`. After the fix is on `main`, run it again: `gh workflow run release.yml -f tag=vX.Y.Z` |
-| The GitHub Release has no zip | The pipeline is still running (`gh run watch`) or it failed. Same steps as the row above. Do not upload a local zip: it holds your personal data |
+| The tag exists and the GitHub Release exists, but it has no zip | The pipeline is still running (`gh run watch`) or it failed. Run `npm run release:publish -- vX.Y.Z --no-push --rerun --watch`: it checks the files of the release, starts the pipeline again (`gh workflow run release.yml -f tag=vX.Y.Z`) and waits for that new run. Without `--rerun` it asks first, or prints the command when there is no terminal. Do not upload a local zip: it holds your personal data |
+| `release:publish` said `pipeline: FAILED` but the release has the zip | Fixed. Old versions watched the newest run of the tag, also an old failed one, and never looked at the release. Now the script checks the files first and prints `release is complete` |
 | Playwright says the browser is missing | `npx playwright install chromium` |
 
 ## More docs
