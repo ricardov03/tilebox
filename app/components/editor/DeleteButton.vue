@@ -15,6 +15,10 @@
 
   `backed` puts a `tile` plate behind the 32px box, for a tile that can hold a
   photo. The box itself stays transparent.
+
+  The look is a scoped style block, not utility classes: Tailwind writes every
+  utility it finds in `app/` into the ONE stylesheet that the public page
+  inlines, and the public page never shows this button. Tokens only, as ever.
 -->
 <script setup lang="ts">
 const props = defineProps<{
@@ -36,20 +40,96 @@ defineExpose({ focus: () => button.value?.focus() })
     type="button"
     data-delete-trigger
     :aria-label="name"
-    :class="backed ? 'before:absolute before:inset-1.5 before:-z-10 before:rounded-lg before:bg-tile/90 [@media(hover:none)]:before:inset-0.5' : ''"
-    class="group/del relative isolate flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-lg focus-visible:outline-hidden"
+    :class="{ backed }"
+    class="trigger"
   >
     <span
       data-delete-visual
       aria-hidden="true"
       :title="name"
-      class="flex size-8 items-center justify-center rounded-lg border border-danger bg-transparent text-danger transition-colors group-hover/del:bg-danger/12 group-focus-visible/del:bg-danger/12 group-focus-visible/del:outline-2 group-focus-visible/del:outline-offset-2 group-focus-visible/del:outline-danger motion-reduce:transition-none [@media(hover:none)]:size-10"
+      class="box"
     >
       <Icon
         :name="UI_ICONS.trash"
-        class="size-[18px]"
+        class="glyph"
         :aria-hidden="true"
       />
     </span>
   </button>
 </template>
+
+<style scoped>
+.trigger {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* The ring is drawn around the box you see, not around the hit area. Kept for forced colors. */
+.trigger:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.trigger.backed::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  z-index: -1;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--color-tile) 90%, transparent);
+}
+
+.box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-danger);
+  transition: background-color 150ms;
+}
+
+.trigger:hover .box,
+.trigger:focus-visible .box {
+  background: color-mix(in oklab, var(--color-danger) 12%, transparent);
+}
+
+.trigger:focus-visible .box {
+  outline: 2px solid var(--color-danger);
+  outline-offset: 2px;
+}
+
+.glyph {
+  width: 18px;
+  height: 18px;
+}
+
+@media (hover: none) {
+  .box {
+    width: 40px;
+    height: 40px;
+  }
+
+  .trigger.backed::before {
+    inset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .box {
+    transition: none;
+  }
+}
+</style>

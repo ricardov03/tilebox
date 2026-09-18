@@ -31,8 +31,8 @@ function onKeydown(event: KeyboardEvent) {
   emit('cancel')
 }
 
-const buttonClass = 'group/confirm flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center focus-visible:outline-hidden'
-const pillClass = 'flex h-8 min-w-11 items-center justify-center rounded-lg px-3 text-sm font-medium group-focus-visible/confirm:outline-2 group-focus-visible/confirm:outline-offset-2 [@media(hover:none)]:h-10'
+const buttonClass = 'hit flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center'
+const pillClass = 'pill flex h-8 min-w-11 items-center justify-center rounded-lg px-3 text-sm font-medium'
 </script>
 
 <template>
@@ -57,7 +57,7 @@ const pillClass = 'flex h-8 min-w-11 items-center justify-center rounded-lg px-3
     >
       <span
         :class="pillClass"
-        class="bg-danger text-danger-ink group-hover/confirm:opacity-90 group-focus-visible/confirm:outline-danger"
+        class="yes"
       >Yes</span>
     </button>
     <button
@@ -70,8 +70,45 @@ const pillClass = 'flex h-8 min-w-11 items-center justify-center rounded-lg px-3
     >
       <span
         :class="pillClass"
-        class="border border-line bg-tile text-ink group-hover/confirm:border-accent group-focus-visible/confirm:outline-accent"
+        class="no border border-line bg-tile text-ink"
       >No</span>
     </button>
   </div>
 </template>
+
+<!-- A scoped block, not utilities: see EditorDeleteButton (the public stylesheet stays small). Tokens only. -->
+<style scoped>
+/* The ring is drawn around the pill you see, not around the 44px hit area. Kept for forced colors. */
+.hit:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.hit:focus-visible .pill {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.yes {
+  background: var(--color-danger);
+  color: var(--color-danger-ink);
+}
+
+.hit:hover .yes {
+  opacity: 0.9;
+}
+
+.hit:focus-visible .yes {
+  outline-color: var(--color-danger);
+}
+
+.hit:hover .no {
+  border-color: var(--color-accent);
+}
+
+@media (hover: none) {
+  .pill {
+    height: 40px;
+  }
+}
+</style>
