@@ -709,6 +709,17 @@ async function mockIcons(page: Page): Promise<void> {
   await page.route('**/api/icons/search**', route => route.fulfill({ json: { icons: ['line-md:home', 'line-md:home-off'] } }))
 }
 
+/**
+ * The preview `src` the picker must build for `name`: WP18's local route, never
+ * `api.iconify.design` (docs/invariants.md 2 and 16). WP19 added `&color=`: an
+ * `<img>` cannot inherit `currentColor`, so the picker sends its resolved ink
+ * color, which changes with the theme and the color preset. The name is pinned,
+ * the six hex digits are not.
+ */
+function iconSvgSrc(name: string): RegExp {
+  return new RegExp(`^/api/icons/svg\\?name=${name.replace(':', '%3A')}&color=[0-9a-f]{6}$`)
+}
+
 /** The markup of the first icon of a preview tile. Two tiles with the same icon give the same string. */
 function tileIcon(page: Page, id: string): Promise<string> {
   return page.locator(`li[data-id="${id}"] > div svg`).first().innerHTML()
@@ -739,7 +750,7 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
 
   await url.fill('mailto:you@example.com')
   await expect(picker.locator('[data-icon-caption]')).toHaveText('Auto, from the link')
-  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Aemail')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:email'))
   await expect.poll(() => tileIcon(page, linkId)).toBe(envelope)
 
   // No field with the icon name, and the name is on no visible text.
@@ -752,17 +763,17 @@ test('WP17: the icon picker has no name field, and a mailto link gets the envelo
 
   // Another URL, another automatic icon, live.
   await url.fill('https://github.com/nuxt')
-  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Agithub')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:github'))
   await expect.poll(() => tileIcon(page, linkId)).not.toBe(envelope)
 
   // "Back to auto" shows only with an own icon. It removes it, and the automatic one comes back.
   await expect(picker.getByRole('button', { name: 'Back to auto' })).toHaveCount(0)
   await picker.getByRole('button', { name: 'line-md:home', exact: true }).click()
   await expect(picker.locator('[data-icon-caption]')).toHaveText('Custom')
-  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Ahome')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:home'))
   await picker.getByRole('button', { name: 'Back to auto' }).click()
   await expect(picker.locator('[data-icon-caption]')).toHaveText('Auto, from the link')
-  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Agithub')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', iconSvgSrc('line-md:github'))
 })
 
 test('Hide dims the block, the save keeps it in the file and drops it from the page, Show brings it back', async ({ page }) => {

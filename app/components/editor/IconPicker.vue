@@ -13,6 +13,10 @@
   this machine, no network): with `icon.provider: 'none'` <Icon> draws only the
   icons the build bundled, and a freshly picked one is not among them yet.
   <Icon> is the fallback when that route answers nothing.
+  WP19: the route also takes `&color=<rrggbb>`. An `<img>` is its own document,
+  so `currentColor` inside the SVG would resolve to black and vanish on the dark
+  ground. The picker reads its own resolved `color` (the `ink` token) and sends
+  it, and reads it again when `data-theme` or `data-colors` changes.
 -->
 <script setup lang="ts">
 import type { LinkIcon } from '~/components/blocks/media'
@@ -39,9 +43,42 @@ let timer: ReturnType<typeof setTimeout> | undefined
 /** Id of the latest search. A response for an older id is dropped. */
 let requestId = 0
 
-/** The dev route that draws one icon of the local packs. Dev only, like the whole editor. */
+/**
+ * The ink color of this field as six hex digits, for `&color=` of the route.
+ * Empty until it is read: the SVG then keeps `currentColor`, which is the safe
+ * default for the first paint. `getComputedStyle().color` is always `rgb(...)`
+ * or `rgba(...)`, whatever the token is written as, so one parser is enough.
+ */
+const inkHex = ref('')
+const inkProbe = useTemplateRef<HTMLElement>('inkProbe')
+
+function readInk(): void {
+  const el = inkProbe.value
+  if (!el) return
+  const match = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(getComputedStyle(el).color)
+  if (!match) return
+  const hex = match.slice(1, 4)
+    .map(part => Math.min(255, Number(part)).toString(16).padStart(2, '0'))
+    .join('')
+  if (hex !== inkHex.value) inkHex.value = hex
+}
+
+onMounted(() => {
+  readInk()
+  // `data-theme` comes from useTheme(), `data-colors` from the chosen preset.
+  // One observer covers the toggle, the system change and a preset change.
+  const observer = new MutationObserver(() => readInk())
+  observer.observe(document.documentElement, { attributeFilter: ['data-theme', 'data-colors'] })
+  onBeforeUnmount(() => observer.disconnect())
+})
+
+/**
+ * The dev route that draws one icon of the local packs. Dev only, like the whole
+ * editor. Never `api.iconify.design`: rule 2 and rule 16 of docs/invariants.md.
+ */
 function svgUrl(name: string): string {
-  return `/api/icons/svg?name=${encodeURIComponent(name)}`
+  const color = inkHex.value ? `&color=${inkHex.value}` : ''
+  return `/api/icons/svg?name=${encodeURIComponent(name)}${color}`
 }
 
 /** Your own icon wins, else the automatic one. */
@@ -119,7 +156,10 @@ const smallButton = `min-h-9 rounded-full border border-line px-3 text-xs font-m
     </legend>
 
     <div class="flex flex-wrap items-center gap-3">
+      <!-- `ref="inkProbe"`: this box carries the `ink` token, so its resolved
+           `color` is the exact color the previews must be drawn in. -->
       <span
+        ref="inkProbe"
         class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-ground text-ink"
         aria-hidden="true"
       >

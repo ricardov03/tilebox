@@ -98,6 +98,91 @@ test.describe('GET /api/icons/svg', () => {
   })
 })
 
+/**
+ * WP19: the wiring between WP17's picker and WP18's route, with NO mocked route.
+ * WP17's own test in editor.spec.ts mocks both icon routes, so it proves the
+ * picker's contract but not the route. This one proves the pair: the browser
+ * really loads every preview from `/api/icons/svg`, and nothing reaches
+ * `api.iconify.design` (docs/invariants.md 2 and 16).
+ */
+test.describe('WP19: the icon picker previews come from the local route', () => {
+  test('every preview loads from /api/icons/svg with 200, and no request reaches iconify.design', async ({ page, baseURL }) => {
+    const svgStatus = new Map<string, number>()
+    const iconifyHost: string[] = []
+    page.on('request', (r) => {
+      try {
+        if (/(^|\.)iconify\.design$/.test(new URL(r.url()).hostname)) iconifyHost.push(r.url())
+      }
+      catch { /* not a URL we can parse: it cannot be a foreign host either */ }
+    })
+    page.on('response', (r) => {
+      if (r.url().includes('/api/icons/svg')) svgStatus.set(r.url(), r.status())
+    })
+
+    await page.goto('/edit')
+    await page.locator('li[data-id]').first().waitFor({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Add block' }).click()
+    await page.getByRole('button', { name: 'Link', exact: true }).click()
+    const form = page.locator('form')
+    const picker = form.locator('[data-link-icon]')
+    await picker.waitFor({ state: 'visible', timeout: 20_000 })
+
+    // A mail URL: the automatic envelope, drawn by the route, with the ink color.
+    await form.locator('input[id$="-url"]').fill('mailto:you@example.com')
+    const shown = picker.locator('img').first()
+    await expect(shown).toHaveAttribute('src', /^\/api\/icons\/svg\?name=line-md%3Aemail&color=[0-9a-f]{6}$/)
+    // `naturalWidth > 0` is the proof that the ROUTE answered a real SVG.
+    await expect.poll(() => shown.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true)
+
+    // The local search, then a pick. A fresh icon needs no dev restart: the
+    // route draws it, unlike <Icon>, which only has what the build bundled.
+    await picker.getByPlaceholder('Search icons').fill('home')
+    const results = picker.locator('ul[aria-label="Search results"] button')
+    await results.first().waitFor({ state: 'visible', timeout: 20_000 })
+    const gridSrcs = await picker.locator('ul[aria-label="Search results"] img')
+      .evaluateAll(els => els.map(el => el.getAttribute('src')))
+    expect(gridSrcs.length).toBeGreaterThan(0)
+    for (const src of gridSrcs) expect(src).toMatch(/^\/api\/icons\/svg\?name=[^&]+&color=[0-9a-f]{6}$/)
+
+    const picked = await results.first().getAttribute('aria-label')
+    await results.first().click()
+    await expect(picker.locator('[data-icon-caption]')).toHaveText('Custom')
+    await expect(shown).toHaveAttribute('src', new RegExp(`name=${(picked ?? '').replace(':', '%3A')}&color=`))
+    await expect.poll(() => shown.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true)
+
+    // Every icon the page asked for came back 200 from our own origin.
+    expect(svgStatus.size).toBeGreaterThan(0)
+    for (const [url, status] of svgStatus) {
+      expect(status, url).toBe(200)
+      expect(url.startsWith(baseURL ?? 'http://localhost'), url).toBe(true)
+    }
+    expect(iconifyHost).toEqual([])
+  })
+
+  test('the color follows the theme, so a preview is never black on the dark ground', async ({ page }) => {
+    await page.goto('/edit')
+    await page.locator('li[data-id]').first().waitFor({ timeout: 60_000 })
+    await page.getByRole('button', { name: 'Add block' }).click()
+    await page.getByRole('button', { name: 'Link', exact: true }).click()
+    const picker = page.locator('form').locator('[data-link-icon]')
+    await picker.waitFor({ state: 'visible', timeout: 20_000 })
+    const shown = picker.locator('img').first()
+    await expect(shown).toHaveAttribute('src', /&color=[0-9a-f]{6}$/)
+
+    const colorOf = async () => ((await shown.getAttribute('src')) ?? '').split('&color=')[1]
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'light'
+    })
+    const light = await colorOf()
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'dark'
+    })
+    await expect.poll(colorOf).not.toBe(light)
+    // The dark value is the dark `ink` token, and the route still draws it.
+    await expect.poll(() => shown.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0)).toBe(true)
+  })
+})
+
 test.describe('POST /api/save', () => {
   const fileNow = () => (existsSync(PERSONAL_PROFILE_PATH) ? readFileSync(PERSONAL_PROFILE_PATH, 'utf8') : null)
 
