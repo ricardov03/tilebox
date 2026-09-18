@@ -37,7 +37,11 @@ A wrapper that prints green when the reviewer said nothing is worse than no revi
 - Grok exits non-zero, or the watchdog kills it.
 The raw output stays next to the cache as `<hash>.raw.json`, the session id is printed with the command that resumes it, and the trailer says `verdict=BLIND`.
 
-**The 1-turn stub.** Grok sometimes ends after ONE turn with a progress stub (`passed: false`, no finding, or a sentence that announces a plan) and no tool call. Measured: 3 of 6 fresh calls in the WP14 round, about 3 cents each. The script detects it (`stopReason` `end_turn`, `num_turns` 1 or no tool call in `grok export`, no valid verdict) and resumes the SAME session ONCE, with the same read-only tools and the rest of the turn budget: "You stopped after announcing your plan. Continue now: use your tools, then return ONLY the JSON verdict." The trailer counts it: `retries=1`. A second stub is exit 3. Three things try to stop the stub at the source: `--no-plan`, a `--rules` line, and the first line of the prompt ("Do not announce a plan. Your FIRST action must be a tool call; your LAST message must be only the JSON verdict"). Numbers: `NOTES.md` > "WP15 review follow-up".
+**The first-turn stub.** Grok sometimes answers the schema before it opens a file: `num_turns` 1, `passed: false`, no finding, a summary that says it is starting (or a plain sentence that announces a plan). Measured here: 3 of 6 fresh calls in the WP14 round, 1 of 4 in WP15, about 3 cents each. The script makes ONE automatic retry, and since WP16 that retry is a **fresh call**: a new session (`--session-id`, never `--resume`), the same flags, the full turn budget, and the same prompt with one section appended ("## Retry": "Your previous attempt returned the verdict JSON on its FIRST turn, before reading a single file. That is not a review and it was discarded. Your first action now MUST be a tool call ..."). stderr says `grok-review: progress stub on attempt 1 (one turn, no findings) — retrying once`. The trailer counts it: `retries=1`; `session=` is the session of the retry and `_meta.stub_session_id` is the discarded one. Turns, tokens and cost of both sessions are added up. A second stub is exit 3, never green.
+- **Why a fresh call and not a resume (WP15 resumed the same session).** A resumed session keeps its own empty answer in its context. The owner measured the fresh call in his other project, where the same script runs: 8 of 8 stubs had exactly this shape, and EVERY forced retry as a fresh call gave a real verdict. WP15 here had one resume that worked; 8 of 8 is the better number, so this repo now does the same.
+- **What counts as a stub (two signals, either one).** A, the measured shape: `num_turns` absent or 1 or less, and the last schema-shaped object of `.text` has `passed === false` and `findings == []`. B, kept from WP15: the run ended with `end_turn`, `grok export` counted zero tool calls (or `num_turns` is 1 or less), and there is no valid verdict at all (plain text such as "Starting the review", or the empty verdict). B costs at most one more call and can never turn a run green.
+- **The cache key does not see the retry.** The key is `sha256(diff + prompt template + schema)`. The "## Retry" section is appended to the rendered prompt of the second call only, so the verdict of a retry is stored under the same key as a verdict with no retry.
+- Four things try to stop the stub at the source: `--no-plan`, a `--rules` line, the first line of the prompt, and (WP16) the first bullet of "How to work": "Your first action must be a tool call. ... A verdict whose summary says you are starting or still reading is not a verdict; it is discarded and the run is retried." Numbers: `NOTES.md` > "WP15 review follow-up" and "WP16".
 
 **Evidence.** A verdict from a session that opened no file is a verdict on the pasted diff alone. The script counts the tool calls of the session (`grok export <id>`: one `- Read:` / `- Search:` / `- List:` line per call) and labels the verdict: `evidence=full` when a `read_file` or a `grep` happened, else `evidence=diff-only` (the report header then says `DIFF-ONLY: the reviewer opened no file`). Both are in `_meta` of the verdict JSON, with `retries`, `tool_calls` and `session_id`. Without `grok export` the fallback is the turn count (2 or more turns = tools were called). Treat `diff-only` as "not reviewed yet".
 
@@ -51,11 +55,11 @@ The raw output stays next to the cache as `<hash>.raw.json`, the session id is p
 | `scope` | `block` or `pr` | |
 | `files`, `diff_chars` | what was pasted into the prompt | over about 30,000 characters: split the block |
 | `cached` | `1` = the same diff, prompt and schema: no call, no ledger row | |
-| `turns` | model calls of the whole session (review + retry + conclude) | `1` or `2` with `evidence=diff-only` |
+| `turns` | model calls of the whole run (review + conclude, plus the discarded stub session after a retry) | `1` or `2` with `evidence=diff-only` |
 | `elapsed_s`, `tokens_in`, `tokens_out` | wall time and tokens of the session (`grok usage <id>`) | |
-| `retries` | automatic "continue" calls after a 1-turn stub: `0` or `1` | `1` with `verdict=BLIND`: the stub came twice, run it again |
+| `retries` | automatic fresh calls after a first-turn stub: `0` or `1` | `1` with `verdict=BLIND`: the stub came twice, run it again |
 | `evidence` | `full` = the reviewer read a file or ran a grep. `diff-only` = it judged the pasted diff alone. `none` = no call (`DRY-RUN`, `EMPTY`). `unknown` = a cache entry from before WP15 | `diff-only`: not a full review |
-| `session` | the Grok session id (`-` when no call was made) | use it with `grok export`, `grok usage`, `--conclude` |
+| `session` | the Grok session id (`-` when no call was made; after a retry, the session of the retry) | use it with `grok export`, `grok usage`, `--conclude` |
 | `critical`, `warning`, `suggestion` | counts of the verdict | |
 | `verdict` | `PASS` (exit 0), `FAIL` (exit 1), `BLIND` (exit 3, no valid verdict), `EMPTY` (exit 2), `DRY-RUN` (exit 0) | `BLIND` is never a pass |
 
@@ -83,7 +87,7 @@ Grok "cancelled" on 8 of 13 reviews (plan mode: 0 of 3 completed). Cause: the re
 | The diff | Grok ran `git diff` in its shell tool | pasted into `--prompt-file`; over 150,000 characters is refused |
 | Tools | all, plus every MCP server, `--permission-mode dontAsk` | `--tools read_file,grep,list_dir`, `--disallowed-tools Agent`, `--deny MCPTool/Bash/Edit/Write/WebFetch` |
 | The answer | free text in "my one-line format" | `--json-schema` + `--output-format json`, checked field by field |
-| Effort and turns | default effort, no turn limit | `--effort medium`, `--max-turns 14`, `--no-plan`, one retry after a 1-turn stub, one conclude call at the cap |
+| Effort and turns | default effort, no turn limit | `--effort medium`, `--max-turns 14`, `--no-plan`, one fresh retry after a first-turn stub, one conclude call at the cap |
 | A hung call | waited for ever | watchdog, 12 minutes, exit 3 |
 | No verdict | looked like "no findings" | exit 3, `verdict=BLIND`, raw output kept, session id printed |
 | The same diff twice | paid twice | cache, no call |
