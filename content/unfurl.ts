@@ -259,7 +259,7 @@ export async function checkTarget(url: URL, options: Pick<UnfurlOptions, 'allowH
   return first
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   accept: string
   maxBytes: number
   /** `cut`: keep the first `maxBytes`. `fail`: a larger body is an error. */
@@ -268,6 +268,13 @@ interface RequestOptions {
   stopAtHeadEnd?: boolean
   etag?: string
   lastModified?: string
+  /**
+   * A host allow-list (WP12, content/pexels.ts). When set, EVERY hop must be `https:` and its host must be
+   * in the list, else "blocked host". The address check of `checkTarget()` still runs after it.
+   */
+  onlyHosts?: readonly string[]
+  /** More request headers (an API key). Sent on the FIRST hop only: a redirect target never gets them. */
+  headers?: Readonly<Record<string, string>>
 }
 
 export interface SafeResponse {
@@ -349,8 +356,9 @@ export async function safeRequest(target: string | URL, request: RequestOptions,
   let url = new URL(target)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (budget.signal.aborted) throw new UnfurlError(stopReason(options))
+    if (request.onlyHosts && (url.protocol !== 'https:' || !request.onlyHosts.includes(bareHost(url)))) throw new UnfurlError('blocked host')
     const pinned = await checkTarget(url, options)
-    const headers: Record<string, string> = { 'user-agent': USER_AGENT, 'accept': request.accept }
+    const headers: Record<string, string> = { ...(hop === 0 ? request.headers : undefined), 'user-agent': USER_AGENT, 'accept': request.accept }
     if (hop === 0 && request.etag) headers['if-none-match'] = request.etag
     if (hop === 0 && request.lastModified) headers['if-modified-since'] = request.lastModified
     let response: TransportResponse
