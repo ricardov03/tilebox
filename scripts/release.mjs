@@ -356,7 +356,6 @@ async function chooseSummary(draft) {
       log('')
     }
     if (opts.yes && current) return current
-    if (opts.yes && !current) return null
     const answer = (await askLine(current
       ? '    [a]ccept, [e]dit, [w]rite my own, [s]kip summary: '
       : '    [w]rite my own, [s]kip summary: '))?.toLowerCase()
@@ -406,7 +405,8 @@ if (!keepExistingReleaseFile) log(summary ? '    summary: set' : '    summary: n
 
 if (dryRun) {
   step('Dry run: nothing changes')
-  log(`    would bump ${currentVersion} -> ${nextVersion} in package.json, package-lock.json`)
+  if (opts['first-release']) log(`    no bump (first release): version stays ${nextVersion}`)
+  else log(`    would bump ${currentVersion} -> ${nextVersion} in package.json, package-lock.json`)
   log('    would update CHANGELOG.md')
   if (keepExistingReleaseFile) {
     log(`    would keep ${releaseFile}:`)
