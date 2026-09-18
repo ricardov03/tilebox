@@ -13,6 +13,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Quick start](#quick-start)
 - [Your personal data](#your-personal-data)
 - [Editing by hand](#editing-by-hand)
+- [Site metadata](#site-metadata)
 - [Scripts](#scripts)
 - [Tests](#tests)
 - [CI](#ci)
@@ -30,6 +31,8 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - Profile block: avatar, name, handle, bio, up to 3 highlights, status line with a pulsing dot, optional email link.
 - Email privacy: your email is required but hidden by default. A hidden email is removed at build time and is in no file of the site.
 - Avatar from your email: the build downloads your Gravatar picture once. The public page never calls gravatar.com.
+- Site metadata from your profile: title, description, canonical link, Open Graph and X card, JSON-LD (`ProfilePage` + `Person`), `rel="me"` on social links, optional `noindex`. Edit it in `/edit` > **Site**.
+- Favicon set and social preview image made at build time from your avatar or your initials, in your colors. Your own upload wins. No network, no service.
 - Seven tile types: link, social, image, text, section, map, video.
 - Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
@@ -78,6 +81,8 @@ public/avatar.*
 public/blocks/*          except public/blocks/sample.jpg
 public/icons/*           favicons fetched at build
 public/thumbs/*          YouTube thumbnails fetched at build
+public/site/             favicon set, manifest and social image, made at build
+public/site-uploads/     your own favicon and social image uploads
 .tilebox/
 .netlify/
 ```
@@ -90,7 +95,8 @@ How a build picks the file (`content/resolve.ts`): `content/profile.json` when i
 - `npm run release` refuses to run when `content/profile.json` or a personal image is tracked.
 - Your email: `profile.email` is required, and hidden by default (`showEmail: false`). The page never imports `content/profile.json`. It imports a sanitized copy (`.nuxt/tilebox/public-profile.json`, written by `modules/public-profile.ts`), and a hidden email is not in that copy. So it is in no HTML, no `_payload.json` and no JS chunk of `dist/`. `tests/e2e/privacy.spec.ts` reads every text file of `dist/` to prove it. Note: a tile you add yourself with a `mailto:` URL is public, as any tile.
 - Your avatar from your email: `npm run fetch:avatar` (part of `predev` and `pregenerate`) sends the SHA-256 hash of your email to gravatar.com **from your machine at build time** and saves the picture as `public/avatar.gravatar.jpg` (ignored by git). The published page only loads that local file; it makes no request to gravatar.com. No fetch when `profile.avatar` is set or the email is a placeholder. No Gravatar or no network: the build goes on, the page shows your initials.
-- Back up `content/profile.json`, `public/blocks/` and `public/avatar.*` yourself. Reset to the sample: `rm content/profile.json && npm run ensure:profile`.
+- Your favicon and your social image: `npm run build:site-assets` (part of `predev` and `pregenerate`) writes them to `public/site/` from your profile, on your machine, with no network. They show your name, bio and avatar, so they are ignored like the profile. GitHub CI and the release zip hold the ones of the sample profile. See [Site metadata](#site-metadata).
+- Back up `content/profile.json`, `public/blocks/`, `public/site-uploads/` and `public/avatar.*` yourself. Reset to the sample: `rm content/profile.json && npm run ensure:profile`.
 
 Details: `content/README.md`.
 
@@ -158,6 +164,63 @@ Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
 Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/` as `avatar.<ext>`. Both are ignored by git (see "Your personal data").
 
+## Site metadata
+
+What search engines, link previews and the browser tab get. Edit it in `/edit` > **Site**, or by hand in the optional top-level `site` object of `content/profile.json`. A profile without `site` is valid and uses the defaults.
+
+```json
+"site": {
+  "title": "Ricardo Vargas, front-end developer",
+  "description": "I build web products with Nuxt and Vue.",
+  "url": "https://example.com",
+  "lang": "en",
+  "noindex": false,
+  "xHandle": "ricardov03",
+  "jobTitle": "Front-end developer",
+  "location": "Bogota",
+  "favicon": "/site-uploads/favicon-1a2b3c.png",
+  "ogImage": "/site-uploads/og-4d5e6f.jpg"
+}
+```
+
+| Field | Rule | Default | Goes to |
+|---|---|---|---|
+| `title` | max 70 characters | `Name (@handle)` | `<title>`, `og:title`, manifest `name` |
+| `description` | max 160 characters | your bio | meta description, `og:description` |
+| `url` | `https://`, no trailing slash | none | canonical, `og:url`, absolute `og:image`, JSON-LD |
+| `lang` | BCP 47 tag (`en`, `es`, `pt-BR`) | `en` | `<html lang>`, `og:locale` |
+| `noindex` | boolean | `false` | `<meta name="robots" content="noindex, nofollow">` |
+| `xHandle` | X user name, no `@` | none | `twitter:site`, `twitter:creator` |
+| `jobTitle`, `location` | text, max 100 | none | JSON-LD only. Not shown on the page |
+| `favicon` | local path, png, svg or jpg, square | none | source of the favicon set |
+| `ogImage` | local path, png, jpg or webp | none | source of `/site/og.png` |
+
+**Site URL precedence.** Absolute URLs need to know where the page lives. The order is: the build env `NUXT_PUBLIC_SITE_URL` (`npm run publish` sets it to the live URL) > `site.url` > unknown. Unknown means: no canonical link, no `og:url`, and `og:image` stays the path `/site/og.png`. Most link previews need an absolute image URL, so set one of the two.
+
+**What the build makes** (`npm run build:site-assets`, part of `predev` and `pregenerate`, code in `content/site-assets.ts`), all in `public/site/` (not tracked), all offline:
+
+| File | What |
+|---|---|
+| `favicon.ico` | 32x32 PNG inside an ICO |
+| `icon.svg` | Only for the initials tile (with a dark-mode variant inside) or an SVG upload |
+| `icon-192.png`, `icon-512.png` | Manifest icons |
+| `icon-mask.png` | 512, maskable: the content stays inside the safe zone |
+| `apple-touch-icon.png` | 180, opaque, on the ground color of your color preset |
+| `manifest.webmanifest` | name, short name, icons, theme and background color, `display: browser` |
+| `og.png` | The social preview image, 1200x630, under 1 MB |
+
+- Favicon source, in order: your upload (`site.favicon`) > your avatar (`profile.avatar`, else the downloaded Gravatar), cut to a circle > your initials in `accent-soft` on `accent` of the active color preset, as a rounded square.
+- Social image source: your upload (`site.ogImage`, cut to 1200x630) > a generated card with your avatar or initials, name, bio (3 lines at most), `@handle` and the site host.
+- The generated card **always uses Geist** (`assets/fonts/Geist-Regular.ttf` and `Geist-SemiBold.ttf`, SIL OFL 1.1, license in `assets/fonts/OFL.txt`) and the **light** colors of the active color preset, whatever font preset the page uses. The image renderer reads TTF files, and only Geist ships with the repo. The favicon initials use Geist too.
+- The head links point to `/site/...` for every file that exists when the build starts. A missing file falls back to the tracked `/favicon.ico` and `/og.png`. The script never fails a build: a broken upload falls to the next source and prints one line.
+- Head links: `favicon.ico` (32), `icon-192.png`, `apple-touch-icon.png` and the manifest always; `icon.svg` only when it exists.
+- `noindex` adds the robots meta tag only. `public/robots.txt` is not changed.
+- JSON-LD: one `ProfilePage` (`dateModified` = the build date) whose `mainEntity` is a `Person`: name, `alternateName` (handle), description (bio), image (avatar), url, `jobTitle`, `address.addressLocality` (location) and `sameAs` = the URL of every social tile.
+- Social tiles link with `rel="me noopener noreferrer"`. `rel="me"` lets Mastodon and other sites verify that the profile is yours.
+- The head is built by one pure function, `buildHead()` in `app/utils/site-head.ts`, used by `app/composables/useSiteHead.ts`.
+
+**Upload your own.** `/edit` > **Site** > Favicon or Social preview image > upload. The file goes to `public/site-uploads/` (not tracked), the path goes to `site.favicon` or `site.ogImage`, and the previews update. **Remove upload** goes back to the generated one. **Regenerate** builds the files again from what the editor shows, saved or not; `npm run dev` and every build make them again from the saved profile. Save as usual.
+
 ## Scripts
 
 | Command | What it does |
@@ -172,6 +235,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run check:profile` | Validates the profile and prints which file is used (personal or example) |
 | `npm run check:icons` | Fails on an unknown icon name |
 | `npm run fetch:avatar` | Downloads your Gravatar picture (from `profile.email`) to `public/avatar.gravatar.jpg`. Skipped when `profile.avatar` is set or the email is a placeholder. Never fails the build |
+| `npm run build:site-assets` | Writes the favicon set, the web manifest and the social preview image (`og.png`, 1200x630) to `public/site/` from your profile. No network. Never fails the build: on a problem the page keeps the tracked `/favicon.ico` and `/og.png` |
 | `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag. Then offers to push and make the GitHub Release (see Release) |
@@ -180,7 +244,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run deploy` | Alias of `npm run publish -- --provider cloudflare` |
 | `npm run deploy:preview` | Alias of `npm run publish -- --provider cloudflare --preview` |
 
-`predev` runs ensure:profile, presets, check:profile and fetch:avatar. `pregenerate` runs presets, check:profile, fetch:avatar, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
+`predev` runs ensure:profile, presets, check:profile, fetch:avatar and build:site-assets. `pregenerate` runs presets, check:profile, fetch:avatar, build:site-assets, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
 
 ## Tests
 
@@ -188,8 +252,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email. `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -441,6 +505,8 @@ content/
   resolve.ts             picks profile.json, else the example. Used by every entry point
   gravatar.ts            the Gravatar download, shared by fetch-avatar.ts and the editor route
   migrate.ts             adds the new profile keys to an older profile.json
+  site-assets.ts         builds the favicon set, the manifest and the social image (sharp + satori)
+  site-files.ts          names and paths of public/site/, which generated files exist
   README.md              the personal data rules
 app/
   pages/index.vue        the public page (prerendered)
@@ -448,20 +514,22 @@ app/
   components/            ProfileHeader, BentoGrid, ThemeToggle
   components/blocks/     the 7 tile types, Tile, BlockRenderer
   components/editor/     forms, pickers, theme panel, drag grid
-  composables/           useProfile, useTheme, useEditor
-  utils/                 presets, networks, sizes
+  composables/           useProfile, useTheme, useSiteHead, useEditor
+  utils/                 presets, networks, sizes, site-head (the pure head builder)
   assets/css/            main.css, presets.css (generated)
 modules/public-profile.ts  writes the sanitized `#profile` copy the page imports (no hidden email)
-server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar
+server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar, site/assets, site/upload
 types/profile.ts         the zod schema, the types, the public shape and the sanitizer
+types/site.ts            the `site` metadata schema
+assets/fonts/            Geist Regular and SemiBold (TTF, SIL OFL 1.1) for the social image
 scripts/
   release.mjs            npm run release
   publish.mjs            npm run publish
   build-presets.ts  check-contrast.ts  check-icons.ts  fetch-favicons.ts  fetch-avatar.ts
-  validate-profile.ts  ensure-profile.ts  serve-dist.mjs
+  validate-profile.ts  ensure-profile.ts  build-site-assets.ts  serve-dist.mjs
 releases/                one notes file per version, used as the GitHub Release body
-tests/e2e/               public, a11y, repo, privacy, editor specs
-public/                  og.png, blocks/sample.jpg. Your images land here and are ignored
+tests/e2e/               public, a11y, repo, privacy, gravatar, site, editor, site-editor specs
+public/                  og.png and favicon.ico (fallbacks), blocks/sample.jpg. Your images, site/ and site-uploads/ land here and are ignored
 design/canvas/           the design boards (light and dark)
 docs/review-tools.md     notes on the two code review tools used on this project
 .github/workflows/       ci.yml, release.yml
@@ -474,6 +542,9 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 |---|---|
 | A new color preset, font preset or icon does not show in dev | Restart `npm run dev`. `nuxt.config.ts` reads the profile once at start |
 | My Gravatar does not show | The email has no Gravatar (`npm run fetch:avatar` says `avatar: no gravatar for this email`), or `profile.avatar` is set (an uploaded avatar wins; clear it in `/edit` or click **Use my Gravatar**), or the file is new: restart `npm run dev` |
+| The browser tab still shows the old favicon | Browsers keep favicons for a long time. Open `/site/favicon.ico` directly and reload it, or use a private window. In dev, run `npm run build:site-assets` (or **Regenerate** in `/edit` > Site) first |
+| A link preview on X, LinkedIn, WhatsApp or Slack shows the old image or text | Those sites keep their own copy. Ask for a new one with their tools: LinkedIn Post Inspector, Facebook Sharing Debugger, or share the link with `?v=2` at the end. The preview needs an absolute image URL: set the site URL (see [Site metadata](#site-metadata)) |
+| `npm run build:site-assets` prints `site: ... not usable` | The upload or the avatar could not be read (missing file, not a picture, or a remote URL). The build used the next source. Upload it again in `/edit` > Site |
 | `check:profile` warns about a placeholder email | Set your real email in `/edit` > Profile. It stays hidden unless you tick **Show my email on the page** |
 | `git commit` is rejected with a commitlint error | Use `type(scope): subject`, lower case, max 72 characters. See [Commit messages](#commit-messages) |
 | The hook does not run | `npx simple-git-hooks` |

@@ -17,6 +17,11 @@ It also upgrades an older file: it adds `email` (`you@example.com`), `showEmail`
 It is still used on your machine, at build time, to download your Gravatar picture to `public/avatar.gravatar.jpg` (ignored by git). The published page never calls gravatar.com.
 A `git pull`, a release or a fresh clone never touches it, because git does not know it exists.
 
+## Site metadata
+
+The optional top-level `site` object holds the page title, description, site URL, language, `noindex`, X handle, job title, location and the paths of your own favicon and social image. Without it the build uses your name, handle and bio.
+`npm run build:site-assets` (part of `predev` and `pregenerate`) writes the favicon set and the social image to `public/site/`. Details: README, "Site metadata".
+
 ## What else is ignored
 
 From `.gitignore`, block "Personal data":
@@ -27,6 +32,8 @@ public/avatar.*
 public/blocks/*        (except public/blocks/sample.jpg)
 public/icons/*         (favicons fetched at build)
 public/thumbs/*        (YouTube thumbnails fetched at build)
+public/site/           (favicon set, manifest and social image, made at build from your profile)
+public/site-uploads/   (your own favicon and social image, uploaded in /edit > Site)
 .tilebox/
 .netlify/
 ```
@@ -38,6 +45,7 @@ Your page is one JSON file plus your images. Copy them somewhere safe:
 ```sh
 cp content/profile.json ~/Backups/tilebox-profile.json
 cp -R public/blocks ~/Backups/tilebox-blocks
+cp -R public/site-uploads ~/Backups/tilebox-site-uploads 2>/dev/null
 cp public/avatar.* ~/Backups/ 2>/dev/null
 ```
 

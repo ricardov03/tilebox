@@ -323,6 +323,18 @@ Two files, one shape (WP7): `content/profile.json` is the user's document, ignor
   "layout": {
     "desktop": ["b1","b2","b3","b4","b5","b6","b7","b8","b9"],
     "mobile":  ["b1","b4","b2","b3","b5","b6","b7","b8","b9"]
+  },
+  "site": {
+    "title": "Ricardo Vargas, front-end developer",
+    "description": "I build web products with Nuxt and Vue.",
+    "url": "https://example.com",
+    "lang": "en",
+    "noindex": false,
+    "xHandle": "ricardov03",
+    "jobTitle": "Front-end developer",
+    "location": "Bogota",
+    "favicon": "/site-uploads/favicon-1a2b3c.png",
+    "ogImage": "/site-uploads/og-4d5e6f.jpg"
   }
 }
 ```
@@ -331,6 +343,8 @@ Rules:
 - `profile.highlights` (WP9): optional, max 3 strings, 1 to 80 chars each, default `[]`. A real `<ul>` under the bio.
 - `profile.email` (WP9): required, `z.email()`. `profile.showEmail`: boolean, default `false`. The public page never imports this file. It imports `#profile` = `.nuxt/tilebox/public-profile.json`, the output of `toPublicProfile()` (`types/profile.ts`), written by `modules/public-profile.ts`: no `email` unless `showEmail` is true, no `showEmail` key, `avatar` already resolved. Type: `PublicProfile`.
 - Avatar precedence (WP9): `profile.avatar` when set, else `/avatar.gravatar.jpg` when `scripts/fetch-avatar.ts` downloaded it (Gravatar, sha256 of the email, build time only, never at runtime), else initials.
+- `site` (WP10b): optional top-level object, zod strict, every key optional, schema in `types/site.ts`. `title` max 70 (default `Name (@handle)`), `description` max 160 (default the bio), `url` https without a trailing slash, `lang` BCP 47 (default `en`), `noindex` (default false), `xHandle` without `@`, `jobTitle`, `location`, `favicon` and `ogImage` (local paths of uploads in `public/site-uploads/`). An old profile without `site` stays valid; no migration. `toPublicProfile()` passes `site` through without the two upload paths and adds `assets` (the files of `public/site/` that exist at config time) and `builtAt`.
+- Site URL precedence (WP10b): `NUXT_PUBLIC_SITE_URL` > `site.url` > unknown (no canonical, no og:url, relative og:image).
 - `id` unique. `size` in `1x1 | 2x1 | 1x2 | 2x2`. `section` has no size.
 - `layout.mobile` optional. Falls back to `layout.desktop`.
 - Validate with `zod` in `types/profile.ts`. Export both the schema and the TS types from it.
@@ -422,6 +436,11 @@ Owns: the `highlights`, `email`, `showEmail` fields and the `PublicProfile` type
 Design (decided by Ricardo): (A) the status dot pulses, not under `prefers-reduced-motion`, and is `aria-hidden`. (B) Up to 3 highlights under the bio, as a list. (C) The email is required and private by default: with `showEmail: false` it is in no file of the built site, because the page imports a sanitized copy of the profile, never the raw file. With `showEmail: true` it is a `mailto:` link with `line-md:email` under the highlights. (D) The avatar comes from the email through Gravatar, downloaded at build time to `public/avatar.gravatar.jpg` (ignored by git). An uploaded `profile.avatar` wins. The public page never calls gravatar.com. The editor has the email field, the visibility checkbox, 3 highlight inputs with counters and a "Use my Gravatar" button (dev-only route).
 Done when: `grep -r "hello@example.com" dist | wc -l` is 0 after `npm run generate` on the example. `tests/e2e/privacy.spec.ts` (every text file of `dist/` + the sanitizer unit checks) is green. A long bio + 3 long highlights + email + status stay inside the 2x2 tile at 1280 and 390. An old `profile.json` gets the 3 new keys from `ensure:profile`, one printed line, nothing else changed; a second run does nothing. A save in `/edit` reaches the public page in dev without a restart. `public/avatar.gravatar.jpg` is never tracked. axe stays at 0 violations. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev` green. README, `content/README.md`, NOTES.md `## WP9`.
 
+### WP10b. Site metadata
+Owns: `types/site.ts`, the `site` key + the third `toPublicProfile()` argument in `types/profile.ts`, `content/site-assets.ts`, `content/site-files.ts`, `scripts/build-site-assets.ts`, `assets/fonts/*`, `app/utils/site-head.ts`, `app/composables/useSiteHead.ts`, the head of `app/pages/index.vue`, the `rel` prop of `app/components/blocks/Tile.vue` + its use in `SocialBlock.vue`, `app/components/editor/SitePanel.vue`, the Site tab in `app/pages/edit.vue`, the `site` member of `EditorTab` in `useEditor.ts`, `server/api/site/*`, the site extras in `modules/public-profile.ts`, `tests/e2e/site.spec.ts`, `tests/e2e/site-editor.spec.ts`, the site test in `tests/e2e/repo.spec.ts`, `package.json` (`build:site-assets`, its place in `predev` and `pregenerate`, dev dependencies `sharp` and `satori`), the `public/site/` and `public/site-uploads/` lines in `.gitignore` and in the release preflight.
+Design (decided by Ricardo): a Site tab in the editor for the basic metadata (OG, favicon, metadata). The social image is generated from the profile at build time; an optional upload wins. (A) Optional `site` object, see section 6. (B) Site URL precedence: env > `site.url` > unknown. (C) Favicon set in `public/site/` (ignored), source: upload > avatar (circle) > initials tile in the active color preset; the ICO container is written by hand. (D) `og.png` 1200x630: upload (cover) > a satori card, always Geist (`assets/fonts`, SIL OFL 1.1) and the light colors. (E) One pure `buildHead()` + `useSiteHead()`: lang, title, description, canonical, Open Graph `profile`, X card, robots, favicon links, manifest, JSON-LD `ProfilePage` + `Person`; `rel="me"` on social tiles. (F) Dev-only routes `POST /api/site/assets` (the same builder, with the draft) and `POST /api/site/upload`. (G) Offline, never fails a build, tracked `/favicon.ico` and `/og.png` stay as fallbacks.
+Done when: `npm run generate` on the example prints `site: favicon from initials, social image generated (8 files in public/site/)` and `dist/site/` holds the 8 files. `dist/index.html` has the title `Name (@handle)`, `og:type` `profile`, `og:image` `/site/og.png` with width, height and alt, the X card, one JSON-LD script that parses with `Person.name` and `sameAs`, 4 favicon links, the manifest, and no canonical without a site URL. `buildHead()` unit checks: canonical + absolute image with a site URL, env over `site.url`, noindex, xHandle, name split, `<` escaped. Asset builder unit checks in a temp folder: 8 files, valid ICO header with a 32x32 PNG, 1200x630 under 1 MB, uploads win, broken uploads fall back, nothing throws. `public/site/` and `public/site-uploads/` are ignored and never tracked (`repo.spec.ts`). The Site tab saves to the file, a bad URL shows an inline error and is not saved, "Regenerate" refreshes the previews. axe stays at 0 violations, the page makes no foreign request, `grep -r "hello@example.com" dist | wc -l` is 0. README "Site metadata", `content/README.md`, NOTES.md `## WP10b`. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev` green.
+
 ## 9. Code review with Grok
 
 - Reviewer: Grok. Tools to run it: TBD (Ricardo provides).
@@ -492,7 +511,7 @@ Goal: use your own photos without committing big files to Git.
 ### 13.3 Other ideas
 - `layout` preset: `hero-tile` (board A) | `rail` (board B left column).
 - Import a Bento.me export zip.
-- Open Graph image built at generate time from the profile.
+- ~~Open Graph image built at generate time from the profile.~~ Done in WP10b.
 - Blog or notes tile that reads a markdown folder.
 
 ### 13.4 Handle = site name, two-way between the editor and `npm run publish` (planned, NOT built)
