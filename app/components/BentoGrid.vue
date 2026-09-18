@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import type { Block, Profile, ProfileInfo } from '~~/types/profile'
+import type { Block, PublicProfile, PublicProfileInfo } from '~~/types/profile'
 import { SIZE_CLASSES, sizeToSpan } from '~/utils/sizes'
 import BlockRenderer from '~/components/blocks/BlockRenderer.vue'
 
 /** `types/profile.ts` exports no `Layout` type. Derived here. */
-type Layout = Profile['layout']
+type Layout = PublicProfile['layout']
 
 const props = defineProps<{
   blocks: Block[]
   layout: Layout
-  profile: ProfileInfo
+  profile: PublicProfileInfo
 }>()
 
 interface Tile {

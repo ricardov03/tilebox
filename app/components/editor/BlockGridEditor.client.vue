@@ -8,12 +8,12 @@
 -->
 <script setup lang="ts">
 import type { Component } from 'vue'
-import type { Block, ProfileInfo } from '~~/types/profile'
+import type { Block, PublicProfileInfo } from '~~/types/profile'
 
 const props = defineProps<{
   blocks: Block[]
   columns: 2 | 4
-  profile: ProfileInfo
+  profile: PublicProfileInfo
   selectedId: string | null
 }>()
 

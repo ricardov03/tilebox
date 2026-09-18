@@ -5,12 +5,12 @@
   span a full row, row tracks are auto and tiles carry their height.
 -->
 <script setup lang="ts">
-import type { Block, ProfileInfo } from '~~/types/profile'
+import type { Block, PublicProfileInfo } from '~~/types/profile'
 
 defineProps<{
   blocks: Block[]
   columns: 2 | 4
-  profile: ProfileInfo
+  profile: PublicProfileInfo
   selectedId: string | null
 }>()
 
