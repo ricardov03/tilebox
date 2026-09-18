@@ -2,7 +2,7 @@
 /**
  * Local release script. Run with `npm run release`.
  *
- * 1. Preflight: on `main`, clean tree, in sync with origin/main.
+ * 1. Preflight: on `main`, clean tree, no personal data tracked, in sync with origin/main.
  * 2. Checks: lint, typecheck, generate, Playwright (static).
  * 3. Version: commit-and-tag-version --dry-run tells the next version.
  * 4. Summary: a local AI CLI (claude, else grok) drafts a plain-words
@@ -213,6 +213,21 @@ if (status) {
   fail('working tree is not clean. Commit or stash first.')
 }
 log('    working tree: clean')
+
+// Personal data never ships in a release. content/README.md lists these files.
+// A tracked personal file means the ignore rules were bypassed (git add -f).
+const personalTracked = git('ls-files', '--error-unmatch', 'content/profile.json')
+if (personalTracked.ok) {
+  fail('content/profile.json is tracked by git. It is your personal file and must stay out of the repo.\n'
+    + 'Run: git rm --cached content/profile.json && git commit -m "chore(content): untrack the personal profile"')
+}
+const trackedImages = git('ls-files', 'public/blocks', 'public/avatar.*').out.split('\n').filter(Boolean)
+const strayImages = trackedImages.filter(file => file !== 'public/blocks/sample.jpg')
+if (strayImages.length > 0) {
+  log(strayImages.map(file => `      ${file}`).join('\n'))
+  fail('personal images are tracked by git (only public/blocks/sample.jpg may be). Run: git rm --cached <file>')
+}
+log('    personal data: not tracked')
 
 if (opts['skip-checks']) {
   log('    origin sync: skipped (--skip-checks)')
