@@ -84,7 +84,10 @@ function direction(_evt: Event, target: HTMLElement | null, dragEl: HTMLElement)
       data-profile
       class="col-span-2 row-span-2 h-[calc(var(--row)*2+var(--gap))]"
     >
-      <ProfileHeader :profile="profile" />
+      <ProfileHeader
+        :profile="profile"
+        small
+      />
     </li>
     <EditorPreviewTile
       v-for="block in list"

@@ -2,8 +2,16 @@
 import type { PublicProfileInfo } from '~~/types/profile'
 import { UI_ICONS } from '~/utils/networks'
 
-/** The public shape: `email` is set only when the owner chose to show it. */
-const props = defineProps<{ profile: PublicProfileInfo }>()
+const props = defineProps<{
+  /** The public shape: `email` is set only when the owner chose to show it. */
+  profile: PublicProfileInfo
+  /**
+   * Editor preview only. Its tiles are lower than the real desktop tile
+   * (the preview row shrinks with the pane), so the compact scale stays at
+   * the phone sizes there, at every viewport width.
+   */
+  small?: boolean
+}>()
 
 /** "Ricardo Vargas" -> "RV". One letter for a single word. */
 const initials = computed(() =>
@@ -23,10 +31,50 @@ const initials = computed(() =>
  */
 const compact = computed(() => props.profile.highlights.length > 0 || Boolean(props.profile.email))
 
-/** Phones: three highlights get one line each, one or two get two lines. From md up: two lines. */
-const highlightClamp = computed(() =>
-  props.profile.highlights.length > 2 ? 'line-clamp-1 md:line-clamp-2' : 'line-clamp-2',
-)
+type Part = 'avatar' | 'initials' | 'stack' | 'name' | 'bio' | 'highlight'
+
+/** Original scale: no highlights, no visible email. */
+const ROOMY: Record<Part, string> = {
+  avatar: 'size-16 md:size-24',
+  initials: 'size-16 text-[25px] md:size-24 md:text-[38px]',
+  stack: 'gap-2.5 md:gap-3.5',
+  name: 'text-[42px] md:text-[68px]',
+  bio: 'md:text-[19px]',
+  highlight: '',
+}
+/** Compact scale, phone sizes. Three highlights get one line each, one or two get two lines. */
+const COMPACT: Record<Part, string> = {
+  avatar: 'size-10',
+  initials: 'size-10 text-base',
+  stack: 'gap-2',
+  name: 'text-4xl',
+  bio: 'line-clamp-3',
+  highlight: 'line-clamp-2',
+}
+/** Compact scale, what `md` adds on the real page. Two lines for every highlight. */
+const COMPACT_MD: Record<Part, string> = {
+  avatar: 'md:size-16',
+  initials: 'md:size-16 md:text-[25px]',
+  stack: 'md:gap-3',
+  name: 'md:text-[56px]',
+  bio: 'md:text-[17px]',
+  highlight: 'md:line-clamp-2',
+}
+
+const classes = computed<Record<Part, string>>(() => {
+  if (!compact.value) return ROOMY
+  const base = { ...COMPACT, highlight: props.profile.highlights.length > 2 ? 'line-clamp-1' : 'line-clamp-2' }
+  if (props.small) return base
+  const both = (part: Part) => `${base[part]} ${COMPACT_MD[part]}`
+  return {
+    avatar: both('avatar'),
+    initials: both('initials'),
+    stack: both('stack'),
+    name: both('name'),
+    bio: both('bio'),
+    highlight: both('highlight'),
+  }
+})
 </script>
 
 <template>
@@ -37,12 +85,12 @@ const highlightClamp = computed(() =>
       alt=""
       width="96"
       height="96"
-      :class="compact ? 'size-10 md:size-16' : 'size-16 md:size-24'"
+      :class="classes.avatar"
       class="shrink-0 rounded-full bg-photo object-cover"
     >
     <div
       v-else
-      :class="compact ? 'size-10 text-base md:size-16 md:text-[25px]' : 'size-16 text-[25px] md:size-24 md:text-[38px]'"
+      :class="classes.initials"
       class="flex shrink-0 items-center justify-center rounded-full bg-accent font-display text-accent-soft [font-weight:var(--font-display-weight)]"
       aria-hidden="true"
     >
@@ -50,17 +98,17 @@ const highlightClamp = computed(() =>
     </div>
 
     <div
-      :class="compact ? 'gap-2 md:gap-3' : 'gap-2.5 md:gap-3.5'"
+      :class="classes.stack"
       class="flex min-h-0 flex-col"
     >
       <h1
-        :class="compact ? 'text-4xl md:text-[56px]' : 'text-[42px] md:text-[68px]'"
+        :class="classes.name"
         class="font-display leading-none [font-weight:var(--font-display-weight)]"
       >
         {{ profile.name }}
       </h1>
       <p
-        :class="compact ? 'line-clamp-3 md:text-[17px]' : 'md:text-[19px]'"
+        :class="classes.bio"
         class="max-w-[34ch] text-base leading-[1.45] text-muted"
       >
         {{ profile.bio }}
@@ -79,7 +127,7 @@ const highlightClamp = computed(() =>
             class="size-1.5 shrink-0 -translate-y-0.5 rounded-full bg-accent"
             aria-hidden="true"
           />
-          <span :class="highlightClamp">{{ highlight }}</span>
+          <span :class="classes.highlight">{{ highlight }}</span>
         </li>
       </ul>
       <a
