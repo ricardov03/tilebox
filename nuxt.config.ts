@@ -58,6 +58,11 @@ export default defineNuxtConfig({
     },
   },
 
+  features: {
+    // One page, one CSS file: inline it and drop the render-blocking request.
+    inlineStyles: true,
+  },
+
   routeRules: {
     '/edit': { prerender: false },
     '/api/**': { prerender: false },

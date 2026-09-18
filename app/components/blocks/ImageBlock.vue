@@ -7,7 +7,11 @@ import type { ImageBlock } from '~~/types/profile'
 import { isHttpUrl } from './media'
 import Tile from './Tile.vue'
 
-const props = defineProps<{ block: ImageBlock }>()
+const props = withDefaults(defineProps<{
+  block: ImageBlock
+  /** True for a tile near the top of the page: eager load with high fetch priority (LCP). */
+  priority?: boolean
+}>(), { priority: false })
 
 /** Hide a broken image so the `bg-photo` placeholder shows instead. */
 const failed = ref(false)
@@ -42,7 +46,8 @@ const credit = computed(() => {
       ref="img"
       :src="block.src"
       :alt="block.alt"
-      loading="lazy"
+      :loading="priority ? 'eager' : 'lazy'"
+      :fetchpriority="priority ? 'high' : undefined"
       decoding="async"
       class="absolute inset-0 size-full object-cover"
       @error="failed = true"

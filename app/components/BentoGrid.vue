@@ -20,9 +20,14 @@ interface Tile {
   heightClass: string
   /** Position on phones. Applied with CSS `order` below `lg` (the 4-column breakpoint). */
   mobileOrder: number
-  /** Position in DOM order. Drives the page-load stagger. */
+  /** Position in DOM order. Drives the page-load stagger from lg up (phones use mobileOrder). */
   index: number
+  /** Near the top on phones: an image tile here is a likely LCP element and loads eagerly. */
+  priority: boolean
 }
+
+/** Tiles at mobile position 1..3 sit in the first phone screen next to the profile tile. */
+const PRIORITY_MOBILE_ORDERS = 3
 
 const ROW_1 = 'h-[var(--row)]'
 const ROW_2 = 'h-[calc(var(--row)*2+var(--gap))]'
@@ -37,14 +42,16 @@ const tiles = computed<Tile[]>(() => {
     const mobileIndex = mobile.indexOf(id)
     const mobileOrder = (mobileIndex === -1 ? i : mobileIndex) + 1
     const index = i + 1
+    const priority = mobileOrder <= PRIORITY_MOBILE_ORDERS
     const tile: Tile = block.type === 'section'
-      ? { block, spanClass: 'col-span-full row-auto', heightClass: 'h-auto', mobileOrder, index }
+      ? { block, spanClass: 'col-span-full row-auto', heightClass: 'h-auto', mobileOrder, index, priority }
       : {
           block,
           spanClass: SIZE_CLASSES[block.size],
           heightClass: sizeToSpan(block.size).rows === 2 ? ROW_2 : ROW_1,
           mobileOrder,
           index,
+          priority,
         }
     return [tile]
   })
@@ -70,7 +77,10 @@ const tiles = computed<Tile[]>(() => {
       :class="[tile.spanClass, tile.heightClass]"
       :style="{ '--i': tile.index, '--order-m': tile.mobileOrder }"
     >
-      <BlockRenderer :block="tile.block" />
+      <BlockRenderer
+        :block="tile.block"
+        :priority="tile.priority"
+      />
     </li>
   </ul>
 </template>
@@ -91,6 +101,13 @@ const tiles = computed<Tile[]>(() => {
 .tile-in {
   animation: tile-in 300ms ease-out backwards;
   animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+/* Below lg the tiles show in the phone order, so they enter in that order too. */
+@media (max-width: 1023.98px) {
+  .tile-in {
+    animation-delay: calc(var(--order-m, var(--i, 0)) * 40ms);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

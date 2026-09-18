@@ -12,7 +12,11 @@ import SectionBlock from './SectionBlock.vue'
 import MapBlock from './MapBlock.vue'
 import VideoBlock from './VideoBlock.vue'
 
-defineProps<{ block: Block }>()
+withDefaults(defineProps<{
+  block: Block
+  /** Image tiles near the top of the page load eagerly (LCP). Other types ignore it. */
+  priority?: boolean
+}>(), { priority: false })
 </script>
 
 <template>
@@ -27,6 +31,7 @@ defineProps<{ block: Block }>()
   <ImageBlock
     v-else-if="block.type === 'image'"
     :block="block"
+    :priority="priority"
   />
   <TextBlock
     v-else-if="block.type === 'text'"
