@@ -775,7 +775,8 @@ async function saveImage(candidate: ImageCandidate, options: UnfurlOptions, dirs
       .webp({ quality: 80 })
       .toBuffer()
     if (sniffImage(webp) !== 'webp') return undefined
-    const name = hashName(response.body, 'webp')
+    // The name is the hash of the OUTPUT, as for the icons: the stored bytes are the only thing the name vouches for.
+    const name = hashName(webp, 'webp')
     await writeOnce(dirs.thumbs, name, webp)
     return `/thumbs/${name}`
   }

@@ -451,6 +451,10 @@ test.describe('fetching (local server, allowHosts)', () => {
     const file = readFileSync(join(dirs.thumbs, result.image!.slice('/thumbs/'.length)))
     expect(sniffImage(file)).toBe('webp')
     expect((await sharp(file).metadata()).width).toBe(300)
+    // The name is the hash of the stored file (the new webp), never of the bytes the website sent.
+    const sha1 = (body: Buffer) => createHash('sha1').update(body).digest('hex').slice(0, 16)
+    expect(result.image).toBe(`/thumbs/${sha1(file)}.webp`)
+    expect(result.image).not.toBe(`/thumbs/${sha1(realPng)}.webp`)
 
     const fake = await unfurl(`${base}/fake-image`, { ...options, showImage: true })
     expect(fake.ok).toBe(true)
