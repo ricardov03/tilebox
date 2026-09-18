@@ -1195,3 +1195,112 @@ $ E2E_STATIC_PORT=4421 E2E_DEV_PORT=3421 npx playwright test --project=dev      
 ### Open
 - Safari and Firefox: not checked (headless Chromium only).
 - A value typed with an IME is checked like any other: 600 ms after the last `input` event.
+
+## Review pipeline
+
+Branch `chore/grok-review-pipeline` (from `origin/main`). Date: 2026-09-18. Work was done in a separate git worktree. Not merged.
+
+Goal: the Grok review toolchain of app.condomera, ported to this repo (Nuxt 4, TypeScript, Vue, static). Why: on 2026-09-18 Grok "cancelled" on 8 of 13 reviews here, because it had to fetch the diff through its shell tool with every tool and MCP server enabled. How to use it: `docs/review-tools.md`.
+
+### What was built (`scripts/review/`)
+- `grok-review.sh` (`npm run review`): diff into the prompt file, intent, impact map, read-only tools, `--json-schema`, effort medium, 8 turns, watchdog, blind-run guard (exit 3), cache in `<git common dir>/grok-review/`, `--dry-run`, `--ledger`, untracked new files, 150,000 character cap. Exit 0 / 1 / 2 / 3 and the trailer line are the ones of the reference.
+- `impact-map.py` (python3, standard library): importers (relative, `~/`, `@/`, `~~/`, `@@/`, `#alias` from `nuxt.config.ts`), importers of an alias the changed file feeds (`#profile`), Nuxt component tags (`<EditorTextField>`, kebab, `Lazy`), auto-imported exports of `app/composables`, `app/utils`, `server/utils`, exported symbols the diff touches (changed lines, the hunk header, the nearest export above the change), npm script names (hooks, README, docs, workflows), `/api` routes, schema keys. 40 references per file, tests last and marked, 12 `<caller>` blocks of 25 lines, one per 25-line window. With `graphify-out/graph.json` and the `graphify` CLI it adds `graphify affected`; else it says the graph is unavailable. It states that it is not exhaustive.
+- `grok-review.prompt.md`, `grok-review.schema.json`: the rules point at `docs/invariants.md` (new), `CLAUDE.md`, `PLAN.md` section 0, `docs/security.md`. Nine shapes to hunt, each with a real example from this file. Categories: second-code-path, bundled-path, privacy-leak, untrusted-input, editor-state, test-green-wrong-reason, schema-drift, runtime-network, dev-route-guard, a11y, docs, other.
+- `findings-ledger.sh` (`npm run review:ledger`) + `findings-ledger.jsonl`: sources `grok|ocr|agent|human`, `--branch` next to `--pr`, no duplicate (source, pr-or-branch, id).
+- `grok-review.test.sh` (`npm run test:review`, in the CI build job): 94 assertions, a fake `grok` and a fake `graphify` on `PATH`, no network.
+
+### Deviations from the reference and why
+1. The impact map is a text search in Python, not the PHP code graph. This repo has no graph for TypeScript or Vue, and Nuxt auto-imports leave no import line to follow.
+2. `grok 1.0.30` flags: every flag of the reference exists with the same name (`--prompt-file`, `--json-schema`, `--tools`, `--disallowed-tools`, `--deny`, `--effort` = alias of `--reasoning-effort`, `--max-turns`, `--output-format json`, `--cwd`). New use: `--session-id`, `--resume`, and the `grok usage <id>` command.
+3. **The conclude step (new).** At `--max-turns` grok 1.0.30 exits 1 with `max turns reached` and prints no envelope. The model does not count its turns: see the two blind runs below. The script gives the review call its own `--session-id`; at the cap it resumes that session once with "no more tools, write the verdict from what you have read" (`--max-turns 2`, 3 minutes). `--conclude <session id>` does that step alone for a session a blind run printed. The report says `verdict forced at the turn cap`.
+4. Watchdog default 8 minutes (reference: 6). A turn takes 30 to 60 s here; run (c) finished on its own after 357 s.
+5. Tokens, turns and model in the trailer come from `grok usage <session>` (both calls of a concluded run); the envelope is the fallback.
+6. Intent: no PR in this repo most of the time, so the commit messages of the range are the description when `gh pr view` gives nothing.
+7. The script notes in the prompt and on stderr when the head of `--range` differs from the checkout, because Grok and the map read the checkout.
+8. The ledger report never names `other` as the next check: it is not a shape a script can catch.
+9. The prompt render replaces all placeholders in one pass, so a `{{DIFF}}` inside a diff (this very script) is never substituted.
+10. ESLint: no change. `eslint .` does not pick up `.sh`, `.py`, `.md`, `.json` or `.jsonl`.
+
+### Real runs (Grok Build 1.0.30, `grok-4.6-build`, effort medium)
+| Run | Command | Result | Wall | Turns | Tokens in / out | Trailer |
+|---|---|---|---|---|---|---|
+| a | `--dry-run --range origin/main~1..origin/main` | prompt printed: 17 files, the diff (108,436 chars), the impact map with 34 `<caller>` blocks, the commit messages as intent. No call | 1 s | 0 | 0 | `grok-review: scope=pr files=17 diff_chars=108436 cached=0 turns=0 elapsed_s=0 tokens_in=0 tokens_out=0 critical=0 warning=0 suggestion=0 verdict=DRY-RUN` |
+| b1 | `--range 39f6970..origin/fix/editor-inputs --files app/utils/field-draft.ts app/composables/useFieldDraft.ts app/components/editor/TextField.vue --scope block` | BLIND, exit 3: `Error: max turns reached`. Session `01a0b565-a17a-7283-b6ad-50e80cfa1f29`: 8 inferences, all with tool calls (24 `read_file`, 13 `grep`), no tool denial, no verdict | 252 s | 8 | 360,266 / 14,434 (297,984 cached) | none |
+| b2 | the same, with a smaller budget named in the prompt (6) under a cap of 10 | BLIND, exit 3: the watchdog (6 min) killed it in inference 9. Session `01a0b56b-3118-7641-957d-39964105e153`: 25 `read_file`, 21 `grep`. Every assistant message was the stub `{"passed": false, "summary": "placeholder", "findings": []}` plus tool calls. Naming a budget does not stop this model | 360 s | 9+ | not recorded (killed) | none |
+| b | the same + `--conclude 01a0b565-a17a-7283-b6ad-50e80cfa1f29 --ledger --branch fix/editor-inputs` | FAIL, exit 1, 2 warnings. This is what made it work: resume the session of b1, forbid tools, ask for the verdict | 66 s (+252 s of b1) | 9 | 425,768 / 17,975 (359,936 cached) | `grok-review: scope=block files=3 diff_chars=14754 cached=0 turns=9 elapsed_s=66 tokens_in=425768 tokens_out=17975 critical=0 warning=2 suggestion=0 verdict=FAIL` |
+| c | `--range origin/wp/10-final..wp/10-secure --files content/unfurl.ts server/api/unfurl.post.ts --scope block --ledger --branch wp/10-secure` (`wp/10-secure` is a local branch; it is not on origin) | FAIL, exit 1, 2 warnings + 1 suggestion. Ended on its own (`end_turn`), no conclude step | 357 s | 6 | 441,589 / 20,120 (338,688 cached) | `grok-review: scope=block files=2 diff_chars=27302 cached=0 turns=6 elapsed_s=357 tokens_in=441589 tokens_out=20120 critical=0 warning=2 suggestion=1 verdict=FAIL` |
+| d | run b again, without `--conclude` | cache hit: no Grok call (0 new lines in `~/.grok/logs/unified.jsonl`), the ledger stayed at the same row count | 1 s | - | - | `grok-review: scope=block files=3 diff_chars=14754 cached=1 turns=9 elapsed_s=66 tokens_in=425768 tokens_out=17975 critical=0 warning=2 suggestion=0 verdict=FAIL` |
+
+Cost from `grok usage`: `costUsdTicks` 1,426,238,800 (b, both calls) and 1,685,944,400 (c). If a tick is 1e-10 dollar, that is about 14 and 17 cents. Four model calls in total: b1, b2, the conclude call of b, and c.
+How the blind runs were read: `~/.grok/logs/unified.jsonl` filtered by the session id (`shell.turn.inference_done` per turn, `shell.tool.exec_done` per tool call, no `warn` or `error` line, no denial), then `grok export <session id>` for the tool arguments.
+Note: the prompt template was edited once after run d (the schema-drift example), so a re-run of b today is a new hash and a fresh call. That is the cache rule, not a fault.
+
+### The findings, judged
+| Id | Grok says | Judgement |
+|---|---|---|
+| `blur-skips-stored-form` (warning, editor-state, `app/utils/field-draft.ts:87`) | After a debounced commit, a blur does not show the stored form: `commit()` returns early because the value equals the model, so `modelChanged()` / `take()` never run. A Site URL keeps its trailing slash in the input | REAL, read in the code (`commit()`, `blur()`, `modelChanged()`). The draft holds the right value; only the input text is stale. It contradicts "after the blur the input shows the stored form" in "Editor input fix". Low impact. NOT fixed here: the code belongs to another branch |
+| `stored-form-test-misses-debounce-blur` (warning, test-green-wrong-reason, `tests/e2e/field-draft.spec.ts:144`) | The test named for that behavior types more text before the blur, so it never checks the case above | REAL. The test "the stored form shows only after the field lost the focus" never asserts a stripped text after a blur. NOT fixed here |
+| `save-image-no-pixel-limit` (warning, second-code-path, `content/unfurl.ts:755`) | `saveImage()` decodes the website's image with sharp twice with no `limitInputPixels` / `failOn`, while `rasterizeIcon()` (607) and `fetchPicture()` (786) got the 4096x4096 limit in the security round | REAL, read in the code. sharp's own default limit (about 268 million pixels) still applies, so it is a memory-pressure gap, not an open door. The shape of S1 / S1c again: the fix reached two of three decode sites. NOT fixed here |
+| `force-still-honors-304` (warning, untrusted-input, `content/unfurl.ts:946`) | `force` sends no conditional headers (C3), but a 304 answer is still accepted when a cache entry exists, so a hostile site keeps its old data through a refresh | REAL, low impact (the owner sees old text after "Refresh"). The C3 test asserts the request headers only. NOT fixed here |
+| `save-image-hashes-remote-bytes` (suggestion, schema-drift, `content/unfurl.ts:762`) | The thumb file name is the hash of the REMOTE bytes; icons use the hash of the OUTPUT (`docs/security.md` layer 3) | REAL as a drift between the two paths. `writeOnce` would also keep an old WebP after a sharp upgrade. NOT fixed here |
+
+5 findings: 5 real, 0 false positives, 0 already fixed. Both blocks had passed the review of their own branch before.
+
+### Ledger backfill and report
+`scripts/review/findings-ledger.jsonl`: 87 rows from this file (WP0 to WP10 reviews, the security round S1 to S6 and C1 to C5, the two release bugs, the `/edit` regression, the input bug) + the 5 Grok rows of today. Owner-reported bugs are `human`. The WP1 to WP3 findings (listed under WP5) carry no tool name in this file; they are split between `grok` and `ocr` by the "best catches" row of the old `docs/review-tools.md`. Every `line` is `null` but three: the notes name files, not lines.
+```
+# Findings ledger: 92 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 23
+- untrusted-input: 20
+- second-code-path: 10
+- editor-state: 9
+- test-green-wrong-reason: 8
+- a11y: 7
+- schema-drift: 6
+- dev-route-guard: 3
+- privacy-leak: 2
+- bundled-path: 2
+- runtime-network: 1
+- docs: 1
+
+## By source
+- ocr: 35
+- grok: 30
+- agent: 19
+- human: 8
+
+## By severity
+- warning: 69
+- suggestion: 12
+- critical: 11
+
+## By area
+- app/components: 14
+- content/unfurl.ts: 9
+- server/api: 8
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- .github/workflows: 5
+- app/pages: 5
+- scripts/publish.mjs: 5
+
+findings-ledger: rows=92 top_category=untrusted-input top_count=20 grok=30 ocr=35 agent=19 human=8
+```
+Reading: `untrusted-input` leads (20), and its scripted checks exist since the security round (`unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`). Next without a scripted check: `second-code-path` (10). Candidate: a test that fails when a `sharp(` call in `content/` has no `limitInputPixels`, or when `content/`, `scripts/` or `server/` call `fetch(` outside `content/unfurl.ts` and `content/gravatar.ts`.
+
+### Verification output (last lines)
+```
+$ npm run lint                                  -> exit 0
+$ npm run typecheck                             -> exit 0
+$ npm run test:review
+grok-review.test: passed=94 failed=0 total=94 expected=94
+$ bash scripts/review/grok-review.sh --help     -> prints the usage (options, exit codes, the trailer)
+```
+
+### Open
+- The 5 real findings above are not fixed. Two small fix branches: `fix/field-draft-stored-form` (one `take()` after a passed check without focus + the missing test) and `fix/unfurl-image-limits` (the sharp limits in `saveImage()`, refuse a 304 under `force`, hash the WebP).
+- The case "the conclude call fails too" did not happen in a real run. Only the fake covers it.
+- Resuming a session that the watchdog KILLED (run b2) was not tried. `--conclude` on a session that ended at the turn cap works (run b).
+- The Grok CLI reads `~/.grok` of the user. CI runs the suite with the fake binary only; no real review runs in CI.
