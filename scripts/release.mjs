@@ -30,7 +30,7 @@ import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 import { stdin, stdout } from 'node:process'
 
-const REPO = 'https://github.com/ricardov03/tilebox'
+const FALLBACK_REPO = 'https://github.com/ricardov03/tilebox'
 const AI_TIMEOUT_MS = 90_000
 
 const { values: opts } = parseArgs({
@@ -91,6 +91,25 @@ function git(...args) {
   const res = run('git', args)
   return { ok: res.ok, out: res.out.trim(), err: res.err.trim() }
 }
+
+/**
+ * Turn a git remote URL into a browser URL.
+ * git@github.com:owner/repo.git and https://github.com/owner/repo.git
+ * both become https://github.com/owner/repo. Returns null when unsure.
+ */
+function repoUrlFromRemote(remote) {
+  const m = remote.trim().match(/^(?:git@|ssh:\/\/git@|https?:\/\/)([^/:]+)[/:](.+?)(?:\.git)?\/?$/)
+  if (!m) return null
+  return `https://${m[1]}/${m[2]}`
+}
+
+/** Repository URL from remote.origin.url, else the hardcoded fallback. */
+function repoUrl() {
+  const remote = git('config', '--get', 'remote.origin.url')
+  return (remote.ok && repoUrlFromRemote(remote.out)) || FALLBACK_REPO
+}
+
+const REPO = repoUrl()
 
 /** Run a check command. Print its tail and exit 1 on failure. */
 function check(label, cmd, args) {
