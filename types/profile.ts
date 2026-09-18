@@ -341,14 +341,30 @@ export const PublicProfileInfoSchema = ProfileInfoSchema
 export const PUBLIC_MAIL_GUARD_MESSAGE
   = 'the public profile must carry no email address and no mail scheme: the build turns an address into a mail token (WP17, app/utils/mail-shield.ts)'
 
-export const PublicProfileSchema = z.object({
+/**
+ * The SHAPE of the public copy, without the mail guard below. This is what the PAGE parses
+ * (`app/composables/useProfile.ts`), and it must never fail on owner text.
+ *
+ * WP20, a defect found in review. The guard used to sit on the schema the page parses, so a
+ * saved profile whose BIO holds an address (`ProfileSchema` allows it, and `check:profile`
+ * calls it a warning and exits 0) made `npm run generate` die with "Exiting due to prerender
+ * errors". Two rules for one thing said opposite things. The warning wins: an address an owner
+ * typed into a text field must never stop a build.
+ */
+export const PublicProfileShapeSchema = z.object({
   profile: PublicProfileInfoSchema,
   blocks: z.array(BlockSchema),
   layout: LayoutSchema,
   site: PublicSiteSchema.optional(),
   /** Only the `download` name of `/site/contact.vcf`. The vCard fields live in that file alone. */
   contact: z.object({ fileName: z.string().min(1) }).strict().optional(),
-}).strict().superRefine((data, ctx) => {
+}).strict()
+
+/**
+ * The shape PLUS the guard of the mail shield: "is this copy clean?". `check:profile` runs it and
+ * prints a WARNING per issue; the tests run it as the contract. Nothing that builds the page runs it.
+ */
+export const PublicProfileSchema = PublicProfileShapeSchema.superRefine((data, ctx) => {
   // The guard of the mail shield. It reads the profile and the blocks, the two places an owner types an address.
   const text = JSON.stringify({ profile: data.profile, blocks: data.blocks })
   if (text.toLowerCase().includes(MAILTO_PREFIX) || RAW_EMAIL_PATTERN.test(text)) {

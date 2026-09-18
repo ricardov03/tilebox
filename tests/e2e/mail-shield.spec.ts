@@ -29,6 +29,7 @@ import {
   incompleteReason,
   parseProfile,
   PublicProfileSchema,
+  PublicProfileShapeSchema,
   toPublicProfile,
   type Profile,
 } from '../../types/profile'
@@ -222,6 +223,19 @@ test.describe('the sanitizer', () => {
 
   test('`check:links` never asks a mail target', () => {
     expect(linkTargets(FIXTURE).map(target => target.url)).toEqual(['https://shield.example/'])
+  })
+
+  test('WP20: the page loads the SHAPE, so an address in the bio never breaks the build', () => {
+    // `check:profile` calls the guard a WARNING and exits 0 (an address in a bio must not stop a build).
+    // So the schema the PAGE parses must not carry the guard: `useProfile()` ran `PublicProfileSchema.parse`
+    // at module scope, and `npm run generate` then died with "Exiting due to prerender errors".
+    const withAddress = { ...publicProfile, profile: { ...publicProfile.profile, bio: 'Write to ada@shield.example' } }
+    expect(PublicProfileSchema.safeParse(withAddress).success).toBe(false)
+    expect(() => PublicProfileShapeSchema.parse(withAddress)).not.toThrow()
+    // And that is really the schema the page uses.
+    const source = readFileSync(resolve(ROOT, 'app/composables/useProfile.ts'), 'utf8')
+    expect(source).toContain('PublicProfileShapeSchema.parse')
+    expect(source).not.toContain('PublicProfileSchema.parse')
   })
 
   test('the guard refuses a public profile that carries an address or `mailto:`', () => {

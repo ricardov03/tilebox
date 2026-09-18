@@ -7,9 +7,14 @@
  * The editor does not use this. It loads the full file from `/api/profile`.
  */
 import profileJson from '#profile'
-import { PublicProfileSchema, type PublicProfile } from '~~/types/profile'
+import { PublicProfileShapeSchema, type PublicProfile } from '~~/types/profile'
 
-const profile: PublicProfile = PublicProfileSchema.parse(profileJson)
+/**
+ * The SHAPE schema, never `PublicProfileSchema` (WP20). That one carries the mail-shield guard,
+ * and `check:profile` prints the same guard as a WARNING: an address an owner typed into a bio
+ * must not stop a build. Parsed here it did exactly that ("Exiting due to prerender errors").
+ */
+const profile: PublicProfile = PublicProfileShapeSchema.parse(profileJson)
 
 export function useProfile() {
   return { profile }
