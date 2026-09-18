@@ -1,7 +1,9 @@
 <!--
   Local editor. Dev only: the routes it uses 404 outside `nuxt dev`, and
   nuxt.config.ts keeps /edit out of the prerendered output.
-  Left: live preview (drag to reorder). Right: Profile | Blocks | Theme.
+  Left: live preview (the real tiles, drag to reorder). Right: Profile | Blocks | Theme.
+  The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
+  do not exist, so the page renders one short message and nothing else.
   Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice.
 -->
 <script setup lang="ts">
@@ -35,6 +37,23 @@ const tabs: { id: EditorTab, label: string }[] = [
   { id: 'blocks', label: 'Blocks' },
   { id: 'theme', label: 'Theme' },
 ]
+const tabButtons = useTemplateRef<HTMLButtonElement[]>('tabButtons')
+
+/** WAI-ARIA tabs: arrows, Home and End move between tabs and select them. */
+function onTablistKeydown(event: KeyboardEvent) {
+  const index = tabs.findIndex(t => t.id === tab.value)
+  let next = index
+  if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
+  else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = tabs.length - 1
+  else return
+  event.preventDefault()
+  const target = tabs[next]
+  if (!target) return
+  tab.value = target.id
+  tabButtons.value?.[next]?.focus()
+}
 
 /** Preview theme attrs. `system` follows the OS via matchMedia. */
 const systemDark = ref(false)
@@ -99,11 +118,14 @@ const savedLabel = computed(() => {
   return lastSavedAt.value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 })
 
-const inputClass = 'min-h-11 rounded-xl border border-line bg-ground px-3 text-sm text-ink'
-const labelClass = 'text-sm font-medium text-ink'
+const inputClass = INPUT_CLASS
+const labelClass = LABEL_CLASS
+const buttonClass = `min-h-11 rounded-full text-sm font-medium ${FOCUS_RING}`
 
-function setProfile<K extends 'name' | 'handle' | 'bio' | 'status'>(key: K, value: string) {
-  if (!draft.value) return
+function setProfile(key: 'name' | 'handle' | 'bio' | 'status', event: Event) {
+  const control = formControl(event)
+  if (!control || !draft.value) return
+  const value = control.value
   if (key === 'status' && value === '') {
     delete draft.value.profile.status
     return
@@ -118,27 +140,34 @@ function setAvatar(value: string | null | undefined) {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-ground text-ink">
+  <main
+    v-if="!isDev"
+    class="flex min-h-screen items-center justify-center bg-ground p-4 text-ink"
+  >
+    <p class="rounded-2xl border border-line bg-tile p-4 text-sm text-muted">
+      The editor runs in development only. Start it with <code class="font-mono">npm run dev</code> and open <code class="font-mono">/edit</code>.
+    </p>
+  </main>
+
+  <div
+    v-else
+    class="flex min-h-screen flex-col bg-ground text-ink"
+  >
     <header class="flex min-h-14 items-center justify-between gap-4 border-b border-line bg-tile px-4">
       <div class="flex items-center gap-3">
         <NuxtLink
           to="/"
-          class="font-display text-lg font-semibold text-ink hover:text-hover"
+          :class="FOCUS_RING"
+          class="rounded-sm font-display text-lg font-semibold text-ink hover:text-hover"
         >tilebox</NuxtLink>
         <span class="font-mono text-xs text-muted">editor · dev only</span>
       </div>
       <EditorLayoutSwitch v-model="layoutKey" />
     </header>
 
+    <!-- Loading covers the SSR pass and the first fetch, so no error shows before the file was read. -->
     <p
-      v-if="!isDev"
-      class="m-4 rounded-2xl border border-line bg-tile p-4 text-sm text-muted"
-    >
-      The editor works only with <code class="font-mono">npm run dev</code>.
-    </p>
-
-    <p
-      v-else-if="loading"
+      v-if="loading || (!draft && !loadError)"
       class="m-4 text-sm text-muted"
       aria-live="polite"
     >
@@ -201,18 +230,20 @@ function setAvatar(value: string | null | undefined) {
           role="tablist"
           aria-label="Editor sections"
           class="flex border-b border-line"
+          @keydown="onTablistKeydown"
         >
           <button
             v-for="t in tabs"
             :id="`tab-${t.id}`"
+            ref="tabButtons"
             :key="t.id"
             type="button"
             role="tab"
             :aria-selected="tab === t.id"
             :aria-controls="`panel-${t.id}`"
             :tabindex="tab === t.id ? 0 : -1"
-            :class="tab === t.id ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'"
-            class="min-h-12 flex-1 border-b-2 text-sm font-medium"
+            :class="[FOCUS_RING, tab === t.id ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink']"
+            class="min-h-12 flex-1 border-b-2 text-sm font-medium focus-visible:-outline-offset-2"
             @click="tab = t.id"
           >
             {{ t.label }}
@@ -238,7 +269,7 @@ function setAvatar(value: string | null | undefined) {
                 :value="draft.profile.name"
                 type="text"
                 :class="inputClass"
-                @input="setProfile('name', ($event.target as HTMLInputElement).value)"
+                @input="setProfile('name', $event)"
               >
             </div>
             <div class="flex flex-col gap-1">
@@ -252,7 +283,7 @@ function setAvatar(value: string | null | undefined) {
                 type="text"
                 :class="inputClass"
                 class="font-mono"
-                @input="setProfile('handle', ($event.target as HTMLInputElement).value)"
+                @input="setProfile('handle', $event)"
               >
             </div>
             <div class="flex flex-col gap-1">
@@ -266,7 +297,7 @@ function setAvatar(value: string | null | undefined) {
                 rows="4"
                 :class="inputClass"
                 class="py-2"
-                @input="setProfile('bio', ($event.target as HTMLTextAreaElement).value)"
+                @input="setProfile('bio', $event)"
               />
             </div>
             <div class="flex flex-col gap-1">
@@ -280,7 +311,7 @@ function setAvatar(value: string | null | undefined) {
                 type="text"
                 placeholder="Now building..."
                 :class="inputClass"
-                @input="setProfile('status', ($event.target as HTMLInputElement).value)"
+                @input="setProfile('status', $event)"
               >
             </div>
             <EditorImagePicker
@@ -289,28 +320,6 @@ function setAvatar(value: string | null | undefined) {
               :src="draft.profile.avatar"
               @update:src="setAvatar"
             />
-            <div class="flex flex-col gap-1">
-              <label
-                for="p-mode"
-                :class="labelClass"
-              >Theme mode</label>
-              <select
-                id="p-mode"
-                :value="draft.profile.theme.mode"
-                :class="inputClass"
-                @change="editor.setTheme({ ...draft.profile.theme, mode: ($event.target as HTMLSelectElement).value as 'system' | 'light' | 'dark' })"
-              >
-                <option value="system">
-                  System
-                </option>
-                <option value="light">
-                  Light
-                </option>
-                <option value="dark">
-                  Dark
-                </option>
-              </select>
-            </div>
           </div>
 
           <!-- Blocks -->
@@ -327,7 +336,8 @@ function setAvatar(value: string | null | undefined) {
             >
               <button
                 type="button"
-                class="min-h-11 self-start rounded-full px-3 text-sm text-muted hover:text-ink"
+                :class="buttonClass"
+                class="self-start px-3 text-muted hover:text-ink"
                 @click="editor.select(null)"
               >
                 ← All blocks
@@ -377,7 +387,8 @@ function setAvatar(value: string | null | undefined) {
         <button
           type="button"
           :disabled="!dirty || saving"
-          class="min-h-11 rounded-full bg-accent px-5 text-sm font-medium text-accent-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          :class="buttonClass"
+          class="bg-accent px-5 text-accent-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           @click="editor.save()"
         >
           {{ saving ? 'Saving...' : 'Save' }}
@@ -404,7 +415,7 @@ function setAvatar(value: string | null | undefined) {
         class="mt-2 rounded-xl bg-accent-soft/40 px-3 py-2 text-sm text-ink"
         role="status"
       >
-        Restart <code class="font-mono">npm run dev</code> to apply the new preset or icons.
+        Restart <code class="font-mono">npm run dev</code> to apply the new color preset, download the new fonts or bundle the new icons.
       </p>
       <ul
         v-if="errors.length"
