@@ -4,13 +4,30 @@ name: Release
 # The job checks the tag against package.json, runs the same checks as CI,
 # zips dist/ and publishes a GitHub Release with the built-in GITHUB_TOKEN.
 # It never deploys. Deploy is a local command: `npm run deploy`.
+#
+# The release for the tag can already exist: `npm run release` makes it with the
+# gh CLI (title + body). This job then updates it and adds the zip and the checksum.
+#
+# Re-run a failed release for an existing tag:
+#   gh workflow run release.yml -f tag=v0.1.0
+# A manual run uses this file from the default branch and the code from the tag.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release again, for example v0.1.0
+        required: true
+        type: string
+
+# The one source of the tag name. Manual run: the input. Tag push: the pushed tag.
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -22,9 +39,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Check the tag name
+        run: |
+          re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          if [[ ! "$TAG" =~ $re ]]; then
+            echo "::error::'$TAG' is not a version tag. Use the form v1.2.3 or v1.2.3-beta.1."
+            exit 1
+          fi
+          echo "Releasing $TAG"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ env.TAG }}
           fetch-depth: 0
 
       - name: Setup Node 24
@@ -39,12 +66,12 @@ jobs:
       - name: Tag matches package.json
         run: |
           expected="v$(node -p "require('./package.json').version")"
-          if [ "$expected" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version ($expected)."
+          if [ "$expected" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match package.json version ($expected)."
             echo "Make the tag with 'npm run release' so both stay in sync."
             exit 1
           fi
-          echo "Tag $GITHUB_REF_NAME matches package.json."
+          echo "Tag $TAG matches package.json."
 
       - name: Lint
         run: npm run lint
@@ -62,33 +89,48 @@ jobs:
         run: npx playwright test --project=static
 
       - name: Zip dist and write checksum
+        # dist is a symlink to .output/public. Inside it, zip resolves "../" to
+        # .output/, not to the workspace. So the zip path is absolute, and the
+        # step proves that both files exist and that the zip holds the site.
+        # No "unzip | grep -q" here: with pipefail the early exit of grep fails the step.
         run: |
-          cd dist && zip -r "../tilebox-${GITHUB_REF_NAME}.zip" . && cd ..
-          sha256sum "tilebox-${GITHUB_REF_NAME}.zip" > "tilebox-${GITHUB_REF_NAME}.sha256"
-          cat "tilebox-${GITHUB_REF_NAME}.sha256"
+          ZIP="$GITHUB_WORKSPACE/tilebox-${TAG}.zip"
+          (cd dist && zip -qr "$ZIP" .)
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "tilebox-${TAG}.zip" > "tilebox-${TAG}.sha256"
+          test -s "tilebox-${TAG}.zip"
+          test -s "tilebox-${TAG}.sha256"
+          unzip -Z1 "$ZIP" > "$RUNNER_TEMP/zip-list.txt"
+          grep -qx 'index.html' "$RUNNER_TEMP/zip-list.txt"
+          echo "Files in the zip: $(wc -l < "$RUNNER_TEMP/zip-list.txt")"
+          cat "tilebox-${TAG}.sha256"
 
       - name: Pick the release body
         id: body
         run: |
-          file="releases/${GITHUB_REF_NAME}.md"
+          file="releases/${TAG}.md"
           if [ -f "$file" ]; then
             echo "Using $file"
           else
             file="$RUNNER_TEMP/release-body.md"
             printf 'See CHANGELOG.md\n' > "$file"
-            echo "::warning::releases/${GITHUB_REF_NAME}.md is missing. Using a short body."
+            echo "::warning::releases/${TAG}.md is missing. Using a short body."
           fi
           echo "path=$file" >> "$GITHUB_OUTPUT"
 
+      # Safe to run again. If the release for the tag exists (made by the local
+      # script, or by an earlier run), the action updates it: same title, the body
+      # from the release file, and the assets replaced.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: ${{ github.ref_name }}
-          name: tilebox ${{ github.ref_name }}
+          tag_name: ${{ env.TAG }}
+          name: tilebox ${{ env.TAG }}
           body_path: ${{ steps.body.outputs.path }}
           files: |
-            tilebox-*.zip
-            tilebox-*.sha256
+            tilebox-${{ env.TAG }}.zip
+            tilebox-${{ env.TAG }}.sha256
+          overwrite_files: true
           fail_on_unmatched_files: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ !contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          make_latest: ${{ !contains(env.TAG, '-') }}

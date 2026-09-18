@@ -45,6 +45,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - git. The commit hook installs itself on `npm install`.
 - For `npm run publish`: a free Cloudflare or Netlify account. You log in through the browser on the first run.
 - Optional, for the release summary draft: the `claude` or `grok` CLI on your `PATH`. Without one you type the summary yourself.
+- Optional, for `npm run release`: the GitHub CLI `gh` (`brew install gh`, then `gh auth login`). It makes the GitHub Release from your machine and watches the pipeline. Without it the pipeline makes the release.
 
 ## Quick start
 
@@ -149,7 +150,8 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run check:icons` | Fails on an unknown icon name |
 | `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
-| `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag (see Release) |
+| `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag. Then offers to push and make the GitHub Release (see Release) |
+| `npm run release:publish -- vX.Y.Z` | Push and make the GitHub Release for a tag that exists. No version bump (see Repair a release) |
 | `npm run publish` | Build and upload the page to Cloudflare Pages or Netlify from your machine (see Publish). `npm run site:publish` is the same command |
 | `npm run deploy` | Alias of `npm run publish -- --provider cloudflare` |
 | `npm run deploy:preview` | Alias of `npm run publish -- --provider cloudflare --preview` |
@@ -308,20 +310,53 @@ What it does, in order:
 4. Summary: a local AI CLI (`claude`, else `grok`) drafts 2 to 4 plain sentences for non-developers. You see it in the terminal and choose `[a]ccept`, `[e]dit` (opens `$EDITOR`), `[w]rite my own` or `[s]kip`. No AI CLI installed: you write it yourself.
 5. Apply: bumps `package.json` and `package-lock.json`, updates `CHANGELOG.md`, writes `releases/vX.Y.Z.md`, commits `chore(release): vX.Y.Z` and makes the annotated tag `vX.Y.Z`.
 
-Nothing is pushed. Review, then push:
+6. Publish (optional): the script asks `Push main and the tag, and create the GitHub Release now? [y/N]`.
+
+Until you say yes, nothing is pushed. The commit and the tag are local.
+
+### Publish the release
+
+Answer `y` (or pass `--push`) and the script runs these steps. It prints each command before it runs.
+
+1. `git push --follow-tags origin main`. The tag push starts the pipeline.
+2. Checks that the `gh` CLI is on `PATH` and logged in (`gh auth status`).
+3. Release exists already: `gh release edit vX.Y.Z --title "tilebox vX.Y.Z" --notes-file releases/vX.Y.Z.md`. Else: `gh release create vX.Y.Z --title "tilebox vX.Y.Z" --notes-file releases/vX.Y.Z.md --verify-tag`, with `--prerelease` when the version has a `-`.
+4. Prints the release URL.
+5. Says that the pipeline adds `tilebox-vX.Y.Z.zip` and the checksum in a few minutes, and asks `Watch the pipeline now? [y/N]`. With yes (or `--watch`) it runs `gh run watch <id> --exit-status`. When the pipeline fails, it prints the next step: `gh run view <id> --log-failed`.
+
+Answer `n` (or pass `--no-push`) and the script prints the manual commands:
 
 ```sh
 git show --stat HEAD
 git push --follow-tags origin main
+gh release create vX.Y.Z --title "tilebox vX.Y.Z" --notes-file releases/vX.Y.Z.md --verify-tag
 ```
+
+Safe default: without a terminal, or with `--yes` and no `--push`, the script does not push.
+
+**`gh` is optional.** Install it with `brew install gh`, then `gh auth login` one time. Without `gh` the script pushes, prints a hint and stops with exit code 0. The pipeline then makes the GitHub Release itself.
+
+**The zip comes from the pipeline only.** The script never uploads a local build. Your local `dist/` is built from `content/profile.json` and your images, so it holds your personal data. The pipeline builds from the repo, which has the sample content only.
+
+### Repair a release
+
+The tag exists but there is no GitHub Release, or the pipeline failed? No version bump is needed.
+
+```sh
+npm run release:publish -- v0.1.0            # push + the gh steps for a tag that exists locally
+npm run release:publish -- v0.1.0 --no-push  # the tag is on GitHub already: the gh steps only
+npm run release:publish -- v0.1.0 --dry-run  # print the commands, run none
+gh workflow run release.yml -f tag=v0.1.0    # run the pipeline again for the tag (zip + checksum)
+```
+
+`release:publish` is `node scripts/release.mjs --publish-only <tag>`. It refuses a tag that does not exist locally. The manual pipeline run uses `release.yml` from `main` and the code from the tag, so a pipeline fix on `main` also repairs an old tag. The pipeline is safe to run again: it updates the release and replaces the two files.
 
 ### First release
 
 The history before v0.1.0 is not in Conventional Commits, so the first release is tagged as it is. Its notes are already written in `releases/v0.1.0.md`.
 
 ```sh
-npm run release -- --first-release
-git push --follow-tags origin main
+npm run release -- --first-release --push
 ```
 
 Every release after that is just `npm run release`.
@@ -330,12 +365,16 @@ Every release after that is just `npm run release`.
 
 | Flag | Effect |
 |---|---|
-| `--dry-run` | Runs everything, prints the release file it would write, changes nothing |
+| `--dry-run` | Runs the checks, prints the release file it would write and the publish commands. Changes nothing, pushes nothing, calls no `gh` command |
 | `--release-as 1.0.0` | Force the version |
 | `--first-release` | No bump. Tags the current `package.json` version (used for v0.1.0) |
 | `--summary "text"` | Use this summary, skip the AI draft |
 | `--no-ai` | Never call an AI CLI |
-| `--yes` | Accept the AI draft without asking |
+| `--yes` | Accept the AI draft without asking. Does not push: add `--push` |
+| `--push` | After the tag: push and make the GitHub Release. No question |
+| `--no-push` | Never push, never ask. Print the manual commands. With `--publish-only`: skip the push, run the `gh` steps only |
+| `--watch` | After the publish: wait for the release pipeline with `gh run watch` |
+| `--publish-only vX.Y.Z` | No version bump. The publish steps for a tag that exists locally. Same as `npm run release:publish -- vX.Y.Z` |
 | `--skip-tests` | Skip Playwright |
 | `--skip-checks` | Skip the branch and origin sync checks. The tree must still be clean |
 
@@ -343,7 +382,7 @@ The script stops before it changes anything when: the tag already exists, there 
 
 ### What the pipeline does
 
-The pushed tag starts `.github/workflows/release.yml`. It checks that the tag equals `package.json` version, runs lint, typecheck, generate and Playwright, zips `dist/` into `tilebox-vX.Y.Z.zip` with a `.sha256` file, and publishes a GitHub Release named `tilebox vX.Y.Z` with `releases/vX.Y.Z.md` as the body and the zip attached. It uses the built-in `GITHUB_TOKEN`. It does not deploy.
+The pushed tag starts `.github/workflows/release.yml`. You can also start it by hand for an existing tag: `gh workflow run release.yml -f tag=vX.Y.Z` (or the "Run workflow" button on the Actions tab). It checks that the tag equals `package.json` version, runs lint, typecheck, generate and Playwright, zips `dist/` into `tilebox-vX.Y.Z.zip` with a `.sha256` file, and publishes a GitHub Release named `tilebox vX.Y.Z` with `releases/vX.Y.Z.md` as the body and the zip attached. When the local script made the release already, the pipeline updates it and adds the two files. It uses the built-in `GITHUB_TOKEN`. It does not deploy.
 
 The zip lands on https://github.com/ricardov03/tilebox/releases under the tag. A tag with a `-` (for example `v1.0.0-beta.1`) is marked as a pre-release.
 
@@ -407,6 +446,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | `npm run publish` stops with a broken state message | Fix `.tilebox/publish.json` or run `npm run publish -- --reset` |
 | `npm run release` says `pull or push first` | `git pull` or `git push` so `main` equals `origin/main` |
 | `npm run release` says a personal file is tracked | `git rm --cached <file>`, commit, run it again |
+| The tag exists but there is no GitHub Release | The pipeline failed or `gh` was missing. Make the release: `npm run release:publish -- vX.Y.Z --no-push`. See why the pipeline failed: `gh run list --workflow=release.yml`, then `gh run view <id> --log-failed`. After the fix is on `main`, run it again: `gh workflow run release.yml -f tag=vX.Y.Z` |
+| The GitHub Release has no zip | The pipeline is still running (`gh run watch`) or it failed. Same steps as the row above. Do not upload a local zip: it holds your personal data |
 | Playwright says the browser is missing | `npx playwright install chromium` |
 
 ## More docs
