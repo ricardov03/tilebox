@@ -30,6 +30,7 @@ import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync
 import { request as httpsRequest } from 'node:https'
 import { basename, delimiter, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
+import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { stdin, stdout } from 'node:process'
 
@@ -37,6 +38,10 @@ const STATE_DIR = '.tilebox'
 const STATE_FILE = join(STATE_DIR, 'publish.json')
 const WRANGLER_OUT = join(STATE_DIR, 'wrangler-out.ndjson')
 const DIST = 'dist'
+
+// Same rule as content/resolve.ts: the personal file when it exists, else the
+// example. Anchored on this file, not on the working directory, like the resolver.
+const PERSONAL_PROFILE = fileURLToPath(new URL('../content/profile.json', import.meta.url))
 
 const CHECK_TIMEOUT_MS = 30_000
 const LOGIN_TIMEOUT_MS = 600_000
@@ -624,6 +629,26 @@ function walkDist(dir, stats) {
   }
 }
 
+/** Before step 6. Says which profile the build reads. Guards a production publish of the sample. */
+async function checkProfile() {
+  step('Profile')
+  if (existsSync(PERSONAL_PROFILE)) {
+    log('    profile: content/profile.json (personal)')
+    return
+  }
+  log('    profile: content/profile.example.json (example)')
+  log('    content/profile.json does not exist, so the build uses the sample profile.')
+  log('    Make your own: npm run dev, open http://localhost:3000/edit, click Save.')
+  if (opts.preview) return
+  if (opts.yes) {
+    log('    Warning: publishing the sample profile to production (--yes).')
+    return
+  }
+  const answer = await askLine('    You are about to publish the sample profile. Continue? [y/N] ')
+  if (answer === null) usageError('no terminal to ask. Pass --yes to publish the sample profile.')
+  if (!/^y(es)?$/i.test(answer)) fail('stopped. Nothing was uploaded.')
+}
+
 /** Step 6. */
 function build(state) {
   step(opts['no-build'] ? 'Build (skipped by --no-build)' : 'Build')
@@ -696,6 +721,7 @@ async function main() {
     state = await setup()
   }
 
+  await checkProfile()
   build(state)
   deploy(state)
 }
