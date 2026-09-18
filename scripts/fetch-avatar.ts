@@ -16,7 +16,8 @@ async function main(): Promise<string> {
   const { profile } = parseProfile(JSON.parse(await readFile(profilePath(), 'utf8')))
   if (profile.avatar) return 'avatar: profile.avatar is set, gravatar skipped'
   if (isPlaceholderEmail(profile.email)) return 'avatar: placeholder email, gravatar skipped'
-  return (await fetchGravatar(profile.email)).message
+  // The saved email: a 404 may remove a stale file.
+  return (await fetchGravatar(profile.email, { allowDelete: true })).message
 }
 
 try {

@@ -58,17 +58,27 @@ export function gravatarPathIfPresent(): string | undefined {
 
 const OFFLINE: GravatarResult = { status: 'offline', message: 'avatar: offline, kept the old file' }
 
+export interface FetchGravatarOptions {
+  /**
+   * May a 404 remove the file on disk? True only when `email` is the SAVED
+   * email of the profile file (the build script). The editor route passes
+   * false for an unsaved draft email, so a try with another email can never
+   * delete the picture of the saved profile.
+   */
+  allowDelete: boolean
+}
+
 /**
  * Downloads the Gravatar of `email`. Never throws.
  * - 200 + image + at most 2 MB: writes the file. `saved`.
- * - 404: this email has no Gravatar. A stale file is removed. `none`.
+ * - 404: this email has no Gravatar. `none`. A stale file is removed only with `allowDelete`.
  * - anything else (network error, timeout, 5xx, odd body): the old file stays. `offline`.
  */
-export async function fetchGravatar(email: string): Promise<GravatarResult> {
+export async function fetchGravatar(email: string, options: FetchGravatarOptions): Promise<GravatarResult> {
   try {
     const response = await fetch(gravatarUrl(email), { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'follow' })
     if (response.status === 404) {
-      await rm(GRAVATAR_FILE, { force: true })
+      if (options.allowDelete) await rm(GRAVATAR_FILE, { force: true })
       return { status: 'none', message: 'avatar: no gravatar for this email' }
     }
     const type = response.headers.get('content-type') ?? ''
