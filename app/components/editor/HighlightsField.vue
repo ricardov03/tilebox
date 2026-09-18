@@ -62,5 +62,8 @@ const inputClass = INPUT_CLASS
         aria-hidden="true"
       >{{ value.length }}/{{ HIGHLIGHT_MAX_CHARS }}</span>
     </div>
+    <p class="text-xs text-muted">
+      Short lines work best. With 3 highlights, each one gets a single line on phones (about 40 characters).
+    </p>
   </fieldset>
 </template>
