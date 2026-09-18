@@ -49,6 +49,11 @@ const { values: opts } = parseArgs({
 
 const dryRun = opts['dry-run']
 
+// On Windows, npm and npx are .cmd files. Node refuses to spawn a .cmd file
+// without a shell (EINVAL), so those two run through the shell there.
+const isWindows = process.platform === 'win32'
+const SHELL_COMMANDS = new Set(['npm', 'npx'])
+
 // ---------------------------------------------------------------- helpers
 
 function log(line) {
@@ -76,9 +81,10 @@ function run(cmd, args, { timeout, input } = {}) {
     timeout,
     maxBuffer: 64 * 1024 * 1024,
     env: { ...process.env, FORCE_COLOR: '0' },
+    shell: isWindows && SHELL_COMMANDS.has(cmd),
   })
-  const out = res.stdout ?? ''
-  const err = res.error && !res.stderr ? `${res.error.message}\n` : (res.stderr ?? '')
+  const out = (res.stdout ?? '').replaceAll('\r\n', '\n')
+  const err = res.error && !res.stderr ? `${res.error.message}\n` : (res.stderr ?? '').replaceAll('\r\n', '\n')
   return { ok: res.status === 0 && !res.error, out, err, timedOut: res.error?.code === 'ETIMEDOUT' }
 }
 
