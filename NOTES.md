@@ -510,3 +510,15 @@ Branch: `wp/6-release`. Date: 2026-09-17. Node used: 22.23.1.
 └  ✨ You can now deploy .output/public to any static hosting!
 (exit 0)
 ```
+
+### Review (OCR, range)
+Fixes applied on `wp/6-release` after the review of `scripts/release.mjs` and `.github/workflows/release.yml`. One commit per fix.
+1. `ci`: actions pinned to full commit SHAs in `release.yml` and `ci.yml`: `softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64` (v3.0.3), `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` (v7.0.1), `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020` (v7.0.0). Checkout and setup-node moved from `v4` to `v7` in the same change.
+2. `run()` returns `out` (stdout only) and `err` (stderr only). `git status --porcelain`, `git rev-parse`, and the commit-and-tag-version version line are parsed from stdout. Error messages print stderr, then stdout (`errorText()`).
+3. Apply step starts with `git tag -l v<next>`; a non-empty result exits 1 before anything changes. Commit first, then tag. When `git tag` fails the script prints the recovery command `git reset --soft HEAD~1` (and the manual tag command) and exits 1.
+4. `versionHeadingRe()` escapes every regex metacharacter in the version (`escapeRegExp()`), not only the dot.
+5. `npx playwright install chromium` runs before `npx playwright test --project=static` (no-op when the browser is installed).
+6. Repository URL comes from `git config --get remote.origin.url` (`git@github.com:owner/repo.git`, `ssh://git@...`, and `https://github.com/owner/repo.git` all become `https://github.com/owner/repo`). Fallback: the old hardcoded URL when there is no remote.
+7. Windows: `npm` and `npx` spawn with `shell: true` on `win32` (Node refuses to spawn `.cmd` files without a shell). `\r\n` in captured output is normalized to `\n`.
+
+Note: `.wrangler/` in `.gitignore` is a WP0-owned file edit, accepted by the architect.
