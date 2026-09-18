@@ -1,12 +1,13 @@
 /**
  * The local editor on `nuxt dev`. Writes content/profile.json and
  * public/blocks/, so this project runs locally only.
- * content/profile.json is backed up first and restored at the end.
+ * content/profile.json (the file the save route writes; `predev` creates it
+ * from the example) is backed up first and restored at the end.
  */
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, test, type Page } from '@playwright/test'
-import { PROFILE_PATH, readProfile, ROOT } from './helpers'
+import { PERSONAL_PROFILE_PATH as PROFILE_PATH, readProfile, ROOT } from './helpers'
 import type { Profile } from '../../types/profile'
 
 const BACKUP = `${PROFILE_PATH}.e2e-backup`

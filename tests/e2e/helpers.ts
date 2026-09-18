@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import type { Page } from '@playwright/test'
 import { parseProfile, type Profile } from '../../types/profile'
 
-export const ROOT = resolve(import.meta.dirname, '../..')
-export const PROFILE_PATH = resolve(ROOT, 'content/profile.json')
+import { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT } from '../../content/resolve'
 
-/** The sample content, validated with the same schema the app uses. */
+/** Same resolution as the build: `PROFILE_PATH` is content/profile.json when it exists, else the example. */
+export { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT }
+
+/** The content the site was built from, validated with the same schema the app uses. */
 export function readProfile(): Profile {
   return parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
 }
