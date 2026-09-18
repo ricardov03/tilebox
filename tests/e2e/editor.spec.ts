@@ -464,7 +464,7 @@ test('a pasted URL loads the link preview, fetched text fills empty fields only,
   // A new link starts with the preview on and the image off.
   await expect(enrich).toBeChecked()
   await expect(showImage).not.toBeChecked()
-  await expect(form.locator('[data-icon-auto]')).toHaveText('auto')
+  await expect(form.locator('[data-link-icon] [data-icon-caption]')).toHaveText('Auto, from the link')
 
   await form.locator('input[id$="-url"]').fill('https://unfurl.test/page')
   const card = form.locator('[data-link-card]')
@@ -539,6 +539,74 @@ test('a failed fetch shows the reason, and turning the preview off keeps your te
   expect(saved && 'meta' in saved).toBe(false)
   expect(saved && 'favicon' in saved).toBe(false)
   expect(saved && 'image' in saved).toBe(false)
+})
+
+/**
+ * WP17. The icon picker previews through the dev route `/api/icons/svg`. It is mocked here, so this
+ * test checks the CONTRACT of the picker (which name it asks for) and never the route itself.
+ */
+async function mockIcons(page: Page): Promise<void> {
+  await page.route('**/api/icons/svg**', route => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>',
+  }))
+  // The real route asks a search API. A test never goes to the network. A typed `prefix:name` comes back first.
+  await page.route('**/api/icons/search**', route => route.fulfill({ json: { icons: ['line-md:home', 'line-md:home-off'] } }))
+}
+
+/** The markup of the first icon of a preview tile. Two tiles with the same icon give the same string. */
+function tileIcon(page: Page, id: string): Promise<string> {
+  return page.locator(`li[data-id="${id}"] > div svg`).first().innerHTML()
+}
+
+test('WP17: the icon picker has no name field, and a mailto link gets the envelope by itself', async ({ page }) => {
+  await openEditor(page)
+  await mockIcons(page)
+
+  // A social tile of the Email network draws `line-md:email`. It is the yardstick for "the envelope".
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Social', exact: true }).click()
+  const socialId = (await page.locator('li[data-id]').last().getAttribute('data-id')) ?? ''
+  const form = page.locator('form')
+  await form.locator('select[id$="-network"]').selectOption('email')
+  // The icon of a social tile belongs to the network: read only, no search box, no name.
+  await expect(form.locator('[data-icon-caption]')).toHaveText('From the network')
+  await expect(form.getByPlaceholder('Search icons')).toHaveCount(0)
+  const envelope = await tileIcon(page, socialId)
+
+  // A new link block. The URL alone decides the icon: no manual step.
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Link', exact: true }).click()
+  const linkId = (await page.locator('li[data-id]').last().getAttribute('data-id')) ?? ''
+  const picker = form.locator('[data-link-icon]')
+  const url = form.locator('input[id$="-url"]')
+
+  await url.fill('mailto:you@example.com')
+  await expect(picker.locator('[data-icon-caption]')).toHaveText('Auto, from the link')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Aemail')
+  await expect.poll(() => tileIcon(page, linkId)).toBe(envelope)
+
+  // No field with the icon name, and the name is on no visible text.
+  await expect(picker.locator('input[id$="-icon"]')).toHaveCount(0)
+  await expect(picker).not.toContainText('line-md')
+  await expect(picker.getByPlaceholder('Search icons')).toHaveCount(1)
+  // The name is still the accessible name of a result button, for screen readers.
+  await picker.getByPlaceholder('Search icons').fill('line-md:home')
+  await expect(picker.getByRole('button', { name: 'line-md:home' })).toBeVisible({ timeout: 10_000 })
+
+  // Another URL, another automatic icon, live.
+  await url.fill('https://github.com/nuxt')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Agithub')
+  await expect.poll(() => tileIcon(page, linkId)).not.toBe(envelope)
+
+  // "Back to auto" shows only with an own icon. It removes it, and the automatic one comes back.
+  await expect(picker.getByRole('button', { name: 'Back to auto' })).toHaveCount(0)
+  await picker.getByRole('button', { name: 'line-md:home' }).click()
+  await expect(picker.locator('[data-icon-caption]')).toHaveText('Custom')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Ahome')
+  await picker.getByRole('button', { name: 'Back to auto' }).click()
+  await expect(picker.locator('[data-icon-caption]')).toHaveText('Auto, from the link')
+  await expect(picker.locator('img').first()).toHaveAttribute('src', '/api/icons/svg?name=line-md%3Agithub')
 })
 
 test('Hide dims the block, the save keeps it in the file and drops it from the page, Show brings it back', async ({ page }) => {

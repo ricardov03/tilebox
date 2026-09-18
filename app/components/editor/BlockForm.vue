@@ -9,8 +9,10 @@
   is optional (WP17): an emptied field removes its key (strict schema, no ""),
   shows no error and never blocks the save. A block without its essential value
   (a link without a URL) is "Incomplete": it saves, and the build leaves it out.
-  Link blocks (WP10a): the link preview (LinkEnrich), the icon with its "auto"
-  label (LinkIconField) and the Spotlight select with a live sample.
+  Link blocks (WP10a): the link preview (LinkEnrich), the icon with its caption
+  (LinkIconField: the picture and the search box, never the icon name) and the
+  Spotlight select with a live sample. A social tile shows its network icon read
+  only ("From the network").
   The last controls: Hide / Show, Duplicate, then "Delete this block", which
   opens the shared inline confirm.
 -->
@@ -322,6 +324,15 @@ const labelClass = LABEL_CLASS
         :model-value="block.label"
         :validate="checkOf('label')"
         @commit="patch({ label: $event }, ['label'])"
+      />
+      <!-- WP17: the icon of a social tile belongs to the network. Read only: pick another network to change it. -->
+      <EditorIconPicker
+        :id="fid('icon')"
+        :key="fid('icon')"
+        label="Icon"
+        readonly
+        auto-caption="From the network"
+        :auto="{ kind: 'icon', name: NETWORKS[block.network].icon, source: 'brand' }"
       />
     </template>
 
