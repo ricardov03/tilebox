@@ -8,14 +8,17 @@
  * Rule: read the personal file when it exists, else the example.
  * The editor's save route always writes the personal file (see `PERSONAL_PROFILE_PATH`).
  *
- * Every entry point (nuxt, npm scripts, nitro, playwright) runs from the repo
- * root, so the paths anchor on `process.cwd()`. No Vue or Nuxt imports here:
+ * The paths anchor on this file's location (`content/`), not on `process.cwd()`,
+ * so every entry point (nuxt, npm scripts, nitro, playwright) resolves the same
+ * files from any working directory. No Vue or Nuxt imports here:
  * `scripts/*.ts` run this file with tsx.
  */
 import { copyFileSync, existsSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-export const ROOT = process.cwd()
+/** The repo root: the parent of this file's folder. */
+export const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..')
 
 /** Your file. Created by `npm run dev` (predev) from the example when missing. */
 export const PERSONAL_PROFILE_PATH = resolve(ROOT, 'content/profile.json')

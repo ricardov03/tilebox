@@ -4,7 +4,7 @@ import { parseProfile, type Profile } from '../../types/profile'
 
 import { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT } from '../../content/resolve'
 
-/** Same resolution as the build: `PROFILE_PATH` is content/profile.json when it exists, else the example. */
+/** Same resolution as the build: `PROFILE_PATH` is content/profile.json when it exists, else the example. `ROOT` comes from the resolver, which anchors on its own location. */
 export { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT }
 
 /** The content the site was built from, validated with the same schema the app uses. */
