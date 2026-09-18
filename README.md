@@ -472,7 +472,7 @@ Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` the
 
 `.github/workflows/ci.yml` runs on every push to `main` and on every pull request:
 
-1. `build` job: `npm ci`, lint, typecheck, `npm run generate`, then checks that `dist/index.html` exists and that neither `dist/edit` nor `dist/edit.html` exists. Uploads `dist` as an artifact for 7 days.
+1. `build` job: `npm ci`, lint, typecheck, `npm run generate` (with a DUMMY `PEXELS_API_KEY`, not a secret: `pexels.spec.ts` looks for that exact text in `dist/`, so the run proves that a key in the build environment reaches no built file), then checks that `dist/index.html` exists and that neither `dist/edit` nor `dist/edit.html` exists. Uploads `dist` as an artifact for 7 days.
 2. `e2e` job: downloads that `dist`, installs Chromium, runs the Playwright `static` project.
 
 CI has no `content/profile.json`, so it always builds the **sample** site. It never deploys. `actions/checkout`, `actions/setup-node` and the release action are pinned to full commit SHAs. The workflow token is read-only. A failed e2e run uploads the Playwright report as an artifact.

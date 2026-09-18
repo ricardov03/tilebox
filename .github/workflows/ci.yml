@@ -38,6 +38,10 @@ jobs:
 
       - name: Generate
         run: npm run generate
+        env:
+          # Not a secret: a dummy value. tests/e2e/pexels.spec.ts (CANARY) looks for this exact text in dist/,
+          # so the e2e job proves that a key in the build environment never reaches a built file.
+          PEXELS_API_KEY: tilebox-canary-pexels-key-0f3a9c
 
       - name: Check static output
         run: test -f dist/index.html && ! test -e dist/edit && ! test -e dist/edit.html
