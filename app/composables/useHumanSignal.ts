@@ -17,14 +17,19 @@ const SIGNALS = ['pointermove', 'pointerdown', 'touchstart', 'keydown', 'scroll'
 const signalled = ref(false)
 let armed = false
 
-export function useHumanSignal(): Readonly<Ref<boolean>> {
-  if (import.meta.client && !armed) {
-    armed = true
-    const fire = () => {
-      signalled.value = true
-      for (const type of SIGNALS) window.removeEventListener(type, fire)
-    }
-    for (const type of SIGNALS) window.addEventListener(type, fire, { once: true, passive: true })
+function arm(): void {
+  if (armed) return
+  armed = true
+  const fire = () => {
+    signalled.value = true
+    for (const type of SIGNALS) window.removeEventListener(type, fire)
   }
+  for (const type of SIGNALS) window.addEventListener(type, fire, { once: true, passive: true })
+}
+
+export function useHumanSignal(): Readonly<Ref<boolean>> {
+  // After mount, never during setup: a scroll or a focus in the middle of hydration would
+  // flip the flag between the server render and the first client render (a hydration mismatch).
+  if (import.meta.client) onMounted(arm)
   return readonly(signalled)
 }
