@@ -1002,3 +1002,67 @@ icon-192.png 192x192 png 7997 bytes
 icon-512.png 512x512 png 16092 bytes
 icon-mask.png 512x512 png 9023 bytes
 ```
+
+## WP10 integration
+
+Branch: `wp/10-final` = `origin/wp/10a-smart-links` + merge of `origin/wp/10b-site-meta`. Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. Not merged into `main`, no tag.
+
+### Conflict files and how each was resolved
+- `types/profile.ts`: ONE `toPublicProfile(profile, gravatarPath?, siteExtras?)`. Body of WP10a (hidden blocks and their ids out of both layouts, `toPublicBlock()`, a new `layout` object) plus `site: toPublicSite(profile.site, siteExtras)` of WP10b in the same return object. Both schemas stay strict; an old profile is valid (new unit test).
+- `modules/public-profile.ts`: both imports. One call: `toPublicProfile(withLocalLinkFiles(profile), gravatarPathIfPresent(), siteExtras)`.
+- `package.json`: union. `predev`: ensure:profile, presets, check:profile, fetch:avatar, build:site-assets. `pregenerate`: presets, check:profile, check:contrast, check:icons, fetch:avatar, fetch:links, build:site-assets. `fetch:favicons` stays the alias. `satori` added next to `sharp`.
+- `package-lock.json`: the WP10a side, then `npm install` (200 added lines, `satori` and its tree). `npm ci` passes.
+- `playwright.config.ts`: `static` runs `links.spec.ts`, `unfurl.spec.ts` AND `site.spec.ts`; `dev` runs `editor.spec.ts` and `site-editor.spec.ts`.
+- `content/profile.example.json`: the 11 blocks and both layouts of WP10a, plus the `site` object of WP10b.
+- `README.md`: Contents has "Link previews" then "Site metadata"; both sections kept in that order; one personal-data list; the Scripts table has `fetch:links`, `fetch:favicons` (alias) and `build:site-assets` once each; the `predev` / `pregenerate` sentence follows `package.json`; the Tests table rows and the Project layout carry both sides.
+- `content/README.md`: one ignored-files list (link tile wording of WP10a, the two `public/site*` lines of WP10b).
+- `PLAN.md`: section 6 example = WP10a layouts + the `site` object; section 8 has "WP10a" then "WP10b"; the status line names the merge.
+- `NOTES.md`: the merge mixed the two sections line by line. Rebuilt: the common part, then `## WP10a` and `## WP10b` whole, from each branch.
+- Merged with no conflict, read and checked: `nuxt.config.ts` (`iconsIn()`, `$development`, `runtimeConfig.public.siteUrl`), `app/pages/edit.vue` (hide / duplicate events + the 4th tab; the `tabs` array drives the keyboard model, so 4 tabs are covered, `site-editor.spec.ts` tests it), `app/composables/useEditor.ts`, `.gitignore` (no duplicate line), `scripts/release.mjs` (the `public/site*` refusal next to the personal-data checks), `tests/e2e/public.spec.ts`.
+
+### One real integration bug (found by the `dev` project)
+`editor.spec.ts` "Hide dims the block..." (WP10a) hides the map block and waited until the page had no "Bogota". The sample `site.location` (WP10b) is "Bogota" too and is public (JSON-LD `address`). The test now checks `block.url`. No privacy problem: the hidden block itself is gone.
+
+### theme-color fix (`app/composables/useTheme.ts`)
+- Cause: a meta with a `key` has the unhead dedupe key `meta:<name>:key:<key>`. The server HTML carries no key, so the client could not match its tags and appended new ones: 4 `theme-color` and 2 `color-scheme` metas after hydration.
+- Dropping the keys is not enough for `theme-color`: two metas with the same `name` then dedupe to ONE.
+- Fix: the server renders the two `theme-color` metas (`useServerHead`, keyed, one per `prefers-color-scheme`). The client never gives them to unhead; `syncThemeColorMeta()` updates the two DOM nodes (and makes them on a page with no server HTML, the SPA fallback). There are ALWAYS two metas now: a fixed mode puts the same color in both. `color-scheme` lost its key, so unhead matches the server tag by name.
+- Test: `public.spec.ts` "hydration and the toggle keep exactly 2 theme-color metas, 1 color-scheme meta, 1 inline script" (after load, after one toggle click, plus the contents). It failed before the fix with `{ themeColor: 4, colorScheme: 2 }`.
+
+### Tests added
+- `privacy.spec.ts` +2: one `toPublicProfile()` call with a hidden email, a hidden link, a hidden social block and a `site` with upload paths (none of the secrets in the JSON, layouts cleaned, `site` = public keys + extras, `PublicProfileSchema` strict parse); an old profile stays valid. The `dist/` checks (hidden email, hidden block title) were there already and run on the merged build.
+- `site.spec.ts` +1: JSON-LD `sameAs` leaves out a hidden social block, because `buildHead()` gets the sanitized profile. `sameAsOf()` keeps its own `hidden` check as a second guard.
+- `public.spec.ts` +1: the theme-color test above.
+
+### Skipped on purpose
+- `meta.themeColor` on the preview card: not used. The note in `## WP10a` > Open stays.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0 (2003 packages)
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+avatar: placeholder email, gravatar skipped
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Nuxt Icon client bundle consist of 33 icons with 27.61KB(uncompressed) in size
+Prerendered 4 routes
+$ ls dist/site | wc -l                          -> 8      (no `edit` in dist/)
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ grep -rl "Hidden draft tile" dist | wc -l     -> 0
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4403 E2E_DEV_PORT=3403 npx playwright test --project=static
+112 passed      (81 of WP10a + 27 of WP10b + 4 new)
+$ E2E_STATIC_PORT=4403 E2E_DEV_PORT=3403 npx playwright test --project=dev
+21 passed       (16 of WP10a + 5 of WP10b)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ npm run dev -- --port 3404      GET / 200, /edit 200, /api/profile 200, 2 theme-color metas, no ERROR line
+```
+
+### Open
+- Code review (Grok / OCR) of the merged branch not run yet. `content/unfurl.ts` is still the file that most needs it.
+- Safari and Firefox: not checked (headless Chromium only).
+- `public/site/` is not watched in dev (WP10b deviation): when `icon.svg` appears or goes away, restart `npm run dev`.
