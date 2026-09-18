@@ -837,3 +837,93 @@ $ E2E_STATIC_PORT=4392 E2E_DEV_PORT=3392 npx playwright test      (both projects
 43 passed, 1 skipped      (38 + the 5 new gravatar tests; the skip is the known "example email" guard)
 $ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks      -> exit 0
 ```
+
+## WP10a
+
+Branch: `wp/10a-smart-links` (from `origin/main`). Date: 2026-09-18. Node used: 22.23.1. Worked in a separate git worktree; the main checkout was not touched. Runs in parallel with WP10b (`site` object + "Site" tab): this WP adds no site-level metadata, and its edits in `types/profile.ts` and `edit.vue` are small and local (edit.vue: 5 event lines).
+
+Goal (decided by Ricardo): smart links (brand icon from the URL, link previews fetched on the owner's machine) and three quick wins (hide, duplicate, spotlight).
+
+### What was built
+- Contract change (`types/profile.ts`, frozen after WP0, so noted here). Every block type: `hidden?: boolean`. Link blocks: `enrich?`, `showImage?`, `favicon?` (regex: `/icons/<a-z0-9>.<png|jpg|webp|gif|svg>` only), `image?` (`/thumbs/<a-z0-9>.webp` only), `imageAlt?`, `meta?` (`LinkMetaSchema`, strict), `spotlight?: 'pop' | 'wobble' | 'buzz'`. `superRefine`: a second spotlight is an issue at `blocks.<i>.spotlight`. New exports: `SPOTLIGHTS`, `Spotlight`, `LinkMetaSchema`, `LinkMeta`, `toPublicBlock()`. `toPublicProfile()` now removes hidden blocks and their ids from both layouts, and drops `enrich` and `meta` always, `image` / `imageAlt` when `showImage` is off. Old profiles stay valid (all keys optional).
+- A. `app/utils/brand-icons.ts`: `BRAND_ICONS` (65 hosts -> 48 icons, 16 from `line-md`, 32 from `simple-icons`, plus `line-md:email` for `mailto:` and `line-md:phone` for `tel:`), `brandIconFor(url)`, `allBrandIcons()`. Pure, no imports. Every name was checked against `node_modules/@iconify-json/<prefix>/icons.json`. `scripts/check-icons.ts` now also checks the map and fails on `hidden: true` (63 icons checked).
+- Icon resolution: `resolveLinkIcon()` in `app/components/blocks/media.ts`: `icon` > brand > `favicon` (only a local `/icons/` path) > `line-md:link`. `LinkBlock.vue` uses it. `isSafeHref()` now accepts `tel:` (the brand map has a phone icon, so a `tel:` tile must be a real link).
+- Bundle list (`nuxt.config.ts`): `iconsIn(profile)` adds `brandIconFor(block.url)` for each visible link block without `icon`. Hidden blocks add nothing. So the built site has only the brands its profile uses (the example build: 33 icons, 27.61 KB, the whole map is not in it). `$development.icon.clientBundle.icons` adds the whole map + the icons of hidden blocks for `nuxt dev` only. Measured: `nuxt dev` 65 icons, 57.62 KB; the build 33 icons, 27.61 KB.
+- B. Engine: `content/unfurl.ts` (network, htmlparser2, ipaddr.js, undici, sharp by dynamic import) and `content/unfurl-cache.ts` (node built-ins only: dirs from `ROOT`, `normalizeUrl`, cache file, `localFileExists`, `linkNeedsFetch`, `withLocalLinkFiles`). Split on purpose: `modules/public-profile.ts` loads the cache half at config time and must not pull the network half. Exports used by the tests: `safeRequest`, `checkTarget`, `isPublicAddress`, `parseHead`, `decodeHtml`, `sniffImage`, `largestPngFromIco`, `pickBySize`, `oembedUrlFor`, `githubAvatarFor`, `USER_AGENT`.
+- Dev route `server/api/unfurl.post.ts`: `import.meta.dev ? await import('~~/content/unfurl') : null`, so the production server bundle has no engine (checked with `npx nuxt build`: no `tilebox-unfurl` / `htmlparser2` string in `.output/server`, no `sharp` / `undici` in its `node_modules`). Host check, Origin check, a per-target-host promise queue, zod body.
+- Build: `scripts/fetch-links.ts` (git mv from `fetch-favicons.ts`). npm scripts: `fetch:links`, `fetch:favicons` = `npm run fetch:links --` (alias), `pregenerate` ends with `fetch:links`. Debug mode: `-- --url <link> [--image] [--force]`.
+- `modules/public-profile.ts`: `toPublicProfile(withLocalLinkFiles(profile), gravatar)`.
+- Editor: `LinkEnrich.vue` (two switches, the one-line note, preview card, Refresh = `force`, reason text, "Use fetched title / description", 600 ms debounce, AbortController + request id against stale answers), `LinkIconField.vue` ("auto" label, "Choose another", "Back to auto"), Spotlight select + live sample in `BlockForm.vue`, Hide / Show + Duplicate buttons in `BlockForm.vue` and as a second line under each `BlockList.vue` row, Hide / Show control + "Hidden" badge + dimming in `PreviewTile.vue`. `useEditor.ts`: `toggleHidden`, `duplicateBlock`, `copyOf`, `NEW_LINK_TITLE`, new links get `enrich: true`, `updateBlock` moves the spotlight. UI icons: `line-md:watch`, `line-md:watch-off`, `line-md:text-box-multiple`.
+- Example: `b10` (github.com link without `icon`, `spotlight: pop`) and `b11` (hidden link "Hidden draft tile"). No `enrich` and no image in the example, so CI makes no link request (`OK  link previews 0/0`).
+
+### SSRF guard (one function for every request: page, oEmbed, manifest, icon, image)
+`safeRequest()` -> `checkTarget()` per hop: http/https only; port `''`, 80 or 443; `dns.lookup(host, { all: true })`; EVERY answer must have `ipaddr.parse(ip).range() === 'unicast'` (so loopback, private, linkLocal, carrierGradeNat, uniqueLocal, ipv4Mapped, 6to4, teredo, reserved... are refused, and one bad answer among good ones refuses the host); an IP literal is checked the same way without DNS; the first checked address is pinned with `new Agent({ connect: { lookup } })` (handles `options.all`), one Agent per hop, destroyed after the body; `redirect: 'manual'`, 5 redirects, `Location` resolved against the current URL; `AbortSignal.timeout(8000)` per hop; body read as a stream with a byte limit (`cut` for HTML at 512 KB or at `</head>` / `<body`, `fail` for JSON 256 KB, icons 1 MB, images 5 MB). `allowHosts`, `lookup`, `transport`, `dirs`, `now` are test-only options.
+
+### Deviations and why
+1. **No favicon download when the URL has a brand icon (or the owner's `icon`).** The brand icon wins on the tile, so the file would never show. It saves 1 to 6 requests per link. `linkNeedsFetch()` follows the same rule. Smoke results below: GitHub and YouTube have no `favicon`, nuxt.com has one.
+2. **The `#manifest/icons` alias and `public/icons/manifest.json` are gone** (the brief allowed it). Link files are block fields. `#manifest/thumbs` stays for video tiles. Removed in `nuxt.config.ts`, `LinkBlock.vue`, `media.ts` (`faviconPath`), `empty-manifest.ts` docs, README, PLAN. Effect for old profiles: a link without `enrich` no longer gets a Google favicon at build; it gets the brand icon or `line-md:link`. That is the owner's rule ("with `enrich` off the tile uses only what the owner typed").
+3. **The build never writes `profile.json`.** A path in the block counts only when its file is on disk; else the path from `.tilebox/unfurl-cache.json` is used; else the key is dropped. So a profile written by hand with only `"enrich": true` works, a fresh machine works, and the page never points at a 404.
+4. **SVG icons: a small extra check.** Besides "< 100 KB, `<img>` only", an SVG with `<script`, `<foreignObject`, an `on*=` attribute or `javascript:` is refused (the next candidate is tried). Reason: the file is served from the site's own origin, and someone can open it directly.
+5. **A site that blocks the request but has a brand icon answers `ok: true, source: 'brand'`** with a `note` ("The website gave no data (http 403). The brand icon still works."). It is not cached. Without a brand icon the answer is `{ ok: false, reason }`.
+6. **`force` still sends `If-None-Match`** when the cached entry is complete. A `304` means "nothing changed", so the data is kept and `fetchedAt` moves.
+7. **`nuxt dev` bundles the whole brand map** (`$development`). The brief said "only when used by the current profile": that holds for the built site. In dev the editor must show the icon of a URL pasted a second ago, without a restart.
+8. **The tile's Hide control has no `aria-pressed`.** `[data-editor-control][aria-pressed]` is how `edit.vue` and the tests find the Edit control. Its name says the action ("Hide x" / "Show x"). The list row toggle and the form toggle have `aria-pressed`.
+9. **List rows have a second line** (Hide / Show, Duplicate). Five 44 px buttons do not fit next to the title in the 400 px panel.
+10. **Existing test fixed (`Delete on a selected tile...`).** It failed on `origin/main` too on this Mac (checked in a throwaway worktree): the Home and End keys do not move the caret in Chromium on macOS, so Backspace deleted the last letter and the expected label was wrong. The test now sets the caret with `setSelectionRange` and asserts the value did not change. Same intent.
+11. **Every editor test mocks `POST /api/unfurl`** (`openEditor` answers `{ ok: false }`), because new link blocks have `enrich: true` and the first, older test fills a real URL. No test reads a real website.
+12. The PLAN.md status line was not edited (WP10b edits the same line). Text for the architect: "WP10a smart links + quick wins on `wp/10a-smart-links`."
+
+### Requests to other WPs
+- WP10b / architect: on merge, `types/profile.ts` (WP10a touches the block schemas, `superRefine` and `toPublicProfile`), `edit.vue` (5 added event lines on existing components), `nuxt.config.ts` (`iconsIn`, `$development`, the removed `#manifest/icons` alias) and `README.md` may need a manual merge. `toPublicProfile()` builds a new `layout` object now: a `site` key must be passed through there.
+- A Grok / OCR review of `content/unfurl.ts` is worth the cost: it is the only code in the repo that fetches URLs chosen by user input.
+
+### Verified by hand
+- Featured look on real files (nuxt.com, `--image`): 2x1 (image on the right third), 2x2 and 1x2 (image on top), 1x1 (no image), accent variant, 1280 and 390, screenshots checked. Hidden tile absent on the public page, dimmed with a badge in the editor.
+- Real route in `nuxt dev`: `POST /api/unfurl` with nuxt.com -> `ok: true`; with `Origin: https://evil.example` -> 403; with `Host: evil.example` -> 403; `http://127.0.0.1:3401/api/profile` -> `blocked port`; `http://localhost/` -> `blocked address`. The engine loads inside Nitro dev (the WP7 lesson: paths from `ROOT`).
+
+### Smoke test (real network, from the command line, files removed afterwards)
+```
+$ npx tsx scripts/fetch-links.ts --url https://github.com/nuxt --image
+{ "ok": true, "cached": false, "url": "https://github.com/nuxt", "finalUrl": "https://github.com/nuxt", "title": "Nuxt",
+  "description": "The Intuitive Vue Framework. Nuxt has 65 repositories available. Follow their code on GitHub.",
+  "siteName": "GitHub", "themeColor": "#1e2327", "source": "html", "image": "/thumbs/40da6c047f241180.webp" }
+$ npx tsx scripts/fetch-links.ts --url "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --image
+{ "ok": true, "cached": false, "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  "description": "By Rick Astley", "siteName": "YouTube", "source": "oembed", "image": "/thumbs/24ca0ed0e641e75c.webp" }
+$ npx tsx scripts/fetch-links.ts --url https://nuxt.com --image
+{ "ok": true, "cached": false, "url": "https://nuxt.com/", "title": "Nuxt: The Full-Stack Vue Framework",
+  "description": "Build fast, production-ready web apps with Vue. File-based routing, auto-imports, and server-side rendering — all configured out of the box.",
+  "siteName": "Nuxt", "themeColor": "#020420", "favicon": "/icons/fb6ffcbd70de0858.png", "source": "html", "image": "/thumbs/3da768251b881db0.webp" }
+```
+GitHub: the image is the 200 px avatar shortcut. YouTube: oEmbed, the page was never loaded. No `favicon` on the first two: deviation 1.
+
+### Tests
+- `static` project: 33 -> 81. New files: `links.spec.ts` (17: brand map against the packs, icon order, featured look rule, schema, local files for the build), `unfurl.spec.ts` (24: pure helpers, the guard without `allowHosts`, a local `node:http` server with `allowHosts: ['127.0.0.1']`, a mocked connection for oEmbed and the brand answer; `lookup` throws in the server tests, so no fallback can reach the internet). `privacy.spec.ts` +3 (hidden block in no file of `dist/`, sanitizer: hidden blocks and layouts, editor-only link fields). `public.spec.ts` +4 (brand icon as inline SVG with no `<img>`, hidden block absent, spotlight `animation-name` / `infinite` / `6s` with an unchanged layout box, `animation-name: none` with reduced motion). axe: 0 violations, 4 runs.
+- `dev` project: 11 -> 16 (link preview with a mocked route, failed fetch + preview off, Hide / Show + the public page follows, Duplicate in both layouts, one spotlight).
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+Nuxt Icon client bundle consist of 33 icons with 27.61KB(uncompressed) in size
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ grep -rl "Hidden draft tile" dist | wc -l     -> 0
+$ npx nuxt build && grep -rl "tilebox-unfurl\|htmlparser2" .output/server      -> no file
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4401 E2E_DEV_PORT=3401 npx playwright test --project=static
+81 passed
+$ E2E_STATIC_PORT=4401 E2E_DEV_PORT=3401 npx playwright test      (both projects)
+96 passed, 1 skipped      (the skip is the known "example email" guard, see WP9 deviations)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+```
+
+### Open
+- Code review (Grok / OCR) not run yet.
+- Safari and Firefox: the featured look and the spotlight were checked in headless Chromium only.
+- The preview card shows no color from `themeColor` yet. The value is stored in `meta`.
+- A very long description on a featured 2x1 tile on phones is clamped to 2 lines; the editor preview (lower rows) clips a little more than the real page.
