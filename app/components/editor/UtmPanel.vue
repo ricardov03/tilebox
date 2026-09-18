@@ -53,7 +53,9 @@ function setValue(key: Key, value: string) {
   if (!same(site.value.utm, typed.value)) setSiteKey('utm', typed.value)
 }
 
-const siteUrl = computed(() => resolveSiteUrl('', site.value))
+/** `NUXT_PUBLIC_SITE_URL` of this dev server wins over the field of the Site tab, as in the build (and in QrPanel). */
+const envSiteUrl = useRuntimeConfig().public.siteUrl
+const siteUrl = computed(() => resolveSiteUrl(envSiteUrl, site.value))
 const sample = computed(() => {
   const block = draft.value?.blocks.find(item => item.type === 'link' && /^https?:\/\//i.test(item.url) && !item.noUtm)
   return block && block.type === 'link' ? block.url : 'https://example.com/page?ref=1'

@@ -253,6 +253,14 @@ test.describe('UTM tags (build time)', () => {
     expect(out.blocks[0]).toMatchObject({ url: 'https://live.example/x' })
   })
 
+  test('an env site URL that is not a URL does not switch the "same site" rule off (one resolver: resolveSiteUrl)', () => {
+    const input = profileOf([link('own', { url: 'https://ada.example/blog' })], { site: { url: 'https://ada.example', utm } })
+    for (const envSiteUrl of ['ada.example', '  ', 'ftp://ada.example']) {
+      const out = toPublicProfile(input, undefined, undefined, { now: NOW, envSiteUrl })
+      expect(out.blocks[0], envSiteUrl).toMatchObject({ url: 'https://ada.example/blog' })
+    }
+  })
+
   test('JSON-LD sameAs carries no tracking', () => {
     const input = profileOf([{ id: 'soc', type: 'social', size: '1x1', network: 'github', url: 'https://github.com/ada' }], { site: { utm } })
     const head = buildHead(toPublicProfile(input, undefined, undefined, { now: NOW }), 'https://ada.example')

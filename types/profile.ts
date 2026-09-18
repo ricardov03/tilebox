@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
 import { endsBeforeStart, isOnPage } from '../app/utils/schedule'
+import { resolveSiteUrl } from '../app/utils/site-head'
 import { SIZES } from '../app/utils/sizes'
 import { withUtm, type UtmSettings } from '../app/utils/utm'
 import { LOCAL_ICON_PATH, LOCAL_THUMB_PATH } from './local-paths'
@@ -436,7 +437,8 @@ export function toPublicProfile(profile: Profile, gravatarPath?: string, siteExt
   const now = build.now ?? new Date()
   const dropped = new Set(profile.blocks.filter(block => blockDropReason(block, now, siteExtras?.assets) !== null).map(block => block.id))
   const visible = (ids: string[]) => ids.filter(blockId => !dropped.has(blockId))
-  const context: PublicBlockContext = { utm: profile.site?.utm, siteUrl: build.envSiteUrl || profile.site?.url }
+  // The ONE rule for "where the page lives" (env first, then `site.url`, only a real http(s) URL counts): the head, the QR code and the editor use it too.
+  const context: PublicBlockContext = { utm: profile.site?.utm, siteUrl: resolveSiteUrl(build.envSiteUrl, profile.site) }
   return {
     profile: toPublicProfileInfo(profile.profile, gravatarPath),
     blocks: profile.blocks.filter(block => !dropped.has(block.id)).map(block => toPublicBlock(block, context)),
