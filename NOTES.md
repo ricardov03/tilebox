@@ -1263,3 +1263,85 @@ $ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks         
 - Review (Grok or OCR) not run yet. `content/link-check.ts`, `app/utils/vcard.ts` and the change in `content/unfurl.ts` are the security-relevant parts.
 - Safari and Firefox: not checked. `navigator.share` on a real phone: not checked (stubbed in the test).
 - `npm run publish` with the link check step was not run against a real provider (it needs Ricardo's login). `node scripts/publish.mjs --help` prints the new flag.
+
+## WP12
+
+Pexels photo picker (PLAN.md 13.1, now section 8 `### WP12`). Branch: `wp/12-pexels` (from the local `merge/main-tmp`). Date: 2026-09-18. Work was done in a separate git worktree; the main checkout was not touched. Not merged.
+
+No real Pexels key was available: NO real API call was made. Everything below the documentation check runs against a mocked connection.
+
+### Pexels API facts, checked on 2026-09-18 (https://www.pexels.com/api/documentation/)
+- Search: `GET https://api.pexels.com/v1/search`. `query` (required), `orientation` (`landscape`, `portrait`, `square`), `size` (`large` 24 MP, `medium` 12 MP, `small` 4 MP), `color` (12 names or a hex code), `locale`, `page` (default 1), `per_page` (default 15, max 80). One photo: `GET https://api.pexels.com/v1/photos/:id`.
+- Key: the header `Authorization: <key>`, the key as it is (no `Bearer`).
+- Photo: `id`, `width`, `height`, `url` (the photo page), `photographer`, `photographer_url`, `photographer_id`, `avg_color`, `src`, `alt`, `liked`. `src`: `original`, `large2x` (940x650 at DPR 2), `large` (940x650), `medium` (height 350), `small` (height 130), `portrait` (800x1200), `landscape` (1200x627), `tiny` (280x200).
+- Search answer: `photos`, `page`, `per_page`, `total_results`, `next_page` and `prev_page` (both optional).
+- Limits: 200 requests per hour and 20,000 per month by default. Headers `X-Ratelimit-Limit`, `X-Ratelimit-Remaining`, `X-Ratelimit-Reset` (UNIX seconds). **They come with 2xx answers only, NOT with a 429.** This changes the design: see decision 3.
+- Guidelines: "show a prominent link to Pexels" when you use the API, "always credit our photographers when possible (e.g. 'Photo by John Doe on Pexels' with a link to the photo page on Pexels)", do not copy the core function of Pexels, do not work around the rate limit.
+
+### What was built
+- `content/pexels.ts`: the engine (`searchPhotos`, `pickPhoto`, the zod input schemas, `PexelsError` with an HTTP status). Plain TypeScript, no Nuxt imports, paths from `ROOT` (the WP7 lesson), so Playwright can run it with a mocked `transport` and `lookup`.
+- `server/api/images/pexels/status.get.ts`, `search.get.ts`, `pick.post.ts` + `server/utils/pexels.ts`. All: 404 outside `nuxt dev`, then `assertEditorRequest()` (`none`, `none`, `json`). `search` and `pick` load the engine with `import.meta.dev ? await import(...) : null`, like `/api/unfurl`, so a build has no copy of it.
+- `app/components/editor/PexelsPicker.vue` (new) and the two tabs in `ImagePicker.vue`.
+- `imageCredit()` in `app/components/blocks/media.ts` + the credit line of `ImageBlock.vue`.
+- `.env.example`, README "Stock photos (Pexels)", `docs/security.md` "The Pexels picker", PLAN.md.
+
+### Decisions
+1. **The key is read with `process.env.PEXELS_API_KEY` in the route, not `runtimeConfig`.** Nuxt loads `.env` into the dev server (checked by hand: a `.env` with a dummy key -> `GET /status` answers `{ "configured": true }`). No `runtimeConfig` entry means no way to put it under `public` by mistake, and `nuxt.config.ts` has no word "pexels" (a test checks that).
+2. **`POST /pick` takes `{ id, size? }`, `size` = `large2x` (default) or `large`.** Never a URL. `large2x` is 1880 px wide at most, enough for the 1600 px target, and about 0.3 to 0.8 MB. `original` is not offered: it can be 50 MP for no gain. The byte limit stays at 15 MB as asked.
+3. **The 429 text.** A 429 has no rate-limit headers, so the engine remembers `X-Ratelimit-Reset` of the last good answer of this dev server. Known and in the future -> "try again at 14:05" (with the date when it is another day). Unknown -> "try again in about one hour". The route also sends `data.reset`.
+4. **The allow-list lives in `safeRequest()`** (`content/unfurl.ts`, a WP10a file; change noted here as PLAN.md section 0 rule 2 asks). Two new, optional request fields: `onlyHosts` (every hop must be https on a listed host, else "blocked host"; the address check still runs) and `headers` (sent on the FIRST hop only, so a redirect target never gets the key). Nothing changes for the callers that do not set them; `unfurl.spec.ts` and `security.spec.ts` are green.
+5. **WebP, quality 82.** Nothing was hurt by WebP: `ImageBlockSchema.src` is any local path, the link images of WP10a are WebP already, every browser of the last 5 years reads it. sharp drops metadata by default; the test puts an EXIF copyright text into the input and looks for it in the output.
+6. **Idempotent pick still asks the API once** (1 request of the quota): the answer needs `alt` and the credit fields, and they are not stored next to the file. The download and the encode are skipped. A file that is not a readable WebP is written again.
+7. **Alt text.** `alt` is required by the schema, so it is never empty: a new block has "Sample image". The Pexels alt is used when the current text is empty, starts with "Sample image", or is the text this field filled in for the photo picked before. A text the owner wrote stays. Pexels has no alt -> "Photo by {author}".
+8. **One `stock` event, one patch.** `ImagePicker.vue` emits `stock` with `src`, `alt` and `source` together; `BlockForm.vue` patches them at once. Two separate `update:*` events would race with `onImageSrc`, which sets `source: null`. The edit in `BlockForm.vue` is 2 template lines (`:stock-size`, `@stock`), no script change: the agent that refactors the text inputs should keep them.
+9. **Only image blocks get the Pexels tab** (`stock-size` prop). The video thumbnail field has no `source`, so a stock photo there could not be credited.
+10. **No key name in client code.** The edit page chunk IS part of `dist/` (the page says "dev only" there). So the help text of the no-key state says "the Pexels line of `.env` / `.env.example`" and never names the variable; the exact name is in README and `.env.example`. This keeps the canary strict: the name of the variable is in NO built file.
+11. **Offline.** The dev server is on the same machine and answers without internet, so the tab asks `navigator.onLine` first (no request). When the browser says online but Pexels cannot be reached, the server answers 502 / 504 "Cannot reach Pexels (...)" and the tab adds "Check your internet connection".
+12. **`hideCredit`: not built**, as decided. `imageCredit()` always answers a line for `provider: pexels`, also without an author ("Photo on Pexels"). URLs are used as they are: the UTM feature of another branch must skip credit links (it should only touch block URLs).
+13. **Thumbnails in the grid load from `images.pexels.com`** with `referrerpolicy="no-referrer"`. Dev editor only. The public page test "never requests another origin" is unchanged and green.
+14. **Housekeeping (item 7): confirmed.** `pruneLinkFiles()` loops over `['icons', 'thumbs']` only. `pexels.spec.ts` has a test with a `blocks/pexels-1.webp` next to an orphan icon: only the icon goes.
+
+### Deviations and why
+- **The credit links are tested in the `dev` project, not in the static browser.** The static site is built from the tracked example, and that example must not claim a Pexels credit for `sample.jpg` (it is not a Pexels photo), and a real Pexels photo could not be downloaded without a key. The preview tile of the editor IS the public `ImageBlock.vue`, so `pexels-editor.spec.ts` checks the two links, `href`, `rel`, `target` there, and `pexels.spec.ts` checks `imageCredit()` as a unit. When Ricardo's profile has a Pexels photo, `public.spec.ts` ("never requests another origin") covers it on the static page as it is.
+- **The key canary needs the dummy key at build time to be a full check**: `PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate`. Without it the value check passes trivially; the name check, the engine check (`api.pexels.com`) and the source checks still work. The test also looks for a key found in `.env` or in the environment, so on Ricardo's machine it checks his real key (only file names are printed). Suggestion for the architect, not done here (CI files belong to WP4/WP6): add that dummy variable to the `generate` step of `.github/workflows/ci.yml`.
+- `.nuxt/dist/client` does not exist after `nuxt generate` in this Nuxt version (the client files are moved to `.output/public` = `dist`). The canary reads it when it exists, and `.output/server` too.
+
+### Requests to other WPs
+- `CLAUDE.md` still says "Later Pexels picker". An agent may not edit that file: Ricardo or the architect should change the line to "Pexels picker built (WP12), key in `.env`".
+- The BlockForm refactor (local drafts): keep `:stock-size="block.size"` and `@stock="patch({ src, alt, source })"` on the image field, and let the alt draft follow `block.alt` after a pick.
+
+### Tests
+- `static`: +26 in `tests/e2e/pexels.spec.ts` (9 search, 2 input, 7 pick, 1 housekeeping, 4 credit, 3 key canary).
+- `dev`: +10 in `tests/e2e/pexels-editor.spec.ts` (6 browser tests with mocked routes, 4 on the real routes that are refused before any network call).
+- Cleanup: `content/profile.json` is backed up and restored (`.e2e-pexels-backup`, in `.gitignore`), every `public/blocks/pexels-*` is removed at the end.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ PEXELS_API_KEY=tilebox-canary-pexels-key-0f3a9c npm run generate   -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4423 E2E_DEV_PORT=3423 npx playwright test --project=static
+178 passed      (was 152: +26)
+$ E2E_STATIC_PORT=4423 E2E_DEV_PORT=3423 npx playwright test --project=dev
+55 passed       (was 45: +10)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ printf 'PEXELS_API_KEY=<dummy>' > .env; npx nuxt dev --port 3423
+$ curl -s localhost:3423/api/images/pexels/status                          -> { "configured": true }
+$ curl -s -o /dev/null -w '%{http_code}' -H 'Origin: https://evil.test' ... -> 403
+(.env removed afterwards)
+$ ls public/blocks        -> sample.jpg
+```
+
+### Open (needs Ricardo's real key)
+- One live run: a search, "Load more", a pick, the saved file (`public/blocks/pexels-<id>.webp`, about 1600 px, under 1 MB), the credit on the tile, `npm run generate`, the page with no foreign request.
+- The real shape of a 401 and of a 429 from Pexels (status codes are from the documentation; the body is not read, so a change there cannot break the message).
+- The real value of `X-Ratelimit-Reset`: the documentation says "UNIX timestamp". The code reads it as seconds.
+- Safari and Firefox: not checked (headless Chromium only).
+- Grok review of this WP (PLAN.md section 9).

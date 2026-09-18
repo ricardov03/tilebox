@@ -323,9 +323,11 @@ const labelClass = LABEL_CLASS
         :src="block.src"
         :alt="block.alt"
         require-src
+        :stock-size="block.size"
         require-alt
         @update:src="onImageSrc"
         @update:alt="onImageAlt"
+        @stock="patch({ src: $event.src, alt: $event.alt, source: $event.source })"
       />
       <EditorTextField
         :id="fid('caption')"

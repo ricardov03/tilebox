@@ -21,7 +21,7 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 - Drag and drop in the editor: `vue-draggable-plus`. Fallback gridstack.
 - Presets like PowerPoint: 3 color presets (`condomera` default, `lunchbox`, `night`), 3 font presets (`geist` default, `lunchbox`, `night`).
 - Icons: Iconify, default set `line-md`, brand fallback `simple-icons`. Picker links to icones.js.org.
-- Images: v1 local files. Later Pexels picker (decided over Unsplash). Later R2 uploads.
+- Images: local files. The Pexels picker exists (WP12): a "Pexels" tab on image blocks in `/edit`, key `PEXELS_API_KEY` in `.env` (ignored by git), dev server only, never in `dist/`. A picked photo is a local WebP in `public/blocks/` with a credit on the tile. Later R2 uploads.
 - Deploy: Cloudflare Pages, build `npm run generate`, output `dist`, `NODE_VERSION=24`.
 - Commit messages: Conventional Commits (`type(scope): subject`, present tense, lower case, max 72 chars). A local commitlint hook rejects the rest. No attribution lines.
 - Release: `npm run release` (local, makes the version commit and the tag), then it asks to publish: `git push --follow-tags origin main` + the GitHub Release with the `gh` CLI (`--push` no question, `--no-push` manual commands, `--watch` waits for the pipeline; `gh` is optional). The tag starts `.github/workflows/release.yml`, which adds the zip and the checksum. Never upload a local zip (personal data). Repair an existing tag: `npm run release:publish -- vX.Y.Z`. Re-run the pipeline: `gh workflow run release.yml -f tag=vX.Y.Z`.

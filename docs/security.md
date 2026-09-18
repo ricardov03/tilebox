@@ -1,6 +1,6 @@
-# Security: the link preview engine and the dev routes
+# Security: the link preview engine, the Pexels picker and the dev routes
 
-State: WP10 security round, 2026-09-18. Code: `content/unfurl.ts`, `content/unfurl-cache.ts`, `server/utils/editor.ts`, `public/_headers`. Tests: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`.
+State: WP10 security round + WP12 (Pexels picker), 2026-09-18. Code: `content/unfurl.ts`, `content/unfurl-cache.ts`, `server/utils/editor.ts`, `public/_headers`. Tests: `tests/e2e/unfurl.spec.ts`, `security.spec.ts`, `security-dev.spec.ts`.
 
 ## What runs where
 - The PUBLIC site is static files. It has no server code, makes no request to another host, and never runs the engine.
@@ -38,7 +38,18 @@ All are 404 outside `nuxt dev`. One gate, `assertEditorRequest()`: `Host` must b
 ## The public page (WP11)
 Still no runtime network call. The end-date script (under 400 bytes, inline) only reads `data-ends-at` attributes and sets `hidden`. The share button calls `navigator.share` or `navigator.clipboard` on a click. UTM tags are added at build time, from values limited to `[a-z0-9_-]`.
 
+## The Pexels picker (WP12)
+Code: `content/pexels.ts`, `server/api/images/pexels/*`, `app/components/editor/PexelsPicker.vue`. Tests: `tests/e2e/pexels.spec.ts`, `pexels-editor.spec.ts`.
+- **Dev only.** The three routes are 404 outside `nuxt dev` and go through `assertEditorRequest()`. A build has no copy of the engine (`pexels.spec.ts` looks for `api.pexels.com` in the built files).
+- **The key.** `PEXELS_API_KEY` in `.env` (ignored by git), read with `process.env` on the server, on every call. It is not in `runtimeConfig.public`. It is sent in ONE place: the `Authorization` header of the first hop to `api.pexels.com`. A redirect target never gets it, and a redirect to another host is refused. `GET /status` answers `{ configured }` only. No answer and no error text holds the key. A key with a space or a control character is refused before any request (no header injection). The canary test looks for the key value and for the name of the variable in `dist/`, `.nuxt/dist/client` and `.output/server`.
+- **`POST /pick` is not an open proxy.** The body is `{ id, size }`, parsed with a strict schema: a number and one of two fixed names. A `url` key is a 400. The engine asks the Pexels API for that ID and takes the file URL from the API answer. That URL must be `https:` on `images.pexels.com`, else nothing is downloaded. The download goes through `safeRequest()` with the host allow-list (`onlyHosts`): EVERY hop must be https on `images.pexels.com`, and the address check, the pinned IP and the redirect limit still apply. So a caller can make this machine fetch only a Pexels photo, and a lying API answer cannot point it at another host or at a private address.
+- **Cost.** Search: 8 s. Pick: 20 s for the API call and the download together, 15 MB while the body is read. One job per photo ID at a time. Identical searches are answered from memory for 10 minutes (100 entries).
+- **What is stored.** Never the remote bytes. Magic bytes must say jpeg, png or webp; sharp decodes (input limit 8192x8192 pixels) and writes a new WebP, 1600 px on the long side, no metadata, to `public/blocks/pexels-<id>.webp` (temp file + rename). `/blocks/*` has the sandbox CSP of layer 5.
+- **What the editor shows.** The route answers a small mapped shape, never the raw API answer. Thumbnail URLs must be https on `images.pexels.com`, credit links https on `pexels.com`, the color `#rrggbb`; text is cleaned like fetched link text. The grid loads thumbnails from `images.pexels.com` with `referrerpolicy="no-referrer"`. This happens in the dev editor only. The public page loads the local file and makes no foreign request.
+- **The public page.** The credit links are rendered only for http(s) URLs, with `rel="noopener noreferrer"`.
+
 ## Not covered
 - The owner's own files in `public/blocks/` are trusted (their images, their choice).
+- The Pexels key is as safe as the owner's `.env` file. A process on the owner's machine that can read files can read it.
 - A host that ignores `_headers` needs the same rules in its own format.
 - The engine trusts sharp / libvips / librsvg to decode hostile images safely. Keep them up to date.
