@@ -1,6 +1,7 @@
 <!--
   Social tile. Brand icon from the NETWORKS map. The whole tile is the link.
   No aria-label: the visible text (network name + handle) is the accessible name.
+  `rel="me"`: the link says "this profile is mine" (identity check on Mastodon and others).
 -->
 <script setup lang="ts">
 import type { SocialBlock } from '~~/types/profile'
@@ -13,7 +14,10 @@ const network = computed(() => NETWORKS[props.block.network])
 </script>
 
 <template>
-  <Tile :href="block.url">
+  <Tile
+    :href="block.url"
+    rel="me"
+  >
     <Icon
       :name="network.icon"
       class="size-9 md:size-11"

@@ -656,7 +656,8 @@ if (personalTracked.ok) {
   fail('content/profile.json is tracked by git. It is your personal file and must stay out of the repo.\n'
     + 'Run: git rm --cached content/profile.json && git commit -m "chore(content): untrack the personal profile"')
 }
-const trackedImages = git('ls-files', 'public/blocks', 'public/avatar.*').out.split('\n').filter(Boolean)
+// public/site (generated favicon set + social image) and public/site-uploads (your own) are personal too (WP10b).
+const trackedImages = git('ls-files', 'public/blocks', 'public/avatar.*', 'public/site', 'public/site-uploads').out.split('\n').filter(Boolean)
 const strayImages = trackedImages.filter(file => file !== 'public/blocks/sample.jpg')
 if (strayImages.length > 0) {
   log(strayImages.map(file => `      ${file}`).join('\n'))

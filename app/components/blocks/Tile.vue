@@ -15,17 +15,21 @@ const props = withDefaults(defineProps<{
   padded?: boolean
   /** Clip children to the rounded corners. */
   clip?: boolean
+  /** Extra link relation, for example `me` on social tiles. Added to `noopener noreferrer` on external links. */
+  rel?: string
 }>(), {
   href: undefined,
   variant: 'tile',
   ariaLabel: undefined,
   padded: true,
   clip: false,
+  rel: undefined,
 })
 
 /** Only http(s) and mailto: become links. Anything else renders as a plain tile. */
 const link = computed(() => (props.href !== undefined && isSafeHref(props.href) ? props.href : null))
 const external = computed(() => link.value !== null && isHttpUrl(link.value))
+const relValue = computed(() => [props.rel, external.value ? 'noopener noreferrer' : ''].filter(Boolean).join(' ') || undefined)
 
 const VARIANT_CLASSES: Record<TileVariant, string> = {
   tile: 'border border-line bg-tile text-ink',
@@ -49,7 +53,7 @@ const classes = computed(() => [
     v-if="link"
     :href="link"
     :target="external ? '_blank' : undefined"
-    :rel="external ? 'noopener noreferrer' : undefined"
+    :rel="relValue"
     :aria-label="ariaLabel"
     :class="classes"
   >

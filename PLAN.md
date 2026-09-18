@@ -4,7 +4,7 @@ A Bento-style personal portfolio. Static. Self-hosted.
 Repo: `github.com/ricardov03/tilebox` (Ricardo creates it on GitHub). npm name `tilebox` is free (checked 2026-09-17).
 
 Date: 2026-09-17 (v4: canvas synced, images phase)
-Status: v1 done. WP6 release tooling done. WP7 (personal data out of git) done. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). WP9 profile extras (pulsing dot, highlights, private email, Gravatar avatar) on `wp/9-profile-extras`. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
+Status: v1 done. WP6 release tooling done. WP7 (personal data out of git) done. WP8 publish command on `wp/8-publish` (needs Ricardo's real login for the final check). WP9 profile extras (pulsing dot, highlights, private email, Gravatar avatar) on `wp/9-profile-extras`. WP10a smart links and WP10b site metadata merged into wp/10-final; awaiting review. Open: real content from Ricardo, Safari/Firefox manual check, history rewrite to drop old attribution trailers. Next: section 13 (Pexels).
 Design canvas: https://claude.ai/artifact/NxtZpWcB2B3JEwwL3kahzZ (local copy of the boards: `design/canvas/`)
 
 ## 0. Rules for every agent (read first)
@@ -328,6 +328,18 @@ Two files, one shape (WP7): `content/profile.json` is the user's document, ignor
   "layout": {
     "desktop": ["b1","b2","b3","b4","b5","b6","b7","b8","b9","b10","b11"],
     "mobile":  ["b1","b4","b2","b3","b5","b6","b7","b8","b9","b10","b11"]
+  },
+  "site": {
+    "title": "Ricardo Vargas, front-end developer",
+    "description": "I build web products with Nuxt and Vue.",
+    "url": "https://example.com",
+    "lang": "en",
+    "noindex": false,
+    "xHandle": "ricardov03",
+    "jobTitle": "Front-end developer",
+    "location": "Bogota",
+    "favicon": "/site-uploads/favicon-1a2b3c.png",
+    "ogImage": "/site-uploads/og-4d5e6f.jpg"
   }
 }
 ```
@@ -336,6 +348,8 @@ Rules:
 - `profile.highlights` (WP9): optional, max 3 strings, 1 to 80 chars each, default `[]`. A real `<ul>` under the bio.
 - `profile.email` (WP9): required, `z.email()`. `profile.showEmail`: boolean, default `false`. The public page never imports this file. It imports `#profile` = `.nuxt/tilebox/public-profile.json`, the output of `toPublicProfile()` (`types/profile.ts`), written by `modules/public-profile.ts`: no `email` unless `showEmail` is true, no `showEmail` key, `avatar` already resolved. Type: `PublicProfile`.
 - Avatar precedence (WP9): `profile.avatar` when set, else `/avatar.gravatar.jpg` when `scripts/fetch-avatar.ts` downloaded it (Gravatar, sha256 of the email, build time only, never at runtime), else initials.
+- `site` (WP10b): optional top-level object, zod strict, every key optional, schema in `types/site.ts`. `title` max 70 (default `Name (@handle)`), `description` max 160 (default the bio), `url` https without a trailing slash, `lang` BCP 47 (default `en`), `noindex` (default false), `xHandle` without `@`, `jobTitle`, `location`, `favicon` and `ogImage` (local paths of uploads in `public/site-uploads/`). An old profile without `site` stays valid; no migration. `toPublicProfile()` passes `site` through without the two upload paths and adds `assets` (the files of `public/site/` that exist at config time) and `builtAt`.
+- Site URL precedence (WP10b): `NUXT_PUBLIC_SITE_URL` > `site.url` > unknown (no canonical, no og:url, relative og:image).
 - `id` unique. `size` in `1x1 | 2x1 | 1x2 | 2x2`. `section` has no size.
 - `layout.mobile` optional. Falls back to `layout.desktop`.
 - Validate with `zod` in `types/profile.ts`. Export both the schema and the TS types from it.
@@ -442,6 +456,11 @@ Design (decided by Ricardo):
 - C. Quick wins. `hidden` on every block type: `toPublicProfile()` removes the block and its ids from both layouts; the editor dims it, shows an eye-off badge, and has Hide / Show in the list row, in the tile controls and in the form. Duplicate (list row and form): fresh id, " copy", right after the original in both layouts, selected, never the spotlight. `spotlight: pop | wobble | buzz` on link blocks: at most one (zod `superRefine`; the editor moves it), transform-only keyframes, 1 cycle per 6 s, off with reduced motion, a select with a live sample in the link form.
 Done when: a github.com link without `icon` renders the inline `line-md:github` SVG on the static page and no request leaves the origin. `npm run check:icons` fails on a missing or hidden icon of the brand map. The title of a hidden block is in no file of `dist/` (`tests/e2e/privacy.spec.ts`). The spotlight tile has `animation-name: none` under reduced motion and axe stays at 0 violations. `tests/e2e/unfurl.spec.ts` (local `node:http` server, `allowHosts` for tests only) covers head priorities, relative URLs, the redirect limit, the 512 KB cut, non-html, ICO PNG extraction, magic bytes, private addresses refused without `allowHosts` (10.0.0.1, 127.0.0.1, 169.254.169.254, ::1, IPv4-mapped), cache freshness + 304, oEmbed with a mocked connection. The `dev` project covers the preview card with a mocked route, "Use fetched title", the saved switches, the failure reason, hide, duplicate, one spotlight. `.output/server` has no copy of the engine. `grep -r "hello@example.com" dist | wc -l` = 0. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev`, `node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks` green. README "Link previews", `content/README.md`, NOTES.md `## WP10a`.
 
+### WP10b. Site metadata
+Owns: `types/site.ts`, the `site` key + the third `toPublicProfile()` argument in `types/profile.ts`, `content/site-assets.ts`, `content/site-files.ts`, `scripts/build-site-assets.ts`, `assets/fonts/*`, `app/utils/site-head.ts`, `app/composables/useSiteHead.ts`, the head of `app/pages/index.vue`, the `rel` prop of `app/components/blocks/Tile.vue` + its use in `SocialBlock.vue`, `app/components/editor/SitePanel.vue`, the Site tab in `app/pages/edit.vue`, the `site` member of `EditorTab` in `useEditor.ts`, `server/api/site/*`, the site extras in `modules/public-profile.ts`, `tests/e2e/site.spec.ts`, `tests/e2e/site-editor.spec.ts`, the site test in `tests/e2e/repo.spec.ts`, `package.json` (`build:site-assets`, its place in `predev` and `pregenerate`, dev dependencies `sharp` and `satori`), the `public/site/` and `public/site-uploads/` lines in `.gitignore` and in the release preflight.
+Design (decided by Ricardo): a Site tab in the editor for the basic metadata (OG, favicon, metadata). The social image is generated from the profile at build time; an optional upload wins. (A) Optional `site` object, see section 6. (B) Site URL precedence: env > `site.url` > unknown. (C) Favicon set in `public/site/` (ignored), source: upload > avatar (circle) > initials tile in the active color preset; the ICO container is written by hand. (D) `og.png` 1200x630: upload (cover) > a satori card, always Geist (`assets/fonts`, SIL OFL 1.1) and the light colors. (E) One pure `buildHead()` + `useSiteHead()`: lang, title, description, canonical, Open Graph `profile`, X card, robots, favicon links, manifest, JSON-LD `ProfilePage` + `Person`; `rel="me"` on social tiles. (F) Dev-only routes `POST /api/site/assets` (the same builder, with the draft) and `POST /api/site/upload`. (G) Offline, never fails a build, tracked `/favicon.ico` and `/og.png` stay as fallbacks.
+Done when: `npm run generate` on the example prints `site: favicon from initials, social image generated (8 files in public/site/)` and `dist/site/` holds the 8 files. `dist/index.html` has the title `Name (@handle)`, `og:type` `profile`, `og:image` `/site/og.png` with width, height and alt, the X card, one JSON-LD script that parses with `Person.name` and `sameAs`, 4 favicon links, the manifest, and no canonical without a site URL. `buildHead()` unit checks: canonical + absolute image with a site URL, env over `site.url`, noindex, xHandle, name split, `<` escaped. Asset builder unit checks in a temp folder: 8 files, valid ICO header with a 32x32 PNG, 1200x630 under 1 MB, uploads win, broken uploads fall back, nothing throws. `public/site/` and `public/site-uploads/` are ignored and never tracked (`repo.spec.ts`). The Site tab saves to the file, a bad URL shows an inline error and is not saved, "Regenerate" refreshes the previews. axe stays at 0 violations, the page makes no foreign request, `grep -r "hello@example.com" dist | wc -l` is 0. README "Site metadata", `content/README.md`, NOTES.md `## WP10b`. `npm run lint`, `npm run typecheck`, `npm run generate`, Playwright `static` and `dev` green.
+
 ## 9. Code review with Grok
 
 - Reviewer: Grok. Tools to run it: TBD (Ricardo provides).
@@ -512,7 +531,7 @@ Goal: use your own photos without committing big files to Git.
 ### 13.3 Other ideas
 - `layout` preset: `hero-tile` (board A) | `rail` (board B left column).
 - Import a Bento.me export zip.
-- Open Graph image built at generate time from the profile.
+- ~~Open Graph image built at generate time from the profile.~~ Done in WP10b.
 - Blog or notes tile that reads a markdown folder.
 
 ### 13.4 Handle = site name, two-way between the editor and `npm run publish` (planned, NOT built)

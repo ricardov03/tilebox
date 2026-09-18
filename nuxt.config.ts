@@ -97,7 +97,10 @@ export default defineNuxtConfig({
 
   runtimeConfig: {
     public: {
-      /** Absolute site URL for og:image and og:url. Set `NUXT_PUBLIC_SITE_URL` in the host's build env. */
+      /**
+       * Absolute site URL for the canonical link, og:url, og:image and JSON-LD.
+       * `NUXT_PUBLIC_SITE_URL` (the host's build env, `npm run publish` sets it) wins over `site.url` of the profile.
+       */
       siteUrl: '',
     },
   },
