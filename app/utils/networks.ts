@@ -64,6 +64,11 @@ export const UI_ICONS = {
   edit: 'line-md:edit',
   /** Editor: the delete control on a list row and on a preview tile. */
   trash: 'line-md:trash',
+  /** Editor: the Hide / Show toggle and the "hidden" badge (an eye, an eye with a stroke). */
+  shown: 'line-md:watch',
+  hidden: 'line-md:watch-off',
+  /** Editor: the Duplicate action. */
+  duplicate: 'line-md:text-box-multiple',
   /** ThemeToggle: system, light, dark. */
   themeSystem: 'line-md:monitor',
   themeLight: 'line-md:sunny',

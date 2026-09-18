@@ -21,6 +21,7 @@ const emit = defineEmits<{
   requestDelete: [id: string]
   confirmDelete: [id: string]
   cancelDelete: []
+  toggleHidden: [id: string]
 }>()
 </script>
 
@@ -49,6 +50,7 @@ const emit = defineEmits<{
       @request-delete="emit('requestDelete', $event)"
       @confirm-delete="emit('confirmDelete', $event)"
       @cancel-delete="emit('cancelDelete')"
+      @toggle-hidden="emit('toggleHidden', $event)"
     />
   </ul>
 </template>

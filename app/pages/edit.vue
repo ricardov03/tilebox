@@ -340,6 +340,7 @@ const previewProfile = computed(() => {
               @request-delete="editor.requestDelete($event, 'tile')"
               @confirm-delete="confirmDelete"
               @cancel-delete="editor.cancelDelete"
+              @toggle-hidden="editor.toggleHidden"
             />
             <template #fallback>
               <EditorPreviewGrid
@@ -352,6 +353,7 @@ const previewProfile = computed(() => {
                 @request-delete="editor.requestDelete($event, 'tile')"
                 @confirm-delete="confirmDelete"
                 @cancel-delete="editor.cancelDelete"
+                @toggle-hidden="editor.toggleHidden"
               />
             </template>
           </ClientOnly>
@@ -549,6 +551,7 @@ const previewProfile = computed(() => {
                 @request-delete="editor.requestDelete($event, 'form')"
                 @delete="confirmDelete"
                 @cancel-delete="editor.cancelDelete"
+                @duplicate="editor.duplicateBlock"
               />
             </div>
             <EditorBlockList
@@ -562,6 +565,8 @@ const previewProfile = computed(() => {
               @request-delete="editor.requestDelete($event, 'list')"
               @confirm-delete="confirmDelete"
               @cancel-delete="editor.cancelDelete"
+              @toggle-hidden="editor.toggleHidden"
+              @duplicate="editor.duplicateBlock"
             />
             <p class="text-xs text-muted">
               Order shown: <strong class="font-medium text-ink">{{ layoutKey }}</strong>.
