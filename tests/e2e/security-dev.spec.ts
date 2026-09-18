@@ -18,6 +18,18 @@ test.describe('S1b: the dev server sends the asset headers too', () => {
     })
   }
 
+  test('a missing file keeps the sandbox CSP whatever the client accepts (the dev error handler must not write its own)', async ({ request }) => {
+    for (const accept of ['*/*', 'application/json', 'text/html', 'image/png']) {
+      const response = await request.get('/icons/missing.png', { headers: { accept } })
+      expect(response.status(), accept).toBe(404)
+      expect(response.headers()['content-security-policy'], accept).toBe(ASSET_CSP)
+      expect(response.headers()['x-content-type-options'], accept).toBe('nosniff')
+    }
+    const traversal = await request.get('/icons/..%2F..%2Fpackage.json')
+    expect(traversal.status()).toBe(404)
+    expect(await traversal.text()).not.toContain('"name"')
+  })
+
   test('the page and the editor have no sandbox CSP', async ({ request }) => {
     for (const path of ['/', '/edit']) {
       const response = await request.get(path)
