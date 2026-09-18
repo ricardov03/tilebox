@@ -335,11 +335,11 @@ export class ProfileValidationError extends Error {
 }
 
 /**
- * The public path of the downloaded Gravatar (file: `public/avatar.gravatar.jpg`).
+ * The public path of the downloaded Gravatar (file: `public/avatar.gravatar.webp`, a WebP that sharp wrote: content/gravatar-fetch.ts).
  * Here and not in content/gravatar.ts: that module imports Node built-ins, and
  * the editor page (client) needs this value too.
  */
-export const GRAVATAR_PUBLIC_PATH = '/avatar.gravatar.jpg'
+export const GRAVATAR_PUBLIC_PATH = '/avatar.gravatar.webp'
 
 /** Emails that mean "not set yet". No Gravatar lookup, and `check:profile` warns on a personal file. */
 export const PLACEHOLDER_EMAILS: readonly string[] = ['you@example.com', 'hello@example.com']

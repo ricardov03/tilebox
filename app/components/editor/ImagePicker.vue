@@ -34,6 +34,16 @@ const emit = defineEmits<{
 type PickerTab = 'upload' | 'pexels'
 const TABS: { id: PickerTab, label: string }[] = [{ id: 'upload', label: 'Upload' }, { id: 'pexels', label: 'Pexels' }]
 const tab = ref<PickerTab>('upload')
+/**
+ * The Pexels panel mounts on its first open and then STAYS mounted, hidden with `v-show` like the upload
+ * panel. A pick takes up to 20 s (download + re-encode on this machine). With `v-if` a switch to "Upload"
+ * unmounted the picker, Vue drops the `pick` event of an unmounted component, and the block never got the
+ * file that was saved. Another block (`id`) starts again: a late answer never patches the wrong block.
+ */
+const pexelsOpened = ref(false)
+watch(tab, (next) => {
+  if (next === 'pexels') pexelsOpened.value = true
+})
 const tabButtons = useTemplateRef<HTMLButtonElement[]>('tabButtons')
 
 function onTabKey(event: KeyboardEvent) {
@@ -53,6 +63,7 @@ const prefilledAlt = ref<string | null>(null)
 // The form component is used again for the next block: start on "Upload" with no memory of the last one.
 watch(() => props.id, () => {
   tab.value = 'upload'
+  pexelsOpened.value = false
   prefilledAlt.value = null
 })
 
@@ -205,8 +216,10 @@ const altId = computed(() => `${props.id}-alt`)
     </div>
 
     <div
-      v-if="stockSize && tab === 'pexels'"
+      v-if="stockSize && pexelsOpened"
+      v-show="tab === 'pexels'"
       :id="panelId('pexels')"
+      :key="id"
       role="tabpanel"
       :aria-labelledby="tabId('pexels')"
     >

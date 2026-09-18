@@ -1,14 +1,14 @@
 /**
  * Avatar from the email (Gravatar). `npm run fetch:avatar`, runs in `predev`
- * and `pregenerate` after `check:profile`. Writes public/avatar.gravatar.jpg
+ * and `pregenerate` after `check:profile`. Writes public/avatar.gravatar.webp
  * (not tracked). Prints one line. Never fails the build.
  *
  * Skipped when `profile.avatar` is set (your uploaded picture wins) or when the
- * email is a placeholder. The logic lives in content/gravatar.ts, shared with
+ * email is a placeholder. The logic lives in content/gravatar-fetch.ts, shared with
  * the dev-only route `POST /api/avatar/gravatar`.
  */
 import { readFile } from 'node:fs/promises'
-import { fetchGravatar } from '../content/gravatar'
+import { fetchGravatar } from '../content/gravatar-fetch'
 import { profilePath } from '../content/resolve'
 import { isPlaceholderEmail, parseProfile } from '../types/profile'
 

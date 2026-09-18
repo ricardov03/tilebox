@@ -10,6 +10,7 @@ State: WP10 security round + WP12 (Pexels picker), 2026-09-18. Code: `content/un
 - The URL of a link tile, chosen by the owner. From it: the page head (512 KB at most), a keyless oEmbed endpoint for 13 known sites, the web manifest, icon candidates, and the preview image when the owner asked for it.
 - Last resort for an icon: Google's favicon service. It gets the link's hostname, at edit or build time, from the owner's machine.
 - Video tiles: the YouTube thumbnail, through the same guarded request.
+- The avatar from the email (`content/gravatar-fetch.ts`, WP15): one request to `https://gravatar.com/avatar/<sha256 of the email>`, through the same guarded request, with a host allow-list (`gravatar.com`, `www.gravatar.com`, `secure.gravatar.com`, `https` only, on every redirect hop). 2 MB at most, a real JPEG, PNG or WebP by its first bytes, then sharp writes a NEW WebP (input limit 4096x4096 pixels, `failOn: 'error'`, 512 px at most, no metadata) with the fixed name `public/avatar.gravatar.webp`. Before WP15 the answer was stored as it came.
 
 ## The attacker
 1. A website the owner links to. It controls every byte of its answers: redirects, headers, HTML, icons, images, how slow it is.

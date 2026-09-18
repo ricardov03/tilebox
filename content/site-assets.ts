@@ -51,7 +51,7 @@ export interface BuildSiteAssetsOptions {
   outDir?: string
   /** Default: `<ROOT>/assets/fonts`. */
   fontsDir?: string
-  /** Default: `public/avatar.gravatar.jpg`. */
+  /** Default: `public/avatar.gravatar.webp`. */
   gravatarFile?: string
 }
 

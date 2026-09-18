@@ -1,11 +1,14 @@
 /**
- * Avatar from the email (Gravatar). One module for every caller:
- * `scripts/fetch-avatar.ts` (tsx, predev + pregenerate), the dev-only route
- * `POST /api/avatar/gravatar` (Nitro) and `modules/public-profile.ts` (config time).
+ * Avatar from the email (Gravatar): the LIGHT half. Names, paths, the hash and "is the file there?".
+ * Callers: `modules/public-profile.ts` (config time), `content/site-assets.ts`, the dev-only route
+ * `GET /api/avatar/gravatar` (Nitro, a static import) and `content/gravatar-fetch.ts`.
  *
- * The picture is downloaded to `public/avatar.gravatar.jpg` (ignored by git,
- * rule `public/avatar.*`). The public page only loads that local file. It
- * never talks to gravatar.com.
+ * The download lives in `content/gravatar-fetch.ts`, NOT here: it needs the guarded request of
+ * `content/unfurl.ts` and sharp, and a static import of this file by a Nitro route must never pull that
+ * engine into a production build (`.output/server`). Same split as `content/pexels.ts` and its routes.
+ *
+ * The picture is stored as `public/avatar.gravatar.webp` (ignored by git, rule `public/avatar.*`). The
+ * public page only loads that local file. It never talks to gravatar.com.
  *
  * Paths come from `ROOT` in ./resolve.ts, never from this file's location:
  * Nitro bundles this module into `.nuxt/` (NOTES.md, WP7 regression fix).
@@ -13,7 +16,6 @@
  */
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { GRAVATAR_PUBLIC_PATH } from '../types/profile'
 import { ROOT } from './resolve'
@@ -22,12 +24,20 @@ import { ROOT } from './resolve'
 export { GRAVATAR_PUBLIC_PATH }
 /** The file on disk. */
 export const GRAVATAR_FILE = resolve(ROOT, `public${GRAVATAR_PUBLIC_PATH}`)
+/**
+ * The name of the file before WP15. It held the bytes of gravatar.com as they came. A successful
+ * download (and a 404 that may delete) removes it, next to the file it writes.
+ */
+export const GRAVATAR_LEGACY_NAME = 'avatar.gravatar.jpg'
 
-const TIMEOUT_MS = 5000
-const MAX_BYTES = 2 * 1024 * 1024
+/**
+ * The only hosts the download may talk to, `https:` only, on every redirect hop (`onlyHosts` of the
+ * guarded request). Measured on 2026-09-18: all three answer 200 or 404 directly, with no redirect
+ * and no other image host.
+ */
+export const GRAVATAR_HOSTS: readonly string[] = ['gravatar.com', 'www.gravatar.com', 'secure.gravatar.com']
+
 const SIZE_PX = 256
-/** Raster pictures only. An SVG can carry script, and the page serves this file from its own origin. */
-const RASTER_TYPE = /^image\/(jpeg|png|webp)(;|$)/i
 
 export type GravatarStatus = 'saved' | 'none' | 'offline'
 
@@ -42,10 +52,7 @@ export function gravatarHash(email: string): string {
   return createHash('sha256').update(email.trim().toLowerCase()).digest('hex')
 }
 
-/**
- * `d=404`: no default picture, a 404 instead. Gravatar picks the format (JPEG or PNG).
- * The file is always named `.jpg`; browsers read the real format from the bytes.
- */
+/** `d=404`: no default picture, a 404 instead. Gravatar picks the format (JPEG or PNG); the stored file is always a new WebP. */
 export function gravatarUrl(email: string): string {
   return `https://gravatar.com/avatar/${gravatarHash(email)}?s=${SIZE_PX}&d=404`
 }
@@ -54,66 +61,7 @@ export function gravatarFileExists(): boolean {
   return existsSync(GRAVATAR_FILE)
 }
 
-/** `/avatar.gravatar.jpg` when the file is on disk, else undefined. Feeds `toPublicProfile()`. */
+/** `/avatar.gravatar.webp` when the file is on disk, else undefined. Feeds `toPublicProfile()`. */
 export function gravatarPathIfPresent(): string | undefined {
   return gravatarFileExists() ? GRAVATAR_PUBLIC_PATH : undefined
-}
-
-const OFFLINE: GravatarResult = { status: 'offline', message: 'avatar: offline, kept the old file' }
-
-/**
- * Writes `${file}.tmp`, then renames it over `file`. A crash or a full disk
- * never leaves a half picture at `file`. The tmp file is removed on failure.
- * `public/avatar.gravatar.jpg.tmp` is not tracked either (rule `public/avatar.*`).
- */
-async function writeAtomic(file: string, body: Buffer): Promise<void> {
-  const tmp = `${file}.tmp`
-  try {
-    await writeFile(tmp, body)
-    await rename(tmp, file)
-  }
-  catch (error) {
-    await rm(tmp, { force: true }).catch(() => {})
-    throw error
-  }
-}
-
-export interface FetchGravatarOptions {
-  /**
-   * May a 404 remove the file on disk? True only when `email` is the SAVED
-   * email of the profile file (the build script). The editor route passes
-   * false for an unsaved draft email, so a try with another email can never
-   * delete the picture of the saved profile.
-   */
-  allowDelete: boolean
-  /** The file to write or remove. Default: `GRAVATAR_FILE`. Tests pass a file in a temp folder. */
-  targetFile?: string
-}
-
-/**
- * Downloads the Gravatar of `email`. Never throws.
- * - 200 + image + at most 2 MB: writes the file (tmp file, then rename). `saved`.
- * - 404: this email has no Gravatar. `none`. A stale file is removed only with `allowDelete`.
- * - anything else (network error, timeout, 5xx, a type that is not JPEG, PNG or WebP,
- *   odd body): no usable picture, the old file stays. `offline`.
- */
-export async function fetchGravatar(email: string, options: FetchGravatarOptions): Promise<GravatarResult> {
-  const target = options.targetFile ?? GRAVATAR_FILE
-  try {
-    const response = await fetch(gravatarUrl(email), { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: 'follow' })
-    if (response.status === 404) {
-      if (options.allowDelete) await rm(target, { force: true })
-      return { status: 'none', message: 'avatar: no gravatar for this email' }
-    }
-    const type = response.headers.get('content-type') ?? ''
-    if (!response.ok || !RASTER_TYPE.test(type.trim())) return OFFLINE
-    if (Number(response.headers.get('content-length') ?? 0) > MAX_BYTES) return OFFLINE
-    const body = Buffer.from(await response.arrayBuffer())
-    if (body.byteLength === 0 || body.byteLength > MAX_BYTES) return OFFLINE
-    await writeAtomic(target, body)
-    return { status: 'saved', message: 'avatar: gravatar saved' }
-  }
-  catch {
-    return OFFLINE
-  }
 }

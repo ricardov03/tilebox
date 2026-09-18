@@ -8,12 +8,8 @@
 <script setup lang="ts">
 import type { Profile } from '~~/types/profile'
 import { isSiteUrl } from '~~/types/site'
+import type { SiteAssetsMade } from '~/composables/useSiteAssets'
 import { resolveSiteUrl } from '~/utils/site-head'
-
-interface AssetsResponse {
-  version: string
-  extras?: { qrUrl: string, messages: string[] }
-}
 
 const { draft, site } = useSiteDraft()
 
@@ -23,19 +19,33 @@ const siteUrl = computed(() => resolveSiteUrl(envSiteUrl, site.value))
 const canMake = computed(() => isSiteUrl(siteUrl.value))
 const hasTile = computed(() => draft.value?.blocks.some(block => block.type === 'qr') ?? false)
 
-/** Cache-busting stamp. Set on the client only, so the first render has no `?v=`. */
-const version = ref('')
+/** One stamp and one "URL inside the file" for this panel and the Site panel: both call the same route. */
+const assets = useSiteAssets()
+const { bust } = assets
 const previewOk = ref(true)
 const busy = ref(false)
 const error = ref<string | null>(null)
-/** The URL inside the code that was made last. */
-const madeFor = ref<string | null>(null)
-
-onMounted(() => {
-  version.value = Date.now().toString(36)
+/** The URL inside the file, when this session made it ("Make the QR code" here, or "Regenerate" of the Site panel). */
+const madeFor = computed(() => assets.qrUrl.value || null)
+/** The URL a new code would open. */
+const wanted = computed(() => `${siteUrl.value}/`)
+/**
+ * What the panel knows about `public/site/qr.svg`:
+ * - `current`: made in this session for the URL of the draft.
+ * - `stale`: made in this session for ANOTHER URL (the Site URL changed after). No download: a printed code lasts.
+ * - `unknown`: a file of the last build or an earlier session. The panel cannot read the URL out of it, so it
+ *   never says that the file opens the URL of the draft.
+ */
+const fileState = computed<'current' | 'stale' | 'unknown'>(() => {
+  if (!madeFor.value) return 'unknown'
+  return madeFor.value === wanted.value ? 'current' : 'stale'
 })
 
-const bust = (path: string) => (version.value ? `${path}?v=${version.value}` : path)
+onMounted(assets.touch)
+// A new file (from either panel): try the preview again, or show "no code" when the route made none.
+watch([assets.version, assets.qrUrl], () => {
+  previewOk.value = assets.qrUrl.value !== ''
+})
 
 async function make() {
   if (!draft.value || busy.value) return
@@ -43,10 +53,8 @@ async function make() {
   error.value = null
   try {
     const body: Profile = draft.value
-    const res = await $fetch<AssetsResponse>('/api/site/assets', { method: 'POST', body })
-    version.value = res.version
-    madeFor.value = res.extras?.qrUrl || null
-    previewOk.value = Boolean(res.extras?.qrUrl)
+    const res = await $fetch<SiteAssetsMade>('/api/site/assets', { method: 'POST', body })
+    assets.made({ version: res.version, extras: res.extras ?? { qrUrl: '', messages: [] } })
   }
   catch (err) {
     error.value = err instanceof Error ? err.message : 'Request failed'
@@ -92,8 +100,19 @@ const buttonClass = `flex min-h-11 items-center rounded-full border border-line 
       >
         No QR code yet. Press "Make the QR code".
       </p>
-      <p class="font-mono text-xs text-muted">
-        {{ madeFor ?? `${siteUrl}/` }}
+      <p
+        class="text-xs text-muted"
+        :data-qr-caption="fileState"
+      >
+        <template v-if="fileState === 'current'">
+          Opens <span class="font-mono">{{ madeFor }}</span>
+        </template>
+        <template v-else-if="fileState === 'stale'">
+          This file opens <span class="font-mono">{{ madeFor }}</span>. The site URL is now <span class="font-mono">{{ wanted }}</span>: press "Make the QR code" again.
+        </template>
+        <template v-else>
+          This is the file of the last build. Press "Make the QR code" to be sure that it opens <span class="font-mono">{{ wanted }}</span>
+        </template>
       </p>
       <div class="flex flex-wrap gap-2">
         <button
@@ -106,14 +125,14 @@ const buttonClass = `flex min-h-11 items-center rounded-full border border-line 
           {{ busy ? 'Working...' : 'Make the QR code' }}
         </button>
         <a
-          v-if="previewOk"
+          v-if="previewOk && fileState !== 'stale'"
           href="/site/qr.svg"
           download="qr.svg"
           :class="buttonClass"
           data-qr-svg
         >Download SVG</a>
         <a
-          v-if="previewOk"
+          v-if="previewOk && fileState !== 'stale'"
           href="/api/site/qr.png"
           download="qr.png"
           :class="buttonClass"

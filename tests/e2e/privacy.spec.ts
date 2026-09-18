@@ -136,9 +136,9 @@ test.describe('toPublicProfile', () => {
   })
 
   test('avatar: the uploaded one wins, then the Gravatar file, then none', () => {
-    expect(toPublicProfile(withInfo({ avatar: '/avatar.png' }), '/avatar.gravatar.jpg').profile.avatar).toBe('/avatar.png')
-    expect(toPublicProfile(withInfo({ avatar: null }), '/avatar.gravatar.jpg').profile.avatar).toBe('/avatar.gravatar.jpg')
-    expect(toPublicProfile(base, '/avatar.gravatar.jpg').profile.avatar).toBe('/avatar.gravatar.jpg')
+    expect(toPublicProfile(withInfo({ avatar: '/avatar.png' }), '/avatar.gravatar.webp').profile.avatar).toBe('/avatar.png')
+    expect(toPublicProfile(withInfo({ avatar: null }), '/avatar.gravatar.webp').profile.avatar).toBe('/avatar.gravatar.webp')
+    expect(toPublicProfile(base, '/avatar.gravatar.webp').profile.avatar).toBe('/avatar.gravatar.webp')
     expect('avatar' in toPublicProfile(withInfo({ avatar: null })).profile).toBe(false)
   })
 

@@ -121,6 +121,44 @@ test('schedule: the two inputs round-trip to ISO with this machine\'s offset, a 
   expect(cleared).toEqual(block)
 })
 
+test('a QR block offers only the sizes its schema takes', async ({ page }) => {
+  await openEditor(page)
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'QR code', exact: true }).click()
+  const size = page.locator('form select[id$="-size"]')
+  await expect(size).toHaveValue('1x1')
+  await expect(size.locator('option')).toHaveText(['1x1', '2x2'])
+  await size.selectOption('2x2')
+  await expect(page.locator('form [role="alert"]')).toHaveCount(0)
+  // Another type still has every size.
+  await page.getByRole('button', { name: '← All blocks' }).click()
+  await page.locator(`[data-select-block="${firstLink().id}"]`).click()
+  await expect(page.locator('form select[id$="-size"] option')).toHaveCount(4)
+  // Not saved: the next test loads the file again.
+})
+
+test('schedule: a date that is half typed stays when the form renders again (a late commit of another field)', async ({ page }) => {
+  const block = firstLink()
+  const oldTitle = block.type === 'link' ? block.title : ''
+  await openBlock(page, block.id)
+  const start = page.locator('[data-schedule-input="startsAt"]')
+  await start.fill('2031-05-06T10:00')
+  await expect(start).toHaveValue('2031-05-06T10:00')
+  // Clear ONE part of the date: the control is incomplete and its value is ''. The browser fires `change` for
+  // that too, so the local state follows and a new render has nothing old to write back (Grok B5b2 said it had).
+  await start.focus()
+  await page.keyboard.press('Backspace')
+  await expect(start).toHaveValue('')
+  // The title commits now (as its idle timer does while the owner is already in the date field): the form renders again.
+  const title = page.locator('form input[id$="-title"]')
+  await title.fill(`${oldTitle} x`)
+  await title.blur()
+  await expect(page.locator(`li[data-id="${block.id}"]`)).toContainText(`${oldTitle} x`)
+  // The half-typed date is still half typed: the old date did not come back.
+  await expect(start).toHaveValue('')
+  // Not saved: the next test loads the file again.
+})
+
 test('an end date in the past shows Expired', async ({ page }) => {
   const block = firstLink()
   await openBlock(page, block.id)
@@ -315,6 +353,52 @@ test('share checkbox: off writes share false and the dev page has no button, on 
   await box.check()
   await save(page)
   expect(readProfile().site?.share).toBeUndefined()
+})
+
+test('QR panel: the caption names the URL that is IN the file, and Make / Regenerate refresh the previews of both panels', async ({ page }) => {
+  // Mocked: no file is written. The answer holds the URL the route would put into the code.
+  let made = 0
+  await page.route('**/api/site/assets', async (route) => {
+    const body = route.request().postDataJSON() as { site?: { url?: string } }
+    made++
+    const url = (body.site?.url ?? '').replace(/\/+$/, '')
+    await route.fulfill({ json: { files: [], faviconSource: 'initials', ogSource: 'generated', messages: [], version: `made${made}`, extras: { qrUrl: url ? `${url}/` : '', messages: [] } } })
+  })
+  const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#fff' } }).png().toBuffer()
+  await page.route(/\/site\/qr\.svg/, route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>' }))
+  await page.route(/\/site\/(og|apple-touch-icon)\.png|\/site\/favicon\.ico/, route => route.fulfill({ contentType: 'image/png', body: png }))
+  await openSiteTab(page)
+  const panel = page.locator('[data-qr-panel]')
+  const caption = panel.locator('[data-qr-caption]')
+  const field = page.getByLabel('Site URL')
+
+  // A file from an earlier build or Make is on disk. A new Site URL in the draft is NOT what that file opens.
+  await field.fill('https://new.example')
+  await field.blur()
+  await expect(panel.locator('[data-qr-preview]')).toBeVisible()
+  await expect(caption).toContainText('Press "Make the QR code"')
+  await expect(caption).toContainText('https://new.example/')
+  await expect(caption).not.toHaveText('https://new.example/')
+
+  // Make: the caption is the URL of the answer, and the Site panel's previews load again (one stamp for both panels).
+  await panel.locator('[data-qr-make]').click()
+  await expect(caption).toHaveText('Opens https://new.example/')
+  await expect(panel.locator('[data-qr-svg]')).toBeVisible()
+  await expect(page.locator('[data-site-og-preview]')).toHaveAttribute('src', '/site/og.png?v=made1')
+
+  // The Site URL changes after the Make: the file still opens the old URL. The panel says so and offers no download.
+  await field.fill('https://other.example')
+  await field.blur()
+  await expect(caption).toContainText('This file opens https://new.example/')
+  await expect(caption).toContainText('https://other.example/')
+  await expect(panel.locator('[data-qr-svg]')).toHaveCount(0)
+  await expect(panel.locator('[data-qr-png]')).toHaveCount(0)
+
+  // "Regenerate" of the Site panel draws the QR code too: the QR panel follows.
+  await page.getByRole('button', { name: 'Regenerate' }).click()
+  await expect(caption).toHaveText('Opens https://other.example/')
+  await expect(panel.locator('[data-qr-preview]')).toHaveAttribute('src', '/site/qr.svg?v=made2')
+  // Not saved: the next test loads the file again.
 })
 
 test('"Check links" with the route mocked: badges on the rows, in memory only', async ({ page }) => {
