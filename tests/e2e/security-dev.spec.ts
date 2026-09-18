@@ -131,7 +131,7 @@ test.describe('S6: the dev write routes take only what the editor sends', () => 
   })
 
   test('the read routes refuse a foreign Host too (DNS rebinding), and answer the editor', async ({ request }) => {
-    // `q=` is empty on purpose: the icon search then answers without asking the Iconify API.
+    // The icon search is local (WP18): an empty `q` answers with the default list.
     for (const route of ['/api/profile', '/api/avatar/gravatar', '/api/icons/search?q=']) {
       expect((await request.get(route, { headers: { host: 'evil.example' } })).status(), route).toBe(403)
       expect((await request.get(route, { headers: { 'sec-fetch-site': 'cross-site' } })).status(), route).toBe(403)
