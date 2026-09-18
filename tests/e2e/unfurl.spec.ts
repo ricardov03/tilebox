@@ -303,6 +303,26 @@ test.describe('pure helpers', () => {
     expect(pickBySize([{ size: 16 }, { size: 48 }])?.size).toBe(48)
   })
 
+  test('C4: cleanText drops control characters and bidi controls, parseHead uses it for every fetched text', () => {
+    // C0, DEL, C1: never part of a title. Tab and newline count as white space.
+    expect(cleanText('a\u0000b\u0007c\u001Bd\u007Fe\u0085f\u009Fg', 120)).toBe('abcdefg')
+    expect(cleanText('one\ttwo\nthree\r\nfour', 120)).toBe('one two three four')
+    // Bidi controls can make text read as something else ("gpj.exe" tricks): U+202A-202E and U+2066-2069 go.
+    expect(cleanText('invoice\u202Egnp.exe', 120)).toBe('invoicegnp.exe')
+    expect(cleanText('\u202Aa\u202Bb\u202Cc\u202Dd\u2066e\u2067f\u2068g\u2069h', 120)).toBe('abcdefgh')
+    // Only controls = no text. Real right-to-left letters and emoji stay.
+    expect(cleanText('\u202E\u0000 \u2066', 120)).toBeUndefined()
+    expect(cleanText('שלום 👋 café', 120)).toBe('שלום 👋 café')
+
+    const head = parseHead(`<head>
+      <title>T\u0000itle\u202E</title>
+      <meta property="og:description" content="Desc\u0007ription\u2066">
+      <meta property="og:site_name" content="Si\u009Fte\u202D">
+      <meta property="og:image" content="/a.png"><meta property="og:image:alt" content="Al\u001Bt\u2069">
+    </head>`, 'https://site.test/')
+    expect(head).toMatchObject({ title: 'Title', description: 'Description', siteName: 'Site', image: { alt: 'Alt' } })
+  })
+
   test('decodeHtml: the header charset first, then <meta charset>, then utf-8', () => {
     const latin1 = Buffer.from('<meta charset="iso-8859-1"><title>caf\xE9</title>', 'latin1')
     expect(decodeHtml(latin1, 'text/html')).toContain('café')

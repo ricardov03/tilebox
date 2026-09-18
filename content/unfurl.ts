@@ -415,10 +415,18 @@ export interface HeadData {
   manifest?: string
 }
 
-/** Trim, collapse whitespace, cap the length. */
+/** C0 and C1 control characters (after white space became a space), and the Unicode bidi controls U+202A-202E and U+2066-2069. */
+// eslint-disable-next-line no-control-regex -- removing control characters is the point
+const UNSAFE_TEXT = /[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g
+
+/**
+ * Every text that comes from a website (title, description, site name, alt, oEmbed fields) goes
+ * through here: white space collapsed, control characters and bidi controls removed (a bidi
+ * override can make a title read as something else in the editor and on the tile), length capped.
+ */
 export function cleanText(value: string | undefined, max: number): string | undefined {
   if (value === undefined) return undefined
-  const text = value.replace(/\s+/g, ' ').trim()
+  const text = value.replace(/\s+/g, ' ').replace(UNSAFE_TEXT, '').replace(/ {2,}/g, ' ').trim()
   if (!text) return undefined
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
 }
