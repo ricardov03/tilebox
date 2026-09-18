@@ -118,12 +118,13 @@ by_src = collections.Counter(r.get("source") for r in rows)
 by_sev = collections.Counter(r.get("severity") for r in rows)
 by_file = collections.Counter("/".join((r.get("file") or "?").split("/")[:2]) for r in rows)
 print(f"# Findings ledger: {len(rows)} rows" + (f" since {since}" if since else ""))
-print("\n## By category (the top one is the next script to write)")
+print("\n## By category (the top one that is not `other` is the next script to write)")
 for c, n in by_cat.most_common(): print(f"- {c}: {n}")
 print("\n## By source"); [print(f"- {s}: {n}") for s, n in by_src.most_common()]
 print("\n## By severity"); [print(f"- {s}: {n}") for s, n in by_sev.most_common()]
 print("\n## By area"); [print(f"- {a}: {n}") for a, n in by_file.most_common(8)]
-top = by_cat.most_common(1)[0]
+# `other` is not a shape a script can check, so it never names the next check.
+top = next(((c, n) for c, n in by_cat.most_common() if c != "other"), by_cat.most_common(1)[0])
 print(f"\nfindings-ledger: rows={len(rows)} top_category={top[0]} top_count={top[1]} " + " ".join(f"{s}={by_src.get(s, 0)}" for s in sources.split()))
 PY
         ;;
