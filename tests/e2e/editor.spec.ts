@@ -6,7 +6,8 @@
  */
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { expect, test, type Page } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { PERSONAL_PROFILE_PATH as PROFILE_PATH, readProfile, ROOT } from './helpers'
 import type { Block, Profile } from '../../types/profile'
 
@@ -304,6 +305,140 @@ test('"No" and Escape in the list row confirm keep the block', async ({ page }) 
   await expect(page.locator(`li[data-id="${block.id}"]`)).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
   expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
+})
+
+test('the three delete triggers are the same small red outlined trash button with a 44 px hit area', async ({ page }) => {
+  const block = middleBlock(readProfile())
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await openEditor(page)
+  const label = await rowLabel(page, block.id)
+  const name = `Delete ${label}`
+
+  /** What the control looks like: the visible box (`[data-delete-visual]`) and the button around it (the hit area). */
+  const look = (trigger: Locator) => trigger.evaluate((button) => {
+    const visual = button.querySelector('[data-delete-visual]')
+    const icon = visual?.querySelector('svg, [class*="iconify"], span')
+    if (!(button instanceof HTMLButtonElement) || !(visual instanceof HTMLElement)) throw new Error('not the shared delete button')
+    // The token, resolved by the browser to the same notation as a computed color.
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--color-danger)'
+    button.append(probe)
+    const danger = getComputedStyle(probe).color
+    probe.remove()
+    const style = getComputedStyle(visual)
+    const hit = button.getBoundingClientRect()
+    const box = visual.getBoundingClientRect()
+    return {
+      type: button.type,
+      danger,
+      border: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+      borderWidth: style.borderTopWidth,
+      borderStyle: style.borderTopStyle,
+      background: style.backgroundColor,
+      color: style.color,
+      radius: style.borderTopLeftRadius,
+      buttonBackground: getComputedStyle(button).backgroundColor,
+      hit: [Math.round(hit.width), Math.round(hit.height)],
+      box: [Math.round(box.width), Math.round(box.height)],
+      icon: icon instanceof Element ? [Math.round(icon.getBoundingClientRect().width), Math.round(icon.getBoundingClientRect().height)] : null,
+      title: visual.getAttribute('title'),
+      hiddenFromAt: visual.getAttribute('aria-hidden'),
+      buttonTitle: button.getAttribute('title'),
+    }
+  })
+
+  // 1. The list row, 2. the tile corner (shown on hover), 3. the form footer. All found by role and name.
+  const row = page.locator('ol > li').filter({ has: page.locator(`[data-select-block="${block.id}"]`) })
+  const listLook = await look(row.getByRole('button', { name, exact: true }))
+  const tile = page.locator(`li[data-id="${block.id}"]`)
+  await tile.hover()
+  const tileLook = await look(tile.getByRole('button', { name, exact: true }))
+  await selectFromList(page, block.id)
+  const formTrigger = page.locator('form').getByRole('button', { name, exact: true })
+  const formLook = await look(formTrigger)
+
+  const transparent = 'rgba(0, 0, 0, 0)'
+  for (const [where, seen] of [['list row', listLook], ['tile corner', tileLook], ['form footer', formLook]] as const) {
+    expect(seen.type, where).toBe('button')
+    expect(seen.danger, where).toMatch(/^(rgb|oklab|color)/)
+    expect(seen.border, where).toEqual([seen.danger, seen.danger, seen.danger, seen.danger])
+    expect([seen.borderWidth, seen.borderStyle], where).toEqual(['1px', 'solid'])
+    expect(seen.color, where).toBe(seen.danger)
+    expect(seen.background, where).toBe(transparent)
+    expect(seen.buttonBackground, where).toBe(transparent)
+    expect(seen.box, where).toEqual([32, 32])
+    expect(seen.icon, where).toEqual([18, 18])
+    expect(seen.radius, where).toBe('8px')
+    expect(seen.hit[0], where).toBeGreaterThanOrEqual(44)
+    expect(seen.hit[1], where).toBeGreaterThanOrEqual(44)
+    // One name for a screen reader (`aria-label`); the tooltip is on the box that is hidden from it.
+    expect([seen.title, seen.hiddenFromAt, seen.buttonTitle], where).toEqual([name, 'true', null])
+  }
+  // The same look in all three places, not three look-alikes.
+  expect(tileLook).toEqual(listLook)
+  expect(formLook).toEqual(listLook)
+
+  // The form footer: not full width any more, and on the right edge of the footer.
+  const footer = page.locator('[data-form-delete]')
+  const [footerBox, triggerBox] = [await footer.boundingBox(), await formTrigger.boundingBox()]
+  if (!footerBox || !triggerBox) throw new Error('the form footer is not on screen')
+  expect(triggerBox.width).toBeLessThan(footerBox.width / 2)
+  expect(Math.abs((triggerBox.x + triggerBox.width) - (footerBox.x + footerBox.width))).toBeLessThanOrEqual(1)
+
+  // Keyboard focus: a `danger` ring, 2px, 2px away from the box; the fill is the token mixed at 12%.
+  await formTrigger.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(formTrigger).toBeFocused()
+  const ring = await formTrigger.evaluate((button) => {
+    const style = getComputedStyle(button.querySelector('[data-delete-visual]') as HTMLElement)
+    return { color: style.outlineColor, width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle, fill: style.backgroundColor }
+  })
+  expect(ring).toMatchObject({ color: formLook.danger, width: '2px', offset: '2px', style: 'solid' })
+  expect(ring.fill).not.toBe(transparent)
+
+  // The confirm in the form: "Yes" is a filled danger button, "No" keeps the first focus, a cancel gives the focus back.
+  await formTrigger.click()
+  const confirm = page.locator('form').getByRole('group', { name: `Delete ${label}?` })
+  await expect(confirm.getByRole('button', { name: 'No' })).toBeFocused()
+  const yes = await confirm.locator('[data-delete-yes] > span').evaluate((pill) => {
+    const probe = document.createElement('span')
+    probe.style.color = 'var(--color-danger-ink)'
+    pill.append(probe)
+    const ink = getComputedStyle(probe).color
+    probe.remove()
+    const style = getComputedStyle(pill)
+    return { background: style.backgroundColor, color: style.color, ink, height: Math.round(pill.getBoundingClientRect().height) }
+  })
+  expect(yes).toEqual({ background: formLook.danger, color: yes.ink, ink: yes.ink, height: 32 })
+  for (const button of await confirm.getByRole('button').all()) {
+    const box = await button.boundingBox()
+    expect(box?.width).toBeGreaterThanOrEqual(44)
+    expect(box?.height).toBeGreaterThanOrEqual(44)
+  }
+  await confirm.getByRole('button', { name: 'No' }).click()
+  await expect(confirm).toHaveCount(0)
+  await expect(formTrigger).toBeFocused()
+  await expect(page.locator(`li[data-id="${block.id}"]`)).toHaveCount(1)
+})
+
+test('no axe violation in the block list and the form footer, delete confirm open, light and dark', async ({ page }) => {
+  const block = middleBlock(readProfile())
+  await openEditor(page)
+  for (const theme of ['light', 'dark'] as const) {
+    await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme)
+
+    // The form footer: first with the trash button, then with the confirm.
+    await selectFromList(page, block.id)
+    const footerButton = await new AxeBuilder({ page }).include('[data-form-delete]').analyze()
+    expect(footerButton.violations.map(v => `${theme} footer: ${v.id}`)).toEqual([])
+    await page.locator('[data-form-delete]').getByRole('button', { name: /^Delete / }).click()
+    await expect(page.locator('[data-form-delete] [data-delete-confirm]')).toHaveCount(1)
+    const footerConfirm = await new AxeBuilder({ page }).include('[data-form-delete]').analyze()
+    expect(footerConfirm.violations.map(v => `${theme} footer confirm: ${v.id} ${v.nodes.map(n => n.target.join(' ')).join(', ')}`)).toEqual([])
+    await page.keyboard.press('Escape')
+  }
+  await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeDisabled()
 })
 
 test('Delete on a selected tile opens the confirm, the tile button deletes, Undo restores both layouts', async ({ page }) => {

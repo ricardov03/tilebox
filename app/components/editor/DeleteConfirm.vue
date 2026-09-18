@@ -3,6 +3,9 @@
   the preview tile and the block form. Never window.confirm.
   Focus moves to "No" when it opens. Escape or "No" cancels. The parent puts
   the focus back on its delete button after a cancel.
+  "Yes" is a small FILLED danger button (`danger` background, `danger-ink`
+  text). "No" is neutral. Same two boxes as EditorDeleteButton: the <button> is
+  the 44px hit area, the inner span is the 32px pill you see.
 -->
 <script setup lang="ts">
 defineProps<{
@@ -28,7 +31,8 @@ function onKeydown(event: KeyboardEvent) {
   emit('cancel')
 }
 
-const buttonClass = `min-h-11 min-w-11 shrink-0 rounded-full px-3 text-sm font-medium ${FOCUS_RING}`
+const buttonClass = 'group/confirm flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center focus-visible:outline-hidden'
+const pillClass = 'flex h-8 min-w-11 items-center justify-center rounded-lg px-3 text-sm font-medium group-focus-visible/confirm:outline-2 group-focus-visible/confirm:outline-offset-2 [@media(hover:none)]:h-10'
 </script>
 
 <template>
@@ -46,22 +50,28 @@ const buttonClass = `min-h-11 min-w-11 shrink-0 rounded-full px-3 text-sm font-m
     >Delete?</span>
     <button
       type="button"
+      data-delete-yes
       :aria-label="`Yes, delete ${label}`"
       :class="buttonClass"
-      class="bg-pop text-pop-ink hover:opacity-90"
       @click.stop="emit('confirm')"
     >
-      Yes
+      <span
+        :class="pillClass"
+        class="bg-danger text-danger-ink group-hover/confirm:opacity-90 group-focus-visible/confirm:outline-danger"
+      >Yes</span>
     </button>
     <button
       ref="noButton"
       type="button"
+      data-delete-no
       :aria-label="`No, keep ${label}`"
       :class="buttonClass"
-      class="border border-line bg-tile text-ink hover:border-accent"
       @click.stop="emit('cancel')"
     >
-      No
+      <span
+        :class="pillClass"
+        class="border border-line bg-tile text-ink group-hover/confirm:border-accent group-focus-visible/confirm:outline-accent"
+      >No</span>
     </button>
   </div>
 </template>

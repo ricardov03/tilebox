@@ -66,7 +66,6 @@ onMounted(() => document.addEventListener('click', onDocumentClick))
 onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 const rowClass = `flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 text-left ${FOCUS_RING}`
-const deleteClass = `flex size-11 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-ground hover:text-pop ${FOCUS_RING}`
 const actionClass = `flex min-h-9 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-muted hover:bg-ground hover:text-ink ${FOCUS_RING}`
 const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover:text-ink disabled:opacity-30 ${FOCUS_RING}`
 </script>
@@ -182,19 +181,11 @@ const arrowClass = `size-11 shrink-0 rounded-xl text-muted hover:bg-ground hover
             >
               <span aria-hidden="true">↓</span>
             </button>
-            <button
-              type="button"
+            <EditorDeleteButton
               :data-delete-block="block.id"
-              :aria-label="`Delete ${blockSummary(block)}`"
-              :class="deleteClass"
+              :label="blockSummary(block)"
               @click="emit('requestDelete', block.id)"
-            >
-              <Icon
-                :name="UI_ICONS.trash"
-                class="size-5"
-                :aria-hidden="true"
-              />
-            </button>
+            />
           </template>
         </div>
         <div class="flex items-center justify-end gap-1">

@@ -3,7 +3,9 @@
   (BlockRenderer) inside the <li> the grid and the drag library need.
   Three controls float top-right on hover, focus or selection, and always on
   touch screens (`hover: none`): Edit (selects the block), Delete and the drag
-  grip (`[data-drag-handle]`, drag grid only). Delete opens the inline confirm
+  grip (`[data-drag-handle]`, drag grid only). Delete is the shared small red
+  outlined trash button (EditorDeleteButton, with a `tile` plate behind it: a
+  tile can hold a photo). It opens the inline confirm
   as a small overlay inside the tile. Delete and the confirm carry
   `data-no-drag` (the drag grid filters them out) and `data-editor-control`.
   Clicks on the tile body are caught by the preview wrapper in edit.vue, which
@@ -35,7 +37,8 @@ const emit = defineEmits<{
   toggleHidden: [id: string]
 }>()
 
-const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
+/** EditorDeleteButton exposes `focus()`. */
+const deleteButton = useTemplateRef<{ focus: () => void }>('deleteButton')
 
 /** The controls come back after the next render: focus the delete button again. */
 async function cancelDelete() {
@@ -149,22 +152,14 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
           :aria-hidden="true"
         />
       </button>
-      <button
+      <EditorDeleteButton
         ref="deleteButton"
-        type="button"
         data-editor-control
         data-no-drag
-        :aria-label="`Delete ${blockSummary(block)}`"
-        :class="controlClass"
-        class="hover:text-pop"
+        backed
+        :label="blockSummary(block)"
         @click.stop="emit('requestDelete', block.id)"
-      >
-        <Icon
-          :name="UI_ICONS.trash"
-          class="size-5"
-          :aria-hidden="true"
-        />
-      </button>
+      />
       <button
         v-if="draggable"
         type="button"

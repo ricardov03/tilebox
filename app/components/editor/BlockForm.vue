@@ -9,8 +9,9 @@
   fields are removed when emptied (strict schema, no "").
   Link blocks (WP10a): the link preview (LinkEnrich), the icon with its "auto"
   label (LinkIconField) and the Spotlight select with a live sample.
-  The last controls: Hide / Show, Duplicate, then "Delete this block", which
-  opens the shared inline confirm.
+  The last controls: Hide / Show, Duplicate, then the small red outlined trash
+  button (EditorDeleteButton, right-aligned, named "Delete <block>"), which
+  opens the shared inline confirm in its place.
 -->
 <script setup lang="ts">
 import { BlockSchema, QR_SIZES, SPOTLIGHTS, type Block, type Spotlight } from '~~/types/profile'
@@ -39,7 +40,8 @@ watch(() => props.block.id, () => {
   errors.value = []
 })
 
-const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
+/** EditorDeleteButton exposes `focus()`. */
+const deleteButton = useTemplateRef<{ focus: () => void }>('deleteButton')
 /** The link preview decides when a new URL is read: it must know about a paste and a blur of the URL field. */
 const linkEnrich = useTemplateRef<{ urlPasted: () => void, urlBlurred: () => void }>('linkEnrich')
 
@@ -494,23 +496,24 @@ const labelClass = LABEL_CLASS
       >
         Hidden: this block stays here in the editor and is left out of the published page.
       </p>
-      <EditorDeleteConfirm
-        v-if="confirming"
-        :label="blockSummary(block)"
-        class="justify-end"
-        @confirm="emit('delete', block.id)"
-        @cancel="cancelDelete"
-      />
-      <button
-        v-else
-        ref="deleteButton"
-        type="button"
-        :class="FOCUS_RING"
-        class="min-h-11 w-full rounded-full border border-line px-4 text-sm font-medium text-ink hover:border-pop hover:text-pop"
-        @click="emit('requestDelete', block.id)"
+      <!-- The last control, right-aligned: the same small trash button as the list row and the tile. -->
+      <div
+        data-form-delete
+        class="flex min-h-11 items-center justify-end"
       >
-        Delete this block
-      </button>
+        <EditorDeleteConfirm
+          v-if="confirming"
+          :label="blockSummary(block)"
+          @confirm="emit('delete', block.id)"
+          @cancel="cancelDelete"
+        />
+        <EditorDeleteButton
+          v-else
+          ref="deleteButton"
+          :label="blockSummary(block)"
+          @click="emit('requestDelete', block.id)"
+        />
+      </div>
     </div>
   </form>
 </template>
