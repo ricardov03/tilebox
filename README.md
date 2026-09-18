@@ -27,7 +27,9 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 
 ## Features
 
-- Profile block: avatar, name, handle, bio, status line.
+- Profile block: avatar, name, handle, bio, up to 3 highlights, status line with a pulsing dot, optional email link.
+- Email privacy: your email is required but hidden by default. A hidden email is removed at build time and is in no file of the site.
+- Avatar from your email: the build downloads your Gravatar picture once. The public page never calls gravatar.com.
 - Seven tile types: link, social, image, text, section, map, video.
 - Four tile sizes on a 4-column grid. Separate tile order for desktop and phone.
 - Presets like PowerPoint: 3 color presets and 3 font presets. Light, dark and system mode.
@@ -84,6 +86,8 @@ How a build picks the file (`content/resolve.ts`): `content/profile.json` when i
 - GitHub CI and the release zip have no `profile.json`. They build the **sample** site.
 - Your real site leaves your Mac only with `npm run publish` or `npm run publish -- --preview` (`npm run deploy` and `npm run deploy:preview` are aliases).
 - `npm run release` refuses to run when `content/profile.json` or a personal image is tracked.
+- Your email: `profile.email` is required, and hidden by default (`showEmail: false`). The page never imports `content/profile.json`. It imports a sanitized copy (`.nuxt/tilebox/public-profile.json`, written by `modules/public-profile.ts`), and a hidden email is not in that copy. So it is in no HTML, no `_payload.json` and no JS chunk of `dist/`. `tests/e2e/privacy.spec.ts` reads every text file of `dist/` to prove it. Note: a tile you add yourself with a `mailto:` URL is public, as any tile.
+- Your avatar from your email: `npm run fetch:avatar` (part of `predev` and `pregenerate`) sends the SHA-256 hash of your email to gravatar.com **from your machine at build time** and saves the picture as `public/avatar.gravatar.jpg` (ignored by git). The published page only loads that local file; it makes no request to gravatar.com. No fetch when `profile.avatar` is set or the email is a placeholder. No Gravatar or no network: the build goes on, the page shows your initials.
 - Back up `content/profile.json`, `public/blocks/` and `public/avatar.*` yourself. Reset to the sample: `rm content/profile.json && npm run ensure:profile`.
 
 Details: `content/README.md`.
@@ -99,6 +103,10 @@ Run `npm run check:profile` to validate it.
     "name": "Ricardo Vargas",
     "handle": "ricardov03",
     "bio": "Front-end developer.",
+    "highlights": ["Nuxt, Vue and TypeScript", "Founder of CONDOMERA"],
+    "email": "you@example.com",
+    "showEmail": false,
+    "avatar": "/avatar.jpg",
     "status": "Now building CONDOMERA",
     "theme": { "colors": "condomera", "fonts": "geist", "mode": "system" }
   },
@@ -113,6 +121,20 @@ Run `npm run check:profile` to validate it.
   }
 }
 ```
+
+Profile fields:
+
+| Field | Required | What it is |
+|---|---|---|
+| `name`, `handle`, `bio`, `theme` | yes | The basics |
+| `email` | yes | A valid email. Hidden unless `showEmail` is true. Also used to find your Gravatar picture |
+| `showEmail` | no, default `false` | `true` shows the email as a `mailto:` link under the highlights |
+| `highlights` | no, default `[]` | Up to 3 short lines under the bio, 1 to 80 characters each. With 3 of them, each gets one line on phones |
+| `avatar` | no | Path of an uploaded picture. It wins over the Gravatar picture. Without both, the page shows your initials |
+| `status` | no | The line with the pulsing dot (no pulse with `prefers-reduced-motion`) |
+
+With highlights or a visible email the profile tile uses a compact scale (smaller avatar and name, bio limited to 3 lines), so everything fits the fixed tile.
+An older `profile.json` without `email`, `showEmail` and `highlights` is upgraded by `npm run dev` (`ensure:profile`): it adds `"email": "you@example.com"`, `"showEmail": false`, `"highlights": []` and changes nothing else. `check:profile` warns while the placeholder email is still there.
 
 Rules: every block `id` is unique. `layout.desktop` lists every block id. `layout.mobile` is optional.
 `size` is one of `1x1`, `2x1`, `1x2`, `2x2`. Section blocks have no `size`.
@@ -147,6 +169,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run ensure:profile` | Creates `content/profile.json` from the example when it is missing |
 | `npm run check:profile` | Validates the profile and prints which file is used (personal or example) |
 | `npm run check:icons` | Fails on an unknown icon name |
+| `npm run fetch:avatar` | Downloads your Gravatar picture (from `profile.email`) to `public/avatar.gravatar.jpg`. Skipped when `profile.avatar` is set or the email is a placeholder. Never fails the build |
 | `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
 | `npm run release` | Local release: checks, version bump, changelog, release notes, commit and tag (see Release) |
@@ -154,7 +177,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run deploy` | Alias of `npm run publish -- --provider cloudflare` |
 | `npm run deploy:preview` | Alias of `npm run publish -- --provider cloudflare --preview` |
 
-`predev` runs ensure:profile, presets and check:profile. `pregenerate` runs presets, check:profile, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
+`predev` runs ensure:profile, presets, check:profile and fetch:avatar. `pregenerate` runs presets, check:profile, fetch:avatar, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
 
 ## Tests
 
@@ -162,8 +185,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin. Plus `repo.spec.ts`: no personal file is tracked by git | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, email + show email + highlights (saved to the file, the public page follows without a restart), invalid email. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -172,6 +195,8 @@ npm run test:e2e                  # both projects
 npm run test:e2e -- --project=static
 npm run test:e2e -- --project=dev
 ```
+
+Port taken by another checkout? `E2E_STATIC_PORT=4188 E2E_DEV_PORT=3144 npm run test:e2e`.
 
 Lighthouse (mobile) against the static server: `node scripts/serve-dist.mjs` then `npx --yes lighthouse http://localhost:4173/ --chrome-flags="--headless=new"`. Scores are recorded in `NOTES.md` (WP5).
 
@@ -368,6 +393,8 @@ content/
   profile.example.json   the sample. Tracked
   profile.json           yours. Ignored by git
   resolve.ts             picks profile.json, else the example. Used by every entry point
+  gravatar.ts            the Gravatar download, shared by fetch-avatar.ts and the editor route
+  migrate.ts             adds the new profile keys to an older profile.json
   README.md              the personal data rules
 app/
   pages/index.vue        the public page (prerendered)
@@ -378,15 +405,16 @@ app/
   composables/           useProfile, useTheme, useEditor
   utils/                 presets, networks, sizes
   assets/css/            main.css, presets.css (generated)
-server/api/              development-only routes: profile, save, upload, icon search
-types/profile.ts         the zod schema and the types
+modules/public-profile.ts  writes the sanitized `#profile` copy the page imports (no hidden email)
+server/api/              development-only routes: profile, save, upload, icon search, avatar/gravatar
+types/profile.ts         the zod schema, the types, the public shape and the sanitizer
 scripts/
   release.mjs            npm run release
   publish.mjs            npm run publish
-  build-presets.ts  check-contrast.ts  check-icons.ts  fetch-favicons.ts
+  build-presets.ts  check-contrast.ts  check-icons.ts  fetch-favicons.ts  fetch-avatar.ts
   validate-profile.ts  ensure-profile.ts  serve-dist.mjs
 releases/                one notes file per version, used as the GitHub Release body
-tests/e2e/               public, a11y, repo, editor specs
+tests/e2e/               public, a11y, repo, privacy, editor specs
 public/                  og.png, blocks/sample.jpg. Your images land here and are ignored
 design/canvas/           the design boards (light and dark)
 docs/review-tools.md     notes on the two code review tools used on this project
@@ -399,6 +427,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | You see | Do this |
 |---|---|
 | A new color preset, font preset or icon does not show in dev | Restart `npm run dev`. `nuxt.config.ts` reads the profile once at start |
+| My Gravatar does not show | The email has no Gravatar (`npm run fetch:avatar` says `avatar: no gravatar for this email`), or `profile.avatar` is set (an uploaded avatar wins; clear it in `/edit` or click **Use my Gravatar**), or the file is new: restart `npm run dev` |
+| `check:profile` warns about a placeholder email | Set your real email in `/edit` > Profile. It stays hidden unless you tick **Show my email on the page** |
 | `git commit` is rejected with a commitlint error | Use `type(scope): subject`, lower case, max 72 characters. See [Commit messages](#commit-messages) |
 | The hook does not run | `npx simple-git-hooks` |
 | `npm run generate` says `(example)` but you expected your profile | `content/profile.json` is missing. Run `npm run dev` once or `npm run ensure:profile`, then edit |
