@@ -6,7 +6,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { PROFILE_PATH } from '../content/resolve'
+import { profilePath } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 import { NETWORKS, UI_ICONS } from '../app/utils/networks'
 
@@ -72,7 +72,7 @@ async function iconExists(name: string): Promise<'ok' | 'no-pack' | 'missing'> {
   return Object.hasOwn(pack.icons, icon) || (pack.aliases !== undefined && Object.hasOwn(pack.aliases, icon)) ? 'ok' : 'missing'
 }
 
-const sources = collectIcons(JSON.parse(await readFile(PROFILE_PATH, 'utf8')))
+const sources = collectIcons(JSON.parse(await readFile(profilePath(), 'utf8')))
 const problems: string[] = []
 
 for (const [name, from] of [...sources.entries()].sort(([a], [b]) => a.localeCompare(b))) {

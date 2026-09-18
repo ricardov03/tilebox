@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
-import { PROFILE_PATH, ROOT } from './content/resolve'
+import { profilePath, ROOT } from './content/resolve'
 import { parseProfile } from './types/profile'
 import { FONT_PRESETS } from './app/utils/presets'
 import { NETWORKS, UI_ICONS } from './app/utils/networks'
@@ -9,6 +9,7 @@ import { NETWORKS, UI_ICONS } from './app/utils/networks'
 // The profile is read here at config time (PLAN.md 5.4). content/resolve.ts
 // picks content/profile.json (yours, not tracked) or the tracked example.
 // A preset or icon change in the file needs a dev server restart.
+const PROFILE_PATH = profilePath()
 const profile = parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
 
 /**

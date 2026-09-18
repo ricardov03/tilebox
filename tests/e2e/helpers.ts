@@ -2,14 +2,14 @@ import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { parseProfile, type Profile } from '../../types/profile'
 
-import { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT } from '../../content/resolve'
+import { PERSONAL_PROFILE_PATH, profilePath, ROOT } from '../../content/resolve'
 
-/** Same resolution as the build: `PROFILE_PATH` is content/profile.json when it exists, else the example. `ROOT` comes from the resolver, which anchors on its own location. */
-export { PERSONAL_PROFILE_PATH, PROFILE_PATH, ROOT }
+/** Same resolution as the build: content/profile.json when it exists, else the example. `ROOT` comes from the resolver, which anchors on its own location. */
+export { PERSONAL_PROFILE_PATH, profilePath, ROOT }
 
-/** The content the site was built from, validated with the same schema the app uses. */
+/** The content the site was built from, validated with the same schema the app uses. Resolved on every call. */
 export function readProfile(): Profile {
-  return parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
+  return parseProfile(JSON.parse(readFileSync(profilePath(), 'utf8')))
 }
 
 export const THEME_KEY = 'tilebox:theme'

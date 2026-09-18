@@ -4,12 +4,13 @@
  * whichever content/resolve.ts picks, and says which one. Runs in `predev` and `pregenerate`.
  */
 import { readFile } from 'node:fs/promises'
-import { describeProfile, PROFILE_IS_PERSONAL, PROFILE_PATH } from '../content/resolve'
+import { describeProfile, profileIsPersonal, profilePath } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 
+const PROFILE_PATH = profilePath()
 const label = describeProfile(PROFILE_PATH)
 process.stdout.write(`profile: ${label}\n`)
-if (!PROFILE_IS_PERSONAL) {
+if (!profileIsPersonal()) {
   process.stdout.write('warning: content/profile.json is missing, so this build uses the sample. `npm run dev` creates yours.\n')
 }
 

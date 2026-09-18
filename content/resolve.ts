@@ -35,11 +35,19 @@ export function resolveProfilePath(): string {
   return hasPersonalProfile() ? PERSONAL_PROFILE_PATH : EXAMPLE_PROFILE_PATH
 }
 
-/** The file resolved when this module loaded. Use in build-time code (nuxt.config.ts, scripts, tests). */
-export const PROFILE_PATH = resolveProfilePath()
+/**
+ * The profile file to read right now. Same as `resolveProfilePath()`, named for
+ * build-time code (nuxt.config.ts, scripts, tests). A function, not a constant:
+ * a call after `ensureProfile()` sees the personal file.
+ */
+export function profilePath(): string {
+  return resolveProfilePath()
+}
 
-/** True when `PROFILE_PATH` is `content/profile.json`. */
-export const PROFILE_IS_PERSONAL = PROFILE_PATH === PERSONAL_PROFILE_PATH
+/** True when `profilePath()` is `content/profile.json`. Checked on every call. */
+export function profileIsPersonal(): boolean {
+  return hasPersonalProfile()
+}
 
 /** Copies the example to `content/profile.json` when it is missing. Returns the personal path. */
 export function ensureProfile(): string {

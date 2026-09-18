@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { PROFILE_PATH } from '../content/resolve'
+import { profilePath } from '../content/resolve'
 import { parseProfile } from '../types/profile'
 import { hostOf, youtubeId } from '../app/components/blocks/media'
 
@@ -79,7 +79,7 @@ async function writeManifest(dir: string, entries: Map<string, string>): Promise
 }
 
 async function run(): Promise<void> {
-  const raw = await readFile(PROFILE_PATH, 'utf8')
+  const raw = await readFile(profilePath(), 'utf8')
   const profile = parseProfile(JSON.parse(raw))
   await mkdir(ICONS_DIR, { recursive: true })
   await mkdir(THUMBS_DIR, { recursive: true })
