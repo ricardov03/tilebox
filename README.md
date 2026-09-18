@@ -192,8 +192,8 @@ A link tile can read its icon, title, description and image from the website it 
 
 | When | What runs | What it does |
 |---|---|---|
-| You paste a URL in the editor (`/edit`) | The dev-only route `POST /api/unfurl` | Reads the page once, saves the files, fills the form |
-| `npm run generate` (and `npm run publish`) | `npm run fetch:links`, part of `pregenerate` | Only for links with `enrich: true` whose local files are missing. Never fails the build |
+| You paste a URL in the editor (`/edit`), or leave the URL field | The dev-only route `POST /api/unfurl` | Reads the page once, saves the files, fills the form. While you type, it waits 1.2 s and asks only for a whole URL (`https://nu` asks nothing) |
+| `npm run generate` (and `npm run publish`) | `npm run fetch:links`, part of `pregenerate` | Only for links with `enrich: true` whose local files are missing. Then it removes the fetched files that nothing uses any more. Never fails the build |
 | A visitor opens your page | Nothing | The page is static. It loads local files only. `tests/e2e/public.spec.ts` fails on any request to another host |
 
 **What is fetched.**
@@ -202,13 +202,21 @@ A link tile can read its icon, title, description and image from the website it 
 2. For some sites a keyless oEmbed endpoint answers with the title and a thumbnail: YouTube, Vimeo, Spotify, SoundCloud, TikTok, X posts, Bluesky posts, Reddit posts, Flickr, Mixcloud, Apple Music, Giphy, Pinterest.
 3. For every other site: the first 512 KB of the page, or less when `</head>` comes first. From the head: `og:title`, `twitter:title`, `<title>`, `og:description`, `<meta name="description">`, `og:site_name`, `og:image`, `twitter:image`, `theme-color`, the icon links and the web manifest.
 4. The icon of the site, when the tile has no brand icon: SVG icon, apple-touch-icon, PNG icon, manifest icon, `/favicon.ico` (its largest PNG entry), and as the last try Google's favicon service (`https://www.google.com/s2/favicons`).
+   - **Icons are always converted to PNG.** Whatever the website sends (SVG, PNG, ICO, JPEG, WebP, GIF), sharp draws it again as a PNG inside 128x128 and only that PNG is saved. An SVG from another site is never stored: opened directly it could run script on your own domain. A file sharp cannot read counts as "no icon", and the next source is tried.
+   - **Honest note:** that last-resort Google service gets the link's hostname, from your machine, when you edit or build. No visitor ever talks to it. To avoid it, pick an icon yourself in the link form, or turn "Load info from the website" off for that link.
 5. The image, **only** when "Show the website's image" is on: at most 5 MB, PNG, JPEG, WebP, GIF or AVIF by its real bytes, at least 200x200. It is resized to 1200 px wide and saved as WebP, which removes EXIF data. The image belongs to that website. You decide to show it.
 
 **The user agent.** Every request says who it is: `tilebox-unfurl/<version> (+https://github.com/ricardov03/tilebox)`. It never pretends to be a browser or another company's bot. A site that blocks unknown clients gives no data, and that is fine.
 
-**Where the files land.** `public/icons/<hash>.<ext>`, `public/thumbs/<hash>.webp` and the cache `.tilebox/unfurl-cache.json`. All three are ignored by git. The cache is fresh for 30 days. After that the engine asks with `If-None-Match` / `If-Modified-Since`, and a `304` keeps the data. "Refresh" in the editor asks again at once.
+**Where the files land.** `public/icons/<hash>.png`, `public/thumbs/<hash>.webp` and the cache `.tilebox/unfurl-cache.json`. All three are ignored by git. The cache is fresh for 30 days. After that the engine asks with `If-None-Match` / `If-Modified-Since`, and a `304` keeps the data. "Refresh" in the editor asks again at once, with a full read (no conditional headers). The cache holds 500 links at most (the oldest go first), and every entry is checked against a strict schema when it is read: a changed or broken entry is dropped.
 
-**Safety (SSRF).** The engine (`content/unfurl.ts`) takes `http` and `https` on ports 80 and 443 only. It resolves the host first and refuses every address that is not public: loopback, private ranges, link-local (cloud metadata), CGNAT, unique-local, IPv4-mapped. It connects to the address it checked, so a second DNS answer cannot redirect the connection. It follows at most 5 redirects and checks every hop. 8 seconds per request. The route answers only on `localhost` and refuses another `Origin`.
+**Time budget.** One link gets 20 seconds in total, for all of its requests together (page, oEmbed, manifest, icons, image), 8 requests and 8 redirects at most. One hop gets 8 seconds, a DNS answer 3 seconds. A link that fails is remembered for 10 minutes, so a dead or hostile link does not cost every build again. "Refresh" skips that memory. When the editor drops a request (you changed the URL), the job on the server stops too.
+
+**Pruning.** At the end of `npm run fetch:links`, files in `public/icons/` and `public/thumbs/` that no block of your profile and no fresh cache entry uses are deleted. So the folders do not grow for ever, and no orphan file ships with your site. It only deletes plain files directly inside those two folders; `.gitkeep`, `manifest.json`, symlinks and sub-folders stay.
+
+**Response headers (`public/_headers`).** Cloudflare Pages and Netlify both read this file; it lands in `dist/`. For `/icons/*`, `/thumbs/*`, `/blocks/*`, `/site/*` and `/site-uploads/*` it sets `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and `X-Content-Type-Options: nosniff`. Those folders hold files made from other people's bytes. They are only ever `<img>` sources; opened directly they get no script, no network and no access to your origin. Every path gets `nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`. `nuxt dev` sends the same headers (`routeRules` in `nuxt.config.ts`). Another host needs the same rules in its own format.
+
+**Safety (SSRF).** The engine (`content/unfurl.ts`) takes `http` and `https` on ports 80 and 443 only. It resolves the host first and refuses every address that is not public: loopback, private ranges, link-local (cloud metadata), CGNAT, unique-local, IPv4-mapped, and IPv6 addresses whose first 96 bits are zero (`::127.0.0.1`). It connects to the address it checked, so a second DNS answer cannot redirect the connection. It follows at most 5 redirects per request and checks every hop. Fetched text loses control characters and bidi controls. Every dev route answers only on `localhost`, refuses another `Origin` and `Sec-Fetch-Site: cross-site` / `same-site`, and takes only the content type the editor sends (`application/json`, or `multipart/form-data` for uploads). The full threat model: [`docs/security.md`](docs/security.md).
 
 **Your text wins.** The fetched title and description fill the fields only when they are empty. When they differ from yours, the form shows "Use fetched title" and "Use fetched description". The fetched copy (`meta`) stays in your `profile.json` for the editor and is never shipped to the page.
 
@@ -216,7 +224,7 @@ A link tile can read its icon, title, description and image from the website it 
 
 **Sites that give no data.** X profiles, Medium, and sometimes LinkedIn block unknown clients or need a login. The tile still gets its brand icon, and you type the title yourself. The editor shows the reason (`http 403`, `timeout`, `not html`, `blocked address`...).
 
-Debug one link: `npm run fetch:links -- --url https://nuxt.com --image` prints the answer as JSON.
+Debug one link: `npm run fetch:links -- --url https://nuxt.com --image` prints the answer as JSON. It is a real run: it writes the cache and the fetched files.
 
 ## Site metadata
 
@@ -266,14 +274,14 @@ What search engines, link previews and the browser tab get. Edit it in `/edit` >
 - Favicon source, in order: your upload (`site.favicon`) > your avatar (`profile.avatar`, else the downloaded Gravatar), cut to a circle > your initials in `accent-soft` on `accent` of the active color preset, as a rounded square.
 - Social image source: your upload (`site.ogImage`, cut to 1200x630) > a generated card with your avatar or initials, name, bio (3 lines at most), `@handle` and the site host.
 - The generated card **always uses Geist** (`assets/fonts/Geist-Regular.ttf` and `Geist-SemiBold.ttf`, SIL OFL 1.1, license in `assets/fonts/OFL.txt`) and the **light** colors of the active color preset, whatever font preset the page uses. The image renderer reads TTF files, and only Geist ships with the repo. The favicon initials use Geist too.
-- The head links point to `/site/...` for every file that exists when the build starts. A missing file falls back to the tracked `/favicon.ico` and `/og.png`. The script never fails a build: a broken upload falls to the next source and prints one line.
+- The head links point to `/site/...` for every file that exists when the build starts. A missing file falls back to the tracked `/favicon.ico` and `/og.png`. The script never fails a build: a broken upload falls to the next source and prints one line. When every favicon source fails, or the social image fails, the older files of that kind are removed from `public/site/`, so the fallback really applies.
 - Head links: `favicon.ico` (32), `icon-192.png`, `apple-touch-icon.png` and the manifest always; `icon.svg` only when it exists.
 - `noindex` adds the robots meta tag only. `public/robots.txt` is not changed.
 - JSON-LD: one `ProfilePage` (`dateModified` = the build date) whose `mainEntity` is a `Person`: name, `alternateName` (handle), description (bio), image (avatar), url, `jobTitle`, `address.addressLocality` (location) and `sameAs` = the URL of every social tile.
 - Social tiles link with `rel="me noopener noreferrer"`. `rel="me"` lets Mastodon and other sites verify that the profile is yours.
 - The head is built by one pure function, `buildHead()` in `app/utils/site-head.ts`, used by `app/composables/useSiteHead.ts`.
 
-**Upload your own.** `/edit` > **Site** > Favicon or Social preview image > upload. The file goes to `public/site-uploads/` (not tracked), the path goes to `site.favicon` or `site.ogImage`, and the previews update. **Remove upload** goes back to the generated one. **Regenerate** builds the files again from what the editor shows, saved or not; `npm run dev` and every build make them again from the saved profile. Save as usual.
+**Upload your own.** `/edit` > **Site** > Favicon or Social preview image > upload. **An SVG upload is converted to PNG:** the editor draws it as a 512x512 PNG and stores only that PNG, never the SVG (a file in `public/` is served from your own domain, and an SVG opened directly can run script). A raster upload must really be the format its name says. The file goes to `public/site-uploads/` (not tracked), the path goes to `site.favicon` or `site.ogImage`, and the previews update. **Remove upload** goes back to the generated one. **Regenerate** builds the files again from what the editor shows, saved or not; `npm run dev` and every build make them again from the saved profile. Save as usual.
 
 ## Scripts
 
@@ -626,7 +634,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 - `PLAN.md`: the plan, the design tokens, every decision and the roadmap.
 - `NOTES.md`: what each work package built, the deviations, the review findings and the test numbers.
 - `content/README.md`: the personal data rules in detail.
-- `docs/review-tools.md`: a comparison of the two code review tools used during the build.
+- `docs/review-tools.md`: a comparison of the two code review tools used during the build, and what to use for large or security-critical files.
+- `docs/security.md`: the threat model of the link preview engine and of the dev routes.
 - `releases/`: the notes of every version. `CHANGELOG.md` appears with the first release.
 
 ## Roadmap

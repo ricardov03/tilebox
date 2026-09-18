@@ -1066,3 +1066,80 @@ $ npm run dev -- --port 3404      GET / 200, /edit 200, /api/profile 200, 2 them
 - Code review (Grok / OCR) of the merged branch not run yet. `content/unfurl.ts` is still the file that most needs it.
 - Safari and Firefox: not checked (headless Chromium only).
 - `public/site/` is not watched in dev (WP10b deviation): when `icon.svg` appears or goes away, restart `npm run dev`.
+
+## WP10 security round
+
+Branch: `wp/10-secure` (from `origin/wp/10-final`). Date: 2026-09-18. Node used: 22.23.1. Work was done in a separate git worktree; the main checkout was not touched. Not merged into `main`, no tag.
+
+Input: an adversarial security review with working reproductions (S1 to S6) and a code review (C1 to C5). Every security fix has a regression test that fails before the fix. One fix per commit. Threat model: `docs/security.md`.
+
+### Findings, fixes, regression tests
+| Id | What was wrong | Fix | Regression test |
+|---|---|---|---|
+| S1 (high) | `isPlainSvg` was a regex on raw text. Six payloads passed it and were stored as `/icons/<hash>.svg`: opened directly they run script on the site's own origin (on localhost that script passes the Host / Origin checks of the dev routes) | `rasterizeIcon()` in `content/unfurl.ts`: EVERY fetched icon is decoded by sharp and drawn again as a PNG inside 128x128 (`limitInputPixels` 4096x4096, `failOn: 'error'`, SVG input 100 KB at most, SVG density set from the SVG's own size so the render is about 128 px, clamped 1 to 2400). Only `/icons/<hash of the OUTPUT>.png` is stored. ICO: the PNG entry goes through the same step. A file sharp cannot decode = "no icon", next source. `isPlainSvg` and `ICON_EXT` are gone. New `types/local-paths.ts`: ONE pair of patterns (`/icons/<hash>.png`, `/thumbs/<hash>.webp`) for `types/profile.ts`, `app/components/blocks/media.ts` and `content/unfurl-cache.ts` | `unfurl.spec.ts` > "S1: a remote SVG is never stored": `svg favicon "<name>": only PNG files land in the icons folder` for `prefixed-script`, `dtd-entity`, `entity-href`, `data-href-script`, `external-use`, `large-96kb`, `huge-viewbox`, `over-100kb`, `plain`; "a plain valid SVG becomes a PNG of 128 px at most, named after the OUTPUT bytes"; "icon bytes are never stored as they came"; "an SVG over 100 KB is not decoded at all"; "an icon sharp cannot decode is \"no icon\"". `links.spec.ts` "favicon and image must be local files..." (svg, jpg, gif, html paths refused). `security.spec.ts` "dist/icons holds no .svg file..." |
+| S1b | No second layer when a bad file lands in `public/` | Tracked `public/_headers` (Cloudflare Pages and Netlify): `/icons/*`, `/thumbs/*`, `/blocks/*`, `/site/*`, `/site-uploads/*` get `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` + `nosniff`; `/*` gets `nosniff` + `Referrer-Policy`. `netlify.toml` lost its `/*` block (one source per header), the cache headers stay. Dev: the same headers through `routeRules` in `nuxt.config.ts` (checked: they apply to real files and to 404s, prerender still 4 routes) | `security.spec.ts` > "S1b: response headers for the static host" (4 tests: tracked + in `dist/`, the rules, netlify.toml, nuxt.config). `security-dev.spec.ts` > "S1b: the dev server sends the asset headers too" (6 tests) |
+| S1c | `content/site-assets.ts` wrote an uploaded SVG as it came to `public/site/icon.svg`; the upload route stored the raw SVG in `public/site-uploads/` | New `content/site-upload.ts` `storeSiteUpload()`: an SVG is drawn as a 512x512 PNG and ONLY the PNG is written (the route answers the `.png` path); a raster must decode with sharp as the format its extension names (a text file called `icon.png` = 415). `uploadArt()` never sets `svg`: `icon.svg` is the initials tile only. `site.favicon` no longer accepts `.svg` (`types/site.ts`) | `security.spec.ts` > "S1c: an uploaded SVG is never written to disk" (4 tests). `security-dev.spec.ts` > "S1c: the upload route never stores an SVG" (2 tests, the real route). `site.spec.ts` "uploads win..." now asserts no `icon.svg` |
+| S2 | No total deadline: 6 icon sources x 8 s, redirects and requests per sub-request only, `dns.lookup` without a timeout, a closed editor request kept running, a dead link cost every build again | One `RequestBudget` per `unfurl()`: `AbortSignal.timeout(20000)` joined with the 8 s hop signal (`AbortSignal.any`), 8 requests, 8 redirects in total (5 per request stays), `lookupInTime()` 3 s. `UnfurlOptions.signal`: the route aborts it when the response closes before it ended; the job answers `cancelled` and caches nothing. Negative cache: `failures` in `.tilebox/unfurl-cache.json` (reason + time, 10 minutes, 200 at most, `force` skips it, guard refusals that cost no network are not stored, a good read forgets the failure) | `unfurl.spec.ts` > "S2: one budget for the whole unfurl": "a slow website ends after 20 s in total, and the failure is remembered: the second call is instant" (real 20 s, 3 hops of 7 s), "a failure is remembered for 10 minutes, `force` asks again...", "redirects are counted over ALL requests of one unfurl: 8 in total", "one unfurl makes 8 requests at most", "a DNS lookup that never answers ends after 3 s", "the caller can stop the job..." |
+| S3 | `public/icons` and `public/thumbs` only grew and orphans shipped; the cache had no size limit; the editor unfurled every half-typed URL | `pruneLinkFiles()` (`content/unfurl-cache.ts`), last step of `scripts/fetch-links.ts`: removes files that no string of the current profile and no fresh cache entry names; keeps `.gitkeep`, `manifest.json`, dot files and the YouTube thumbnails of the video tiles; plain files directly inside the two folders only (a folder that is a symlink is skipped, symlinks and sub-folders inside are never followed or removed, real paths are compared). `MAX_CACHE_ENTRIES` 500, oldest `fetchedAt` first. `LinkEnrich.vue`: asks on paste and on blur (through `defineExpose`, `BlockForm.vue` reports both events); while typing only after 1200 ms AND for a whole http(s) URL with a dot in the host | `security.spec.ts` > "S3: unused fetched files are removed" (3 tests, temp dirs, symlinks) and "S3: the cache file has a size limit". `editor.spec.ts` "S3: a half-typed URL asks nothing; a whole URL asks after 1.2 s, a paste and a blur ask at once" |
+| S4 | The cache was trusted: `favicon: "/icons/evil.html"`, `image: "/thumbs/manifest.json"`, `imageAlt: {}` reached the public profile | `CacheEntrySchema` / `UnfurlDataSchema` (zod, strict) on every read, paths with the SAME `localIconPath` / `localThumbPath` as `types/profile.ts` (exported), `imageAlt` a string of 200 at most; a bad entry is dropped silently. `localFileOf()` uses the same patterns | `security.spec.ts` > "S4: the cache file is checked like any other input" (poisoned file with the three values of the review + svg path, long alt, unknown key; the result passes `ProfileSchema`) |
+| S5 | `[::127.0.0.1]` / `[::7f00:1]` counted as unicast | `isPublicAddress()` refuses IPv6 with 96 zero bits (`::/96`, so `::` too) and `::ffff:0:0/96` by its parts, on top of the ipaddr range check | `unfurl.spec.ts` address table (+13 forms) in "private, loopback..." and "an IP literal in the URL is refused before any connection" |
+| S6 | `/api/unfurl` took any content type (an HTML form on another site could start a fetch: the first, unfixed test run really fetched example.com); the other write routes had no Host / Origin check at all | ONE helper `assertEditorRequest(event, 'json' | 'multipart' | 'none')` in `server/utils/editor.ts`: Host localhost -> else 403, Origin same -> else 403, `Sec-Fetch-Site: cross-site | same-site` -> 403, content type -> else 415. Used by `unfurl.post`, `save.post`, `upload.post`, `avatar/gravatar.post`, `site/assets.post`, `site/upload.post`, and (extra) by the three GET routes, because `/api/profile` holds the hidden email and DNS rebinding could read it | `security-dev.spec.ts` > "S6: the dev write routes take only what the editor sends" (14 tests: 415 per JSON route, 415 per multipart route, 403 per route for cross-site / same-site / Origin / Host, "what the editor sends still works", the read routes) |
+| C1 | `networkReason` read one `cause` level | It walks the chain (8 levels, loop-safe): `bad certificate`, a guard reason such as `blocked address` / `too many redirects`, `timeout`, `offline or unknown host` | `unfurl.spec.ts` > "C1: the reason names the real cause" (2 tests) |
+| C2 | The YouTube thumbnail used raw `fetch`, `redirect: 'follow'`, whole body before the size check | `fetchPicture()` in the engine: the guarded request, 5 MB while reading, written again as JPEG. The `--url` help now says that it writes the cache and the files | `unfurl.spec.ts` > "C2: build-time pictures use the guarded request" (2 tests) |
+| C3 | Refresh sent `If-None-Match`, so a 304 kept the old data | No conditional headers with `force` | `unfurl.spec.ts` "the cache is fresh for 30 days..." (new assertions on the forced request) |
+| C4 | Fetched text kept control and bidi characters | `cleanText()` strips C0 / C1 and U+202A-202E, U+2066-2069 | `unfurl.spec.ts` "C4: cleanText drops control characters and bidi controls..." |
+| C5 | A failed favicon or social image left the files of an older build, so the head never fell back | `buildSiteAssets()` removes the favicon set or `og.png` of a kind that failed | `site.spec.ts` "C5: when a kind fails, its files of an older build are removed..." |
+| D1 | Docs | README "Link previews" (PNG only, no stored SVG, `_headers`, 20 s budget, pruning, the honest Google s2 line and how to avoid it), README "Site metadata" (SVG uploads become PNG), `docs/security.md`, `docs/review-tools.md` "Large or security-critical files", PLAN status line | none |
+
+### Contract changes (frozen files, so noted here)
+- `types/profile.ts`: `favicon` is `/icons/<a-z0-9>.png` only (was png, jpg, webp, gif, svg). `localIconPath` and `localThumbPath` are exported. WP10 was never merged into `main`, so no saved profile has another extension; one that does fails `check:profile` with the path message. Fix: "Refresh" the link, or remove the `favicon` key.
+- `types/site.ts`: `site.favicon` takes png, jpg, jpeg, webp (no svg). Upload the SVG again in the editor: it is stored as a PNG.
+- This supersedes `## WP10a` deviation 4 (the SVG regex check) and deviation 6 (`force` sent `If-None-Match`).
+
+### Deviations and why
+- The 8-request limit counts a request that fails its DNS lookup too. With four dead icon links and a manifest, the image step can run out of budget. Real sites give an icon on the first or second try.
+- A deadline that ends during the icon or image step still answers `ok: true` with what was read (and caches it, as a failed icon always did). Only a failed PAGE read is a negative result.
+- Raster uploads are stored as they came (after the decode check): re-encoding would cost quality for the social image, and the folder has the sandbox CSP.
+- `assertEditorRequest()` also guards the GET routes. The brief listed the write routes only.
+- The route-level abort (`res.once('close')`) has no automated test: through the route no slow target is reachable without the network. The engine half is tested ("the caller can stop the job...").
+- The editor resets the URL field when the typed text is not a valid URL yet (older behavior, seen while writing the S3 test). Not changed here.
+
+### Verification output (last lines)
+```
+$ npm ci                  -> exit 0
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+OK  63 icons found in installed Iconify packs
+OK  link previews 0/0, thumbnails 1/1
+site: favicon from initials, social image generated (8 files in public/site/)
+Prerendered 4 routes
+$ ls dist                                       -> _headers, site/ (8 files), no `edit`
+$ find dist -name '*.svg' -path '*icons*'       -> nothing
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ npm run check:icons     -> OK  63 icons found in installed Iconify packs
+$ E2E_STATIC_PORT=4405 E2E_DEV_PORT=3405 npx playwright test --project=static
+152 passed      (was 112: +40)
+$ E2E_STATIC_PORT=4405 E2E_DEV_PORT=3405 npx playwright test --project=dev
+44 passed       (was 21: +23)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null      -> exit 0
+$ npm run dev -- --port 3406      GET / 200, /edit 200, /api/profile 200, no ERROR line
+$ curl -sI http://localhost:3406/icons/x.png
+content-security-policy: default-src 'none'; style-src 'unsafe-inline'; sandbox
+x-content-type-options: nosniff
+```
+
+### Real smoke (network, files removed afterwards)
+```
+$ npx tsx scripts/fetch-links.ts --url https://nuxt.com --force
+"favicon": "/icons/4adfe95e015260f9.png"      PNG 64x64 RGBA, 778 bytes (the site's icon.png is 1250 bytes: decoded and written again)
+$ npx tsx scripts/fetch-links.ts --url https://vite.dev --force
+"favicon": "/icons/66b9886f7b02200d.png"      PNG 128x123 RGBA, from the site's /logo.svg
+$ find public/icons -name '*.svg' | wc -l     -> 0
+```
+nuxt.com served only a PNG icon link on that day, so vite.dev (an SVG favicon) was read too.
+
+### Open
+- Safari and Firefox: not checked (headless Chromium only).
+- A host other than Cloudflare Pages or Netlify needs the `_headers` rules in its own format.

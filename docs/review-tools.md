@@ -21,6 +21,16 @@ OCR = open-code-review v1.12.5 with DeepSeek `deepseek-v4-pro`. Grok = Grok Buil
 - OCR is the safer tool to automate. It never silently died, it gives diff suggestions, and it is cheap. Its noise is manageable if you review a branch range instead of single commits.
 - Both share one weakness: reviewing one commit at a time hides context from the neighbor commits. Small commits are good for humans. For AI review, a branch range with excluded generated files works better. Use per-commit only for large commits.
 
+## Large or security-critical files (2026-09-18)
+WP10 added `content/unfurl.ts` (about 850 lines, the only code here that fetches URLs chosen by user input). Both tools were asked for range reviews of it.
+- OCR (DeepSeek) timed out on 3 of 5 large range reviews.
+- Grok cancelled on 5 of 5.
+- A dedicated review agent that runs real exploit attempts (it wrote payloads and ran them against the engine) found a stored XSS through a favicon SVG: six ways past a regex check. That is the kind of finding both tools would have been asked to make.
+
+Recommendation:
+- OCR or Grok for small diffs.
+- An adversarial, test-writing review for anything that touches the network, the file system or auth. Every finding comes with a test that fails before the fix.
+
 ## Recommendation for next time
 1. Default: OCR on the branch range at the end of each work package (one run, about 6 min).
 2. Add Grok on the risky files only (server routes, hydration, a11y) with the chunked-diff prompt, dontAsk mode, JSON output, and a retry on "cancelled".

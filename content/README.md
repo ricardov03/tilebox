@@ -30,7 +30,7 @@ From `.gitignore`, block "Personal data":
 content/profile.json
 public/avatar.*
 public/blocks/*        (except public/blocks/sample.jpg)
-public/icons/*         (website icons of your link tiles)
+public/icons/*         (website icons of your link tiles, always PNG; unused ones are removed by fetch:links)
 public/thumbs/*        (website images of your link tiles, YouTube thumbnails)
 public/site/           (favicon set, manifest and social image, made at build from your profile)
 public/site-uploads/   (your own favicon and social image, uploaded in /edit > Site)
