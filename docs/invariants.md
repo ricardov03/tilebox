@@ -27,6 +27,10 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 14. **Zod schemas are `.strict()` and old profiles stay valid.** A new field is optional or has a default; `content/migrate.ts`, `content/profile.example.json`, `PLAN.md` section 6 and the README change in the same branch. One rule, one definition: a rule that exists in a script AND in the editor is a bug waiting.
 15. **TypeScript strict. No `any`. No `console.log` left behind** (scripts that print their result are the exception).
 
+## WP17
+20. **No email address and no mail scheme in `dist/`.** The build turns every address into a shield token (`app/utils/mail-shield.ts`): `profile.email` becomes `emailToken`, a mail URL of a tile becomes a `mail` token and loses its url. So `grep -rEi "mailto:" dist` and a grep for any address of the profile both find nothing, in the html, the payload, a JS chunk or a JSON file. The literal mail scheme is built from code points in the one place that needs it, because a bundled literal would break this rule. `PublicProfileSchema` refuses a public copy that still holds an address; `check:profile` warns. ONE exception, opt-in and named: `/site/contact.vcf` with `contact.shareEmail: true`, because a vCard needs plain text.
+21. **An empty field never blocks a save.** Every text of a block and of the profile is optional in the schema. An emptied field removes its key; only a bad FORMAT keeps a message, and the save writes everything else. A block without its essential value is `incomplete` (`incompleteReason()`): it saves, and the build drops it like a hidden block. `profile.name` is the one required text, and even there the editor keeps the last valid name instead of blocking.
+
 ## Process
 16. **A change to `content/resolve.ts` or to `server/` runs the Playwright `dev` project**, not only `static`: `npx playwright test --project=dev`. The `static` project cannot see a broken dev server.
 17. **Every branch ends green:** `npm run lint`, `npm run typecheck`, `npm run generate`, `npm run test:review`, the Playwright projects it touches. Output goes to `NOTES.md`.

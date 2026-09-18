@@ -25,7 +25,7 @@ The optional top-level `site` object holds the page title, description, site URL
 
 ## Contact card
 
-The optional top-level `contact` object is your PUBLIC contact card: `enabled`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. With `enabled: true` the build writes it to `public/site/contact.vcf`, a file anyone can download from your page. Everything in it is public. `profile.email` stays private and is never copied into the card. Details: README, "Save contact".
+The optional top-level `contact` object is your PUBLIC contact card: `enabled`, `shareEmail`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. `shareEmail` (default off) decides whether the address reaches the file at all. With `enabled: true` the build writes it to `public/site/contact.vcf`, a file anyone can download from your page. Everything in it is public. `profile.email` stays private and is never copied into the card. Details: README, "Save contact".
 
 ## Schedule
 

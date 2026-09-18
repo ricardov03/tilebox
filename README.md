@@ -17,6 +17,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Stock photos (Pexels)](#stock-photos-pexels)
 - [Site metadata](#site-metadata)
 - [Scheduling](#scheduling)
+- [Email protection](#email-protection)
 - [Save contact](#save-contact)
 - [QR code](#qr-code)
 - [Share button](#share-button)
@@ -37,7 +38,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 ## Features
 
 - Profile block: avatar, name, handle, bio, up to 3 highlights, status line with a pinging dot, optional email link.
-- Email privacy: your email is required but hidden by default. A hidden email is removed at build time and is in no file of the site.
+- Email protection: your email is optional and hidden by default. A hidden email is in no file of the site, and a shown email (or a mail tile) ships as a token, never as an address. See [Email protection](#email-protection).
 - Avatar from your email: the build downloads your Gravatar picture once. The public page never calls gravatar.com.
 - Site metadata from your profile: title, description, canonical link, Open Graph and X card, JSON-LD (`ProfilePage` + `Person`), `rel="me"` on social links, optional `noindex`. Edit it in `/edit` > **Site**.
 - Favicon set and social preview image made at build time from your avatar or your initials, in your colors. Your own upload wins. No network, no service.
@@ -192,7 +193,7 @@ New top-level keys (all optional, an old file stays valid):
 
 | Key | What it is |
 |---|---|
-| `contact` | The PUBLIC contact card: `enabled`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. See [Save contact](#save-contact) |
+| `contact` | The PUBLIC contact card: `enabled`, `shareEmail`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. See [Save contact](#save-contact) |
 | `site.share` | `false` removes the share button. Missing = on. See [Share button](#share-button) |
 | `site.utm` | `{ "source": "tilebox", "medium": "profile", "campaign": "spring-2027" }`. `campaign` is optional. See [UTM tags](#utm-tags) |
 
@@ -359,6 +360,26 @@ The page is static, so be clear about what a date can do:
 - `npm run check:profile` prints one warning per expired block and per block that has not started yet, with the date to publish after.
 - The editor shows a status badge (Live, Scheduled from, Ends, Expired) and a calendar badge on the tile and on the list row.
 
+## Email protection
+
+The owner's words: *"I don't want my email inbox to get dynamite of spam."*
+So **no email address and no `mailto:` string is in any file of your built site**: not in the HTML, not in `_payload.json`, not in a JS chunk, not in a JSON file.
+
+What happens instead:
+
+1. The build turns every address into a **token**. The part before the `@` and the part after it are each reversed and then base64url encoded. A `?subject=...` query gets the same treatment. `profile.email` becomes `emailToken`; a tile whose URL is a mail link loses that URL and gets a `mail` token.
+2. The page ships that token inside a real `<button type="button">`. It has no `href` and no address in any attribute. A mail tile shows its title; the profile line shows **"hello at example dot com"**.
+3. In the browser, after the first sign that a person is there (a pointer move, a pointer down, a touch, a key, a scroll, a focus), the page decodes the token **in memory** and the button becomes `<a href="mailto:...">`. The profile line then shows the real address. Enter, Space and a click work before and after; the keyboard focus follows.
+4. With JavaScript off, the visitor still reads the human form and can type it.
+
+No network, no third party, no CAPTCHA, no image of your address. The whole thing is `app/utils/mail-shield.ts` and `app/components/ProtectedEmail.vue`.
+
+**The honest limit.** This is not encryption and does not pretend to be. It defeats a harvester that reads HTML or runs without ever touching the page, which is nearly all of them. A bot that drives a full browser and fakes one input event can still read your address, exactly like a visitor can. **The strongest protection is an address you can throw away**: a forwarding alias (`hi@your-domain`, or a provider alias) that you rotate when the spam starts. Use this shield *and* an alias.
+
+**The contact card is the exception.** `/site/contact.vcf` is a vCard, and that format needs the address as plain text. So the address is **opt-in**: `/edit` > **Site** > **Contact card** > "Include my email in the contact file (the file is public; bots can read it)". Off by default, and then the card has no `EMAIL` line at all. `public/robots.txt` carries `Disallow: /site/contact.vcf`, which asks crawlers to skip the file: only polite bots listen, so treat the card as fully public whenever you turn the address on.
+
+In the editor nothing changes: you see and edit your real email and your real `mailto:` URLs. The shield only touches what the build publishes.
+
 ## Save contact
 
 A `contact` block is a tile that downloads your contact card: `<a href="/site/contact.vcf" download>`. The card is a local file. No service, no network call.
@@ -367,9 +388,10 @@ A `contact` block is a tile that downloads your contact card: `<a href="/site/co
 2. `/edit` > **Blocks** > **Add block** > **Save contact**.
 
 **Everything in the contact card is public.** It is a file anyone can download. Your profile `email` is private and is never copied into the card: `contact.email` is its own field. Leave it empty to publish no email.
+**The address in the card is opt-in.** Tick "Include my email in the contact file" (off by default) or the card has no `EMAIL` line. The card is the one public place an address can be: see [Email protection](#email-protection).
 
 - The build (`npm run build:site-assets`, inside `predev` and `pregenerate`) writes `public/site/contact.vcf` (not tracked) when `contact.enabled` is true. Else it removes the file.
-- Format: vCard 3.0, UTF-8, CRLF line ends, lines folded at 75 bytes; `,` `;` `\` and line breaks are escaped. Fields: `N`, `FN`, `ORG`, `TITLE`, `TEL;TYPE=CELL`, `EMAIL`, `URL`, `NOTE`. No `PHOTO`.
+- Format: vCard 3.0, UTF-8, CRLF line ends, lines folded at 75 bytes; `,` `;` `\` and line breaks are escaped. Fields: `N`, `FN`, `ORG`, `TITLE`, `TEL;TYPE=CELL`, `EMAIL` (only with `shareEmail`), `URL`, `NOTE`. No `PHOTO`.
 - `fullName` defaults to your profile name. The download is named after it: `ada-lovelace.vcf`.
 - No file = no tile: the build leaves a `contact` block out while the card is off, and `check:profile` warns.
 - "Download preview" in the editor gives you the same text, made from what you see, saved or not.
