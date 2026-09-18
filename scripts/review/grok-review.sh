@@ -23,7 +23,10 @@
 #   --intent <file>      Intent body file (default: the PR body from `gh pr view` when the branch has a PR,
 #                        else the commit messages of the range, else none).
 #   --effort <e>         Grok reasoning effort (default: medium; high doubled the wall time in reasoning alone).
-#   --max-turns <n>      Grok agentic turns (default: 8; the prompt names the budget and pre-reads the callers).
+#   --max-turns <n>      Hard cap of Grok agentic turns (default: 10). The prompt names a BUDGET of n-4 turns
+#                        (at least 2): grok 1.0.30 exits 1 with "max turns reached" and no verdict when the cap
+#                        is hit, and the model spends every turn it is told it has. The 4 spare turns are the
+#                        room to overshoot and still write the verdict.
 #   --timeout <min>      Watchdog: kill the Grok call after N minutes and exit 3 (default: 6). macOS has no
 #                        `timeout`, so the script polls the child itself.
 #   --force              Ignore the cache and call Grok again.
@@ -40,7 +43,7 @@
 #   grok-review: scope=… files=N diff_chars=N cached=0|1 turns=N elapsed_s=N tokens_in=N tokens_out=N critical=N warning=N suggestion=N verdict=PASS|FAIL
 #
 # Blind-run guard: a run that did not obtain a schema-valid verdict exits 3. It never reports green.
-# Budget: effort medium, 8 turns, callers pre-read into the prompt, watchdog. Aim: 2 min per block, 4 min per branch.
+# Budget: effort medium, 6 turns named in the prompt (cap 10), callers pre-read into the prompt, watchdog. Aim: 2 min per block, 4 min per branch.
 # Cache: <git common dir>/grok-review/<sha256(diff+prompt+schema)>.json. Same blobs, no call.
 # Tools handed to Grok: read_file, grep, list_dir only; no subagents; MCP, shell, edit, write and web DENIED by
 # permission rule (the allowlist alone keeps the MCP servers loaded); cwd = repo root. Suite: grok-review.test.sh.
@@ -60,7 +63,8 @@ SCOPE=""
 TITLE=""
 INTENT_FILE=""
 EFFORT="medium"
-MAX_TURNS=8
+MAX_TURNS=10
+TURN_HEADROOM=4
 TIMEOUT_MIN=6
 FORCE=0
 DRY_RUN=0
@@ -69,7 +73,7 @@ PR_NUMBER=""
 BRANCH=""
 OUT=""
 
-usage() { sed -n '2,43p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -177,7 +181,10 @@ done
 SCOPE_TEXT="block: one task block of a larger change; judge it on its own files but open its callers."
 [[ "$SCOPE" == pr ]] && SCOPE_TEXT="pr: the whole branch before the push or the merge; also judge how the blocks fit together (editor ↔ server route, schema ↔ public profile, script ↔ build hook)."
 
-python3 - "$PROMPT_TEMPLATE" "$WORK/prompt" "$SCOPE_TEXT" "$TITLE" "$WORK/intent" "$WORK/impact" "$WORK/diff" "$MAX_TURNS" <<'PY'
+case "$MAX_TURNS" in ''|*[!0-9]*) echo "grok-review: --max-turns must be a number" >&2; exit 2 ;; esac
+TURN_BUDGET=$(( MAX_TURNS - TURN_HEADROOM )); [[ "$TURN_BUDGET" -ge 2 ]] || TURN_BUDGET=2
+
+python3 - "$PROMPT_TEMPLATE" "$WORK/prompt" "$SCOPE_TEXT" "$TITLE" "$WORK/intent" "$WORK/impact" "$WORK/diff" "$TURN_BUDGET" <<'PY'
 import sys
 tpl, out, scope, title, intent_f, impact_f, diff_f, turns = sys.argv[1:9]
 text = open(tpl, encoding="utf-8").read()
@@ -256,8 +263,9 @@ else
         exit 3
     fi
     if [[ "$GROK_EXIT" -ne 0 ]]; then
-        echo "grok-review: grok exited $GROK_EXIT after ${ELAPSED}s" >&2
+        echo "grok-review: grok exited $GROK_EXIT after ${ELAPSED}s (blind-run guard)" >&2
         cat "$WORK/grok.err" >&2
+        grep -qi 'max turns' "$WORK/grok.err" && echo "grok-review: the turn cap ($MAX_TURNS) was hit before a verdict. Review a smaller block with --files, or raise --max-turns." >&2
         cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null || true
         exit 3
     fi

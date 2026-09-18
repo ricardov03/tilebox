@@ -22,7 +22,8 @@
 #   RANGE         `--range` labels pr; the commit messages of the range are the intent
 #   LEDGER        --ledger appends one line per finding with category and branch; a cache hit and a forced
 #                 re-review of the same branch add nothing
-#   BUDGET        the prompt states the turn budget; the grok call carries the read-only flags
+#   BUDGET        the prompt states the turn budget (the hard cap minus 4); the grok call carries the
+#                 read-only flags; a grok that exits non-zero ("max turns reached") ⇒ exit 3
 #   GRAPH         with a graph present, the graph callers are listed and their source is pasted
 #   WATCHDOG      a grok that never answers is killed at --timeout and the run exits 3
 #   IMPACT        impact-map.py on a tiny Nuxt tree: importer by alias, auto-imported component tag,
@@ -40,7 +41,7 @@ IMPACT="$SCRIPT_DIR/impact-map.py"
 [[ -f "$REVIEW" && -f "$LEDGER_SH" && -f "$IMPACT" ]] || { echo "grok-review.test: scripts missing" >&2; exit 2; }
 for tool in git python3; do command -v "$tool" >/dev/null 2>&1 || { echo "grok-review.test: $tool missing" >&2; exit 2; }; done
 
-PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=85
+PASSED=0; FAILED=0; EXPECTED_ASSERTIONS=88
 assert_eq() { # name expected actual
     if [[ "$2" == "$3" ]]; then PASSED=$((PASSED+1)); echo "  ok   $1"; else FAILED=$((FAILED+1)); echo "  FAIL $1: expected [$2] got [$3]"; fi
 }
@@ -76,6 +77,7 @@ done
 cp "$prompt" "$FAKE_DIR/last-prompt.md"
 echo x >> "$FAKE_DIR/calls"
 [[ -f "$FAKE_DIR/hang" ]] && sleep 600
+[[ -f "$FAKE_DIR/max-turns" ]] && { echo "Error: max turns reached" >&2; exit 1; }
 cat "$FAKE_DIR/reply.json"
 FAKE
 chmod +x "$BIN/grok"
@@ -307,18 +309,24 @@ bash "$LEDGER_SH" report > "$SANDBOX/report"
 assert_grep "report names the top category" '^findings-ledger: rows=3 top_category=dev-route-guard top_count=2 grok=2 ocr=0 agent=0 human=1$' "$SANDBOX/report"
 
 echo "BUDGET"
-assert_grep "prompt states the turn budget" 'at most 8 tool turns' "$FAKE_DIR/last-prompt.md"
+assert_grep "prompt states the turn budget" 'at most 6 tool turns' "$FAKE_DIR/last-prompt.md"
 # The map is a text search capped at 40 per file, so the prompt must say so and must send Grok to grep
 # for the changed symbols: an overclaim here is what would make it skip the grep.
 assert_grep "prompt admits the impact map is not exhaustive" 'It is not exhaustive' "$FAKE_DIR/last-prompt.md"
 assert_grep "prompt tells Grok to grep the changed symbols" 'grep for the changed symbols' "$FAKE_DIR/last-prompt.md"
 assert_not_grep "prompt never claims the map lists every caller" 'lists every caller' "$FAKE_DIR/last-prompt.md"
 assert_grep "grok is called with --effort medium" '^medium$' "$FAKE_DIR/last-argv"
-assert_grep "grok is called with --max-turns 8" '^8$' "$FAKE_DIR/last-argv"
+assert_grep "grok is called with the hard cap --max-turns 10 (budget + 4 spare turns)" '^10$' "$FAKE_DIR/last-argv"
 assert_grep "grok gets read-only tools" '^read_file,grep,list_dir$' "$FAKE_DIR/last-argv"
 assert_eq "grok is denied MCP, shell, edit, write and web" "Bash Edit MCPTool WebFetch Write" "$(grep -A1 -E '^--deny$' "$FAKE_DIR/last-argv" | grep -vE '^--' | sort | tr '\n' ' ' | sed 's/ $//')"
-set +e; bash "$REVIEW" --force --max-turns 5 --effort low > /dev/null 2>&1; set -e
-assert_grep "--max-turns flows into the prompt budget" 'at most 5 tool turns' "$FAKE_DIR/last-prompt.md"
+set +e; bash "$REVIEW" --force --max-turns 9 --effort low > /dev/null 2>&1; set -e
+assert_grep "--max-turns flows into the prompt budget (cap 9 ⇒ budget 5)" 'at most 5 tool turns' "$FAKE_DIR/last-prompt.md"
+assert_grep "the hard cap reaches the CLI" '^9$' "$FAKE_DIR/last-argv"
+touch "$FAKE_DIR/max-turns"      # grok 1.0.30 at the cap: exit 1, "Error: max turns reached", no envelope
+set +e; bash "$REVIEW" --force > "$SANDBOX/out12" 2>"$SANDBOX/err12"; rc=$?; set -e
+rm -f "$FAKE_DIR/max-turns"
+assert_eq "grok hits the turn cap ⇒ exit 3" 3 "$rc"
+assert_grep "the turn cap is named in stderr" 'turn cap \(10\) was hit' "$SANDBOX/err12"
 git checkout -q -- server/api/save.post.ts
 
 echo "GRAPH (graph present ⇒ graph callers listed and pasted)"
