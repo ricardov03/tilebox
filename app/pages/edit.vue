@@ -10,7 +10,7 @@
 -->
 <script setup lang="ts">
 import type { DeleteSource, EditorTab } from '~/composables/useEditor'
-import { ProfileInfoSchema, toPublicProfileInfo } from '~~/types/profile'
+import { GRAVATAR_PUBLIC_PATH, ProfileInfoSchema, toPublicProfileInfo } from '~~/types/profile'
 
 definePageMeta({ layout: false })
 
@@ -263,7 +263,7 @@ function onGravatarSaved() {
 /** What the public page will get: same sanitizer as the build (no hidden email, resolved avatar). */
 const previewProfile = computed(() => {
   if (!draft.value) return null
-  const path = gravatar.value.exists ? `/avatar.gravatar.jpg?v=${gravatar.value.version}` : undefined
+  const path = gravatar.value.exists ? `${GRAVATAR_PUBLIC_PATH}?v=${gravatar.value.version}` : undefined
   return toPublicProfileInfo(draft.value.profile, path)
 })
 </script>

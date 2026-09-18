@@ -15,12 +15,13 @@ import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { rename, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { GRAVATAR_PUBLIC_PATH } from '../types/profile'
 import { ROOT } from './resolve'
 
-/** The path the page uses. */
-export const GRAVATAR_PUBLIC_PATH = '/avatar.gravatar.jpg'
+/** The path the page uses. It lives in types/profile.ts (client-safe): the editor page imports it too. */
+export { GRAVATAR_PUBLIC_PATH }
 /** The file on disk. */
-export const GRAVATAR_FILE = resolve(ROOT, 'public/avatar.gravatar.jpg')
+export const GRAVATAR_FILE = resolve(ROOT, `public${GRAVATAR_PUBLIC_PATH}`)
 
 const TIMEOUT_MS = 5000
 const MAX_BYTES = 2 * 1024 * 1024
