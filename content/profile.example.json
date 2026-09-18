@@ -18,10 +18,12 @@
     { "id": "b6", "type": "map", "size": "1x1", "label": "Bogota", "sublabel": "GMT-5", "url": "https://maps.google.com/?q=Bogota" },
     { "id": "b7", "type": "link", "size": "1x1", "title": "Say hello", "url": "https://example.com/contact", "icon": "line-md:email", "pop": true },
     { "id": "b8", "type": "section", "title": "Projects" },
-    { "id": "b9", "type": "video", "size": "2x1", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "title": "A talk" }
+    { "id": "b9", "type": "video", "size": "2x1", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "title": "A talk" },
+    { "id": "b10", "type": "link", "size": "1x1", "title": "Nuxt on GitHub", "url": "https://github.com/nuxt", "spotlight": "pop" },
+    { "id": "b11", "type": "link", "size": "1x1", "title": "Hidden draft tile", "url": "https://example.com/draft", "hidden": true }
   ],
   "layout": {
-    "desktop": ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"],
-    "mobile": ["b1", "b4", "b2", "b3", "b5", "b6", "b7", "b8", "b9"]
+    "desktop": ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9", "b10", "b11"],
+    "mobile": ["b1", "b4", "b2", "b3", "b5", "b6", "b7", "b8", "b9", "b10", "b11"]
   }
 }
