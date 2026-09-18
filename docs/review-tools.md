@@ -20,12 +20,13 @@ npm run review -- --range origin/main..HEAD --scope pr --ledger
 npm run review -- --dry-run --range main..wp/11-x
 ```
 - What Grok gets: the diff pasted INTO the prompt, the intent (title + PR body, else the commit messages of the range), and an **impact map** from `scripts/review/impact-map.py`: importers (relative, `~/`, `~~/`, `#alias`), Nuxt auto-imported component tags and util calls, exported symbols the diff touches, npm script names, `/api` routes, schema keys, with the 25 lines around each call site pasted in. The map is a text search. It says so, and the prompt sends Grok to grep the changed symbols itself.
-- What Grok may do: `read_file`, `grep`, `list_dir` on the checkout. No subagents. MCP, shell, edit, write and web are denied by rule. Effort `medium`, 8 turns, watchdog 8 minutes.
-- What comes back: a JSON verdict forced by `grok-review.schema.json`. `critical` and `warning` block. The last line is the trailer: `grok-review: scope=… files=N diff_chars=N cached=0|1 turns=N elapsed_s=N tokens_in=N tokens_out=N critical=N warning=N suggestion=N verdict=PASS|FAIL`.
-- Exit codes: `0` PASS, `1` FAIL, `2` usage or empty diff or a diff over 150,000 characters (use `--files`), `3` no valid verdict.
+- What Grok may do: `read_file`, `grep`, `list_dir` on the checkout. No subagents, no plan mode (`--no-plan`). MCP, shell, edit, write and web are denied by rule. Effort `medium`, 14 turns, watchdog 12 minutes (`--max-turns`, `--timeout`). With 8 turns real blocks hit the cap and paid for a conclude call; with 14 none did.
+- What comes back: a JSON verdict forced by `grok-review.schema.json` and checked by `scripts/review/grok-verdict.py`. `critical` and `warning` block. The last line on stdout is the trailer, for EVERY outcome (see "How to read a trailer line").
+- Exit codes: `0` PASS, `1` FAIL, `2` usage or empty diff or a diff over 150,000 characters (use `--files`), `3` no valid verdict (`verdict=BLIND`).
+- The session id is printed on stderr at the start of every call (`grok-review: session <id>`) and is in the trailer (`session=<id>`). `grok export <id>` shows what the reviewer read, `grok usage <id>` what it cost.
 - Grok reads the CHECKOUT. Review a branch from a checkout of that branch; when the range head differs from the checkout, the script says so in the prompt and on stderr.
 - Judge every finding yourself: real, false positive, or already fixed. Fix the blocking ones, answer the rest in `NOTES.md`. Max 2 rounds (`PLAN.md` section 9).
-- Cost, measured here: 14 to 17 cents and 4 to 6 minutes per block. Grok Build CLI 1.0.30, model `grok-4.6-build`, login in `~/.grok`.
+- Cost, measured here: 14 to 50 cents and 4 to 9 minutes per block. A 1-turn stub costs about 3 cents. Grok Build CLI 1.0.30, model `grok-4.6-build`, login in `~/.grok`.
 
 ## The blind-run guard
 A wrapper that prints green when the reviewer said nothing is worse than no review. Exit `3`, never `0`, when:
@@ -34,12 +35,32 @@ A wrapper that prints green when the reviewer said nothing is worse than no revi
 - `passed: true` with a blocking finding, or `passed: false` with no finding at all (a progress stub: with `--json-schema` Grok emits one of those before every tool turn);
 - a finding lacks a field, has a category outside the enum, a non-integer line, or an empty text;
 - Grok exits non-zero, or the watchdog kills it.
-The raw output stays next to the cache as `<hash>.raw.json`.
+The raw output stays next to the cache as `<hash>.raw.json`, the session id is printed with the command that resumes it, and the trailer says `verdict=BLIND`.
 
-**The turn cap.** Grok 1.0.30 does not count its turns. At `--max-turns` it exits 1 with `max turns reached` and no verdict. The script then resumes the SAME session once (`--resume <id>`, "no more tools, write the verdict from what you have read", 2 turns, 3 minutes). The report says `verdict forced at the turn cap`. A blind run prints its session id; `--conclude <id>` on the same command does that step alone, so the reading is not paid for twice.
+**The 1-turn stub.** Grok sometimes ends after ONE turn with a progress stub (`passed: false`, no finding, or a sentence that announces a plan) and no tool call. Measured: 3 of 6 fresh calls in the WP14 round, about 3 cents each. The script detects it (`stopReason` `end_turn`, `num_turns` 1 or no tool call in `grok export`, no valid verdict) and resumes the SAME session ONCE, with the same read-only tools and the rest of the turn budget: "You stopped after announcing your plan. Continue now: use your tools, then return ONLY the JSON verdict." The trailer counts it: `retries=1`. A second stub is exit 3. Three things try to stop the stub at the source: `--no-plan`, a `--rules` line, and the first line of the prompt ("Do not announce a plan. Your FIRST action must be a tool call; your LAST message must be only the JSON verdict"). Numbers: `NOTES.md` > "WP15 review follow-up".
+
+**Evidence.** A verdict from a session that opened no file is a verdict on the pasted diff alone. The script counts the tool calls of the session (`grok export <id>`: one `- Read:` / `- Search:` / `- List:` line per call) and labels the verdict: `evidence=full` when a `read_file` or a `grep` happened, else `evidence=diff-only` (the report header then says `DIFF-ONLY: the reviewer opened no file`). Both are in `_meta` of the verdict JSON, with `retries`, `tool_calls` and `session_id`. Without `grok export` the fallback is the turn count (2 or more turns = tools were called). Treat `diff-only` as "not reviewed yet".
+
+**The turn cap.** Grok 1.0.30 does not count its turns. At `--max-turns` it exits 1 with `max turns reached` and no verdict. The script then resumes the SAME session once (`--resume <id>`, "no more tools, write the verdict from what you have read", 2 turns, 3 minutes). The report says `verdict forced at the turn cap`. The conclude call has 5 minutes. Every blind run prints its session id; `--conclude <id>` on the same command does that step alone, so the reading is not paid for twice. **`--conclude` is refused (exit 3) when the session made no tool call**: it read nothing, so a tool-less verdict would be diff-only. Then add `--conclude-tools` (resume WITH the tools, `--max-turns` turns, the `--timeout` watchdog), or run the review again.
+
+## How to read a trailer line
+`grok-review: scope=block files=3 diff_chars=23804 cached=0 turns=6 elapsed_s=423 tokens_in=385379 tokens_out=21067 retries=0 evidence=full session=f745f3b4-… critical=0 warning=2 suggestion=0 verdict=FAIL`
+
+| Field | Meaning | Look twice when |
+|---|---|---|
+| `scope` | `block` or `pr` | |
+| `files`, `diff_chars` | what was pasted into the prompt | over about 30,000 characters: split the block |
+| `cached` | `1` = the same diff, prompt and schema: no call, no ledger row | |
+| `turns` | model calls of the whole session (review + retry + conclude) | `1` or `2` with `evidence=diff-only` |
+| `elapsed_s`, `tokens_in`, `tokens_out` | wall time and tokens of the session (`grok usage <id>`) | |
+| `retries` | automatic "continue" calls after a 1-turn stub: `0` or `1` | `1` with `verdict=BLIND`: the stub came twice, run it again |
+| `evidence` | `full` = the reviewer read a file or ran a grep. `diff-only` = it judged the pasted diff alone. `none` = no call (`DRY-RUN`, `EMPTY`). `unknown` = a cache entry from before WP15 | `diff-only`: not a full review |
+| `session` | the Grok session id (`-` when no call was made) | use it with `grok export`, `grok usage`, `--conclude` |
+| `critical`, `warning`, `suggestion` | counts of the verdict | |
+| `verdict` | `PASS` (exit 0), `FAIL` (exit 1), `BLIND` (exit 3, no valid verdict), `EMPTY` (exit 2), `DRY-RUN` (exit 0) | `BLIND` is never a pass |
 
 ## The cache
-`<git common dir>/grok-review/<sha256(diff + prompt template + schema)>.json`. The same blobs make no call: `cached=1`, under a second, no ledger row. `--force` calls again. A blind run is never cached. An edit of the prompt or of the schema empties the cache by design.
+`<git common dir>/grok-review/<sha256(diff + prompt template + schema)>.json` (`GROK_REVIEW_CACHE_DIR` moves the folder). The same blobs make no call: `cached=1`, under a second, no ledger row. `--force` calls again. A blind run is never cached. An edit of the prompt or of the schema empties the cache by design.
 
 ## The ledger loop
 `--ledger` appends each finding of a fresh verdict to `scripts/review/findings-ledger.jsonl` with its category; OCR, agent and owner-reported findings go in by hand:
@@ -62,9 +83,9 @@ Grok "cancelled" on 8 of 13 reviews (plan mode: 0 of 3 completed). Cause: the re
 | The diff | Grok ran `git diff` in its shell tool | pasted into `--prompt-file`; over 150,000 characters is refused |
 | Tools | all, plus every MCP server, `--permission-mode dontAsk` | `--tools read_file,grep,list_dir`, `--disallowed-tools Agent`, `--deny MCPTool/Bash/Edit/Write/WebFetch` |
 | The answer | free text in "my one-line format" | `--json-schema` + `--output-format json`, checked field by field |
-| Effort and turns | default effort, no turn limit | `--effort medium`, `--max-turns 8`, one conclude call at the cap |
-| A hung call | waited for ever | watchdog, 8 minutes, exit 3 |
-| No verdict | looked like "no findings" | exit 3, raw output kept |
+| Effort and turns | default effort, no turn limit | `--effort medium`, `--max-turns 14`, `--no-plan`, one retry after a 1-turn stub, one conclude call at the cap |
+| A hung call | waited for ever | watchdog, 12 minutes, exit 3 |
+| No verdict | looked like "no findings" | exit 3, `verdict=BLIND`, raw output kept, session id printed |
 | The same diff twice | paid twice | cache, no call |
 | Context | one commit, blind to its neighbors | a block of the branch range + the impact map + pre-read call sites |
 | Findings | in a chat | the ledger, with a category |
