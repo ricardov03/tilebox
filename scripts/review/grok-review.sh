@@ -23,12 +23,13 @@
 #   --intent <file>      Intent body file (default: the PR body from `gh pr view` when the branch has a PR,
 #                        else the commit messages of the range, else none).
 #   --effort <e>         Grok reasoning effort (default: medium; high doubled the wall time in reasoning alone).
-#   --max-turns <n>      Hard cap of Grok agentic turns (default: 10). The prompt names a BUDGET of n-4 turns
-#                        (at least 2): grok 1.0.30 exits 1 with "max turns reached" and no verdict when the cap
-#                        is hit, and the model spends every turn it is told it has. The 4 spare turns are the
-#                        room to overshoot and still write the verdict.
-#   --timeout <min>      Watchdog: kill the Grok call after N minutes and exit 3 (default: 6). macOS has no
-#                        `timeout`, so the script polls the child itself.
+#   --max-turns <n>      Grok agentic turns (default: 8; the prompt names the budget and pre-reads the callers).
+#                        At the cap grok 1.0.30 exits with no verdict, so the script resumes the same session
+#                        once, with a "no more tools, write the verdict" prompt (2 turns, 3 min at most).
+#   --conclude <id>      Skip the review call: resume Grok session <id> (printed by a blind run) and make it
+#                        write the verdict from what it has read. The exploration is not paid for twice.
+#   --timeout <min>      Watchdog: kill the Grok call after N minutes and exit 3 (default: 8; a turn takes
+#                        about 40 s here). macOS has no `timeout`, so the script polls the child itself.
 #   --force              Ignore the cache and call Grok again.
 #   --dry-run            Print the rendered prompt and exit 0. No Grok call.
 #   --ledger             Append the findings to scripts/review/findings-ledger.jsonl (fresh verdicts only; a
@@ -43,7 +44,7 @@
 #   grok-review: scope=… files=N diff_chars=N cached=0|1 turns=N elapsed_s=N tokens_in=N tokens_out=N critical=N warning=N suggestion=N verdict=PASS|FAIL
 #
 # Blind-run guard: a run that did not obtain a schema-valid verdict exits 3. It never reports green.
-# Budget: effort medium, 6 turns named in the prompt (cap 10), callers pre-read into the prompt, watchdog. Aim: 2 min per block, 4 min per branch.
+# Budget: effort medium, 8 turns, callers pre-read into the prompt, one conclude call at the cap, watchdog.
 # Cache: <git common dir>/grok-review/<sha256(diff+prompt+schema)>.json. Same blobs, no call.
 # Tools handed to Grok: read_file, grep, list_dir only; no subagents; MCP, shell, edit, write and web DENIED by
 # permission rule (the allowlist alone keeps the MCP servers loaded); cwd = repo root. Suite: grok-review.test.sh.
@@ -63,9 +64,10 @@ SCOPE=""
 TITLE=""
 INTENT_FILE=""
 EFFORT="medium"
-MAX_TURNS=10
-TURN_HEADROOM=4
-TIMEOUT_MIN=6
+MAX_TURNS=8
+TIMEOUT_MIN=8
+CONCLUDE_TIMEOUT_MIN=3
+CONCLUDE_SESSION=""
 FORCE=0
 DRY_RUN=0
 TO_LEDGER=0
@@ -73,7 +75,7 @@ PR_NUMBER=""
 BRANCH=""
 OUT=""
 
-usage() { sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,48p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -93,6 +95,7 @@ while [[ $# -gt 0 ]]; do
         --ledger) TO_LEDGER=1; shift ;;
         --pr) PR_NUMBER="${2:-}"; shift 2 ;;
         --branch) BRANCH="${2:-}"; shift 2 ;;
+        --conclude) CONCLUDE_SESSION="${2:-}"; FORCE=1; shift 2 ;;
         --out) OUT="${2:-}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "grok-review: unknown option $1" >&2; usage >&2; exit 2 ;;
@@ -182,9 +185,8 @@ SCOPE_TEXT="block: one task block of a larger change; judge it on its own files 
 [[ "$SCOPE" == pr ]] && SCOPE_TEXT="pr: the whole branch before the push or the merge; also judge how the blocks fit together (editor ↔ server route, schema ↔ public profile, script ↔ build hook)."
 
 case "$MAX_TURNS" in ''|*[!0-9]*) echo "grok-review: --max-turns must be a number" >&2; exit 2 ;; esac
-TURN_BUDGET=$(( MAX_TURNS - TURN_HEADROOM )); [[ "$TURN_BUDGET" -ge 2 ]] || TURN_BUDGET=2
 
-python3 - "$PROMPT_TEMPLATE" "$WORK/prompt" "$SCOPE_TEXT" "$TITLE" "$WORK/intent" "$WORK/impact" "$WORK/diff" "$TURN_BUDGET" <<'PY'
+python3 - "$PROMPT_TEMPLATE" "$WORK/prompt" "$SCOPE_TEXT" "$TITLE" "$WORK/intent" "$WORK/impact" "$WORK/diff" "$MAX_TURNS" <<'PY'
 import sys
 tpl, out, scope, title, intent_f, impact_f, diff_f, turns = sys.argv[1:9]
 text = open(tpl, encoding="utf-8").read()
@@ -211,6 +213,34 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     exit 0
 fi
 
+# Watchdog: the CLI has no client-side deadline and a server retry storm once held a call for 2 h.
+# Run Grok in the background, poll, kill at the deadline. Not `timeout(1)`: macOS ships without it.
+# run_grok <minutes> <grok args...>  ⇒  $WORK/grok.out, $WORK/grok.err, GROK_EXIT, TIMED_OUT, ELAPSED (added up).
+run_grok() {
+    local minutes="$1"; shift
+    local pid started deadline
+    set +e
+    grok "$@" > "$WORK/grok.out" 2> "$WORK/grok.err" &
+    pid=$!
+    started=$(date +%s)
+    # Minutes may be fractional (the suite uses 0.05); bash arithmetic is integer-only.
+    deadline=$(( started + $(python3 -c 'import sys; print(max(1, int(float(sys.argv[1]) * 60)))' "$minutes") ))
+    TIMED_OUT=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ "$(date +%s)" -ge "$deadline" ]]; then
+            TIMED_OUT=1
+            pkill -P "$pid" 2>/dev/null          # its children first (a shell waits for them before dying)
+            kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+            break
+        fi
+        sleep 2
+    done
+    wait "$pid" 2>/dev/null
+    GROK_EXIT=$?
+    ELAPSED=$(( ELAPSED + $(date +%s) - started ))
+    set -e
+}
+
 # ── 5. Cache: same blobs, no call ──────────────────────────────────────────────────────────────
 CACHE_DIR="$(git rev-parse --git-common-dir)/grok-review"
 mkdir -p "$CACHE_DIR"
@@ -226,49 +256,66 @@ if [[ "$FORCE" -eq 0 && -s "$CACHE_FILE" ]]; then
 else
     command -v grok >/dev/null 2>&1 || { [[ -x "$HOME/.grok/bin/grok" ]] && PATH="$HOME/.grok/bin:$PATH"; }
     command -v grok >/dev/null 2>&1 || { echo "grok-review: grok CLI not on PATH (expected ~/.grok/bin/grok)" >&2; exit 3; }
-    # Watchdog: the CLI has no client-side deadline and a server retry storm once held a call for 2 h.
-    # Run Grok in the background, poll, kill at TIMEOUT_MIN. Not `timeout(1)`: macOS ships without it.
-    set +e
-    grok --prompt-file "$WORK/prompt" \
-        --json-schema "$(cat "$SCHEMA_FILE")" \
-        --tools "read_file,grep,list_dir" \
-        --disallowed-tools "Agent" \
-        --deny "MCPTool" --deny "Bash" --deny "Edit" --deny "Write" --deny "WebFetch" \
-        --effort "$EFFORT" \
-        --max-turns "$MAX_TURNS" \
-        --output-format json \
-        --cwd "$REPO" \
-        > "$WORK/grok.out" 2> "$WORK/grok.err" &
-    GROK_PID=$!
-    STARTED=$(date +%s)
-    # Minutes may be fractional (the suite uses 0.05); bash arithmetic is integer-only.
-    TIMEOUT_SEC=$(python3 -c 'import sys; print(max(1, int(float(sys.argv[1]) * 60)))' "$TIMEOUT_MIN")
-    DEADLINE=$(( STARTED + TIMEOUT_SEC ))
-    TIMED_OUT=0
-    while kill -0 "$GROK_PID" 2>/dev/null; do
-        if [[ "$(date +%s)" -ge "$DEADLINE" ]]; then
-            TIMED_OUT=1
-            pkill -P "$GROK_PID" 2>/dev/null          # its children first (a shell waits for them before dying)
-            kill "$GROK_PID" 2>/dev/null; sleep 1; kill -9 "$GROK_PID" 2>/dev/null
-            break
+    # Phase 1: the review. Phase 2 (only when the turn cap was hit): resume the SAME session with no new
+    # reading and make Grok write the verdict from what it has read. grok 1.0.30 exits 1 with "max turns
+    # reached" and prints no envelope at the cap, and the model does not count its turns (measured here:
+    # two runs, 8 and 9+ turns of tool calls, 37 and 46 calls, no verdict). The exploration is paid for;
+    # phase 2 is one short call that turns it into a verdict instead of a blind run.
+    SESSION_ID="$CONCLUDE_SESSION"
+    ELAPSED=0
+    CONCLUDED=0
+    SCHEMA_JSON="$(cat "$SCHEMA_FILE")"
+    if [[ -z "$SESSION_ID" ]]; then
+        SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+        run_grok "$TIMEOUT_MIN" --prompt-file "$WORK/prompt" --session-id "$SESSION_ID" \
+            --json-schema "$SCHEMA_JSON" \
+            --tools "read_file,grep,list_dir" \
+            --disallowed-tools "Agent" \
+            --deny "MCPTool" --deny "Bash" --deny "Edit" --deny "Write" --deny "WebFetch" \
+            --effort "$EFFORT" \
+            --max-turns "$MAX_TURNS" \
+            --output-format json \
+            --cwd "$REPO"
+        if [[ "$TIMED_OUT" -eq 1 ]]; then
+            echo "grok-review: watchdog killed grok after ${TIMEOUT_MIN} min (blind-run guard). Retry, raise --timeout for a very large diff, or try to conclude the session: add --conclude $SESSION_ID to the same command" >&2
+            exit 3
         fi
-        sleep 2
-    done
-    wait "$GROK_PID" 2>/dev/null
-    GROK_EXIT=$?
-    ELAPSED=$(( $(date +%s) - STARTED ))
-    set -e
-    if [[ "$TIMED_OUT" -eq 1 ]]; then
-        echo "grok-review: watchdog killed grok after ${TIMEOUT_MIN} min (blind-run guard). Retry, or raise --timeout for a very large diff" >&2
-        exit 3
+        if [[ "$GROK_EXIT" -ne 0 ]] && ! grep -qi 'max turns' "$WORK/grok.err"; then
+            echo "grok-review: grok exited $GROK_EXIT after ${ELAPSED}s (blind-run guard)" >&2
+            cat "$WORK/grok.err" >&2
+            cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null || true
+            exit 3
+        fi
+        [[ "$GROK_EXIT" -eq 0 ]] || { CONCLUDED=1; echo "grok-review: the turn cap ($MAX_TURNS) was hit after ${ELAPSED}s with no verdict. Resuming session $SESSION_ID to conclude." >&2; }
+    else
+        CONCLUDED=1
     fi
-    if [[ "$GROK_EXIT" -ne 0 ]]; then
-        echo "grok-review: grok exited $GROK_EXIT after ${ELAPSED}s (blind-run guard)" >&2
-        cat "$WORK/grok.err" >&2
-        grep -qi 'max turns' "$WORK/grok.err" && echo "grok-review: the turn cap ($MAX_TURNS) was hit before a verdict. Review a smaller block with --files, or raise --max-turns." >&2
-        cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null || true
-        exit 3
+    if [[ "$CONCLUDED" -eq 1 ]]; then
+        cat > "$WORK/conclude" <<'CONCLUDE'
+Your tool budget is spent. Do NOT call any tool: a tool call now discards the whole review.
+From what you have already read, write the final verdict now: ONLY the JSON object of the schema, nothing after it.
+Report only findings you verified, each with `file:line`, quoted `evidence` and a concrete `failure_path`. Drop every hunch you could not verify.
+If you verified no defect, return `passed: true` with an empty `findings` list. In `summary`, say what you checked and name what you could not check.
+CONCLUDE
+        run_grok "$CONCLUDE_TIMEOUT_MIN" --resume "$SESSION_ID" --prompt-file "$WORK/conclude" \
+            --json-schema "$SCHEMA_JSON" \
+            --tools "read_file,grep,list_dir" \
+            --disallowed-tools "Agent" \
+            --deny "MCPTool" --deny "Bash" --deny "Edit" --deny "Write" --deny "WebFetch" \
+            --effort "$EFFORT" \
+            --max-turns 2 \
+            --output-format json \
+            --cwd "$REPO"
+        if [[ "$TIMED_OUT" -eq 1 || "$GROK_EXIT" -ne 0 ]]; then
+            echo "grok-review: the conclude call for session $SESSION_ID failed (exit $GROK_EXIT, timed_out=$TIMED_OUT) (blind-run guard)" >&2
+            cat "$WORK/grok.err" >&2
+            echo "grok-review: review a smaller block with --files, or raise --max-turns." >&2
+            cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null || true
+            exit 3
+        fi
     fi
+    # Session totals (both phases) from the CLI's own books; the envelope only knows its own call.
+    grok usage "$SESSION_ID" > "$WORK/usage.json" 2>/dev/null || echo '{}' > "$WORK/usage.json"
 
     # `.text` may carry several JSON objects (progress emissions, then the final verdict). The verdict
     # is the LAST object, it must be the last thing in the text, it must satisfy the schema (every
@@ -278,7 +325,7 @@ else
     # contradiction. passed=false with suggestions only is Grok being strict, not a stub: it is kept
     # and normalised to passed=true (only critical/warning block). Anything else is a blind run:
     # exit 3, with the raw output kept next to the cache for inspection.
-    python3 - "$WORK/grok.out" "$WORK/verdict.json" "$HASH" "$SCOPE" "$SCHEMA_FILE" "$ELAPSED" <<'PY' || { cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null; echo "grok-review: raw grok output kept at $CACHE_DIR/$HASH.raw.json" >&2; exit 3; }
+    python3 - "$WORK/grok.out" "$WORK/verdict.json" "$HASH" "$SCOPE" "$SCHEMA_FILE" "$ELAPSED" "$WORK/usage.json" "$CONCLUDED" "$SESSION_ID" "$MAX_TURNS" <<'PY' || { cp "$WORK/grok.out" "$CACHE_DIR/$HASH.raw.json" 2>/dev/null; echo "grok-review: raw grok output kept at $CACHE_DIR/$HASH.raw.json" >&2; exit 3; }
 import json, sys
 raw_f, out_f, digest, scope, schema_f = sys.argv[1:6]  # argv[6] = elapsed seconds
 def blind(msg):
@@ -339,11 +386,20 @@ if not verdict["passed"] and not verdict["findings"]:
 if not verdict["passed"] and not blocking:
     verdict["passed"] = True   # suggestions only: nothing blocks
 usage = envelope.get("usage") or {}
+usage_f, concluded, session_id, max_turns = sys.argv[7], sys.argv[8] == "1", sys.argv[9], int(sys.argv[10])
+try:
+    books = (json.load(open(usage_f, encoding="utf-8")) or {}).get("session") or {}
+except Exception:
+    books = {}
+turns = books.get("modelCalls") or ((max_turns if concluded else 0) + (envelope.get("num_turns") or 0))
 verdict["_meta"] = {
-    "hash": digest, "scope": scope, "elapsed_s": int(sys.argv[6]) if len(sys.argv) > 6 else None,
-    "session_id": envelope.get("sessionId"), "request_id": envelope.get("requestId"),
-    "turns": envelope.get("num_turns"), "model": next(iter((envelope.get("modelUsage") or {}).keys()), None),
-    "tokens_in": usage.get("input_tokens", 0), "tokens_out": usage.get("output_tokens", 0),
+    "hash": digest, "scope": scope, "elapsed_s": int(sys.argv[6]),
+    "session_id": envelope.get("sessionId") or session_id, "request_id": envelope.get("requestId"),
+    "turns": turns, "concluded_after_turn_cap": concluded,
+    "model": books.get("primaryModelId") or next(iter((envelope.get("modelUsage") or {}).keys()), None),
+    "tokens_in": books.get("inputTokens") or usage.get("input_tokens", 0),
+    "tokens_out": books.get("outputTokens") or usage.get("output_tokens", 0),
+    "tokens_cached": books.get("cachedReadTokens"), "cost_usd_ticks": books.get("costUsdTicks"),
 }
 json.dump(verdict, open(out_f, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 PY
@@ -361,7 +417,8 @@ m = v.get("_meta", {})
 counts = {"critical": 0, "warning": 0, "suggestion": 0}
 for f in v["findings"]:
     counts[f["severity"]] += 1
-print(f"# Grok review · {scope} · {'cached' if cached == '1' else 'fresh'} · {m.get('model') or 'grok'}")
+print(f"# Grok review · {scope} · {'cached' if cached == '1' else 'fresh'} · {m.get('model') or 'grok'}"
+      + (" · verdict forced at the turn cap" if m.get("concluded_after_turn_cap") else ""))
 print(v.get("summary", "").strip())
 print()
 for sev in ("critical", "warning", "suggestion"):
