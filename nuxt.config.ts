@@ -77,6 +77,17 @@ function iconsIn(data: typeof profile, withHidden = false): string[] {
   return [...icons].sort()
 }
 
+/**
+ * Folders under `public/` with files made from other people's bytes (fetched icons and images, uploads).
+ * A file there is only an `<img>` source. Opened directly it must never act as a page of this origin:
+ * no script, no network, sandboxed. `public/_headers` says the same for the static host (docs/security.md).
+ */
+const UNTRUSTED_ASSET_DIRS = ['icons', 'thumbs', 'blocks', 'site', 'site-uploads'] as const
+const UNTRUSTED_ASSET_HEADERS = {
+  'Content-Security-Policy': 'default-src \'none\'; style-src \'unsafe-inline\'; sandbox',
+  'X-Content-Type-Options': 'nosniff',
+}
+
 export default defineNuxtConfig({
   modules: ['@nuxt/fonts', '@nuxt/icon', '@nuxt/eslint'],
   // `nuxt dev` only: the editor previews any pasted URL and hidden blocks at once, so every
@@ -109,6 +120,8 @@ export default defineNuxtConfig({
   routeRules: {
     '/edit': { prerender: false },
     '/api/**': { prerender: false },
+    // The same headers as `public/_headers` (the static host reads that file), for `nuxt dev`.
+    ...Object.fromEntries(UNTRUSTED_ASSET_DIRS.map(dir => [`/${dir}/**`, { headers: UNTRUSTED_ASSET_HEADERS }])),
   },
 
   features: {
