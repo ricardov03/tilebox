@@ -239,6 +239,43 @@ test('the owner\'s own alt text stays, and a local file clears the Pexels source
   expect(readProfile().blocks.find(block => block.id === id)).toMatchObject({ src: '/blocks/sample.jpg', source: null })
 })
 
+test('after a pick the alt FIELD and the path field follow the block (a change from outside, no focus in the field)', async ({ page }) => {
+  const id = imageBlockId()
+  await mockPexels(page)
+  await openImageForm(page)
+  const altField = page.locator('form input[id$="-alt"]')
+  const srcField = page.locator('form input[id$="-src"]')
+  const tile = page.locator(`li[data-id="${id}"]`)
+
+  // A text that starts with the sample text is not the owner's own: the next pick may replace it.
+  await altField.fill('Sample image, to be replaced')
+  await altField.blur()
+  await expect(tile.locator('img')).toHaveAttribute('alt', 'Sample image, to be replaced')
+
+  await openPexelsTab(page)
+  await page.getByLabel('Search Pexels').fill('desk')
+  await page.getByLabel('Search Pexels').press('Enter')
+  await page.locator('button[data-photo-id="333333"]').click()
+  await expect(tile.locator('img')).toHaveAttribute('alt', 'A desk, photo 333333')
+  await expect(altField).toHaveValue('A desk, photo 333333')
+  await expect(srcField).toHaveValue(PICKED_SRC)
+  await expect(page.locator('form [data-field-error]')).toHaveCount(0)
+  await expect(page.locator('[data-field-problems]')).toHaveCount(0)
+
+  // The text this field filled in is still not the owner's own: the next pick replaces it again.
+  await page.locator('button[data-photo-id="111111"]').click()
+  await expect(altField).toHaveValue('A desk, photo 111111')
+
+  // The owner's words win from here on: typed text is committed and the next pick keeps it.
+  await altField.fill('A tidy desk by the window')
+  await altField.blur()
+  await page.locator(`button[data-photo-id="${PICKED_ID}"]`).click()
+  await expect(tile.locator('[data-photo-credit]')).toHaveText('Photo by Grace Sample on Pexels')
+  await expect(altField).toHaveValue('A tidy desk by the window')
+  await expect(tile.locator('img')).toHaveAttribute('alt', 'A tidy desk by the window')
+  // Not saved: the next test loads the file again.
+})
+
 test('keyboard only: Enter searches, arrow keys move in the grid, Enter picks', async ({ page }) => {
   const mocks = await mockPexels(page)
   await openImageForm(page)
