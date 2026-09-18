@@ -253,6 +253,9 @@ const range = lastTag.ok && lastTag.out ? `${lastTag.out}..HEAD` : 'HEAD'
 const commitList = git('log', range, '--format=%s').out.split('\n').filter(Boolean)
 log(`    Commits since ${lastTag.ok && lastTag.out ? lastTag.out : 'the first commit'}: ${commitList.length}`)
 for (const subject of commitList) log(`      - ${subject}`)
+if (commitList.length === 0 && !opts['first-release'] && !opts['release-as']) {
+  fail('no commits since the last tag. Nothing to release. Use --release-as to force a version.')
+}
 
 /** Changelog section as commit-and-tag-version prints it between --- lines. */
 const previewSection = (() => {
