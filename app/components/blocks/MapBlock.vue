@@ -1,5 +1,6 @@
 <!--
   Map tile. A plain link to the map URL. No map JS.
+  No aria-label: the visible text (label + sublabel) is the accessible name.
 -->
 <script setup lang="ts">
 import type { MapBlock } from '~~/types/profile'
@@ -10,10 +11,7 @@ defineProps<{ block: MapBlock }>()
 </script>
 
 <template>
-  <Tile
-    :href="block.url"
-    :aria-label="`${block.label} on the map`"
-  >
+  <Tile :href="block.url">
     <Icon
       :name="UI_ICONS.map"
       class="size-[34px] text-accent md:size-10"

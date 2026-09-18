@@ -43,7 +43,7 @@ test('shows 2 columns at 390 and follows layout.mobile', async ({ page }) => {
   expect(mobile.indexOf(imageId!)).toBeLessThan(mobile.indexOf(socialId!))
 
   const image = page.locator(`${TILES}:has(img[src$="sample.jpg"])`).first()
-  const social = page.locator(`${TILES}:has(a[aria-label$=" profile"])`).first()
+  const social = page.locator(`${TILES}:has(a[href*="github.com"])`).first()
   const [imageBox, socialBox] = await Promise.all([image.boundingBox(), social.boundingBox()])
   expect(imageBox).not.toBeNull()
   expect(socialBox).not.toBeNull()
@@ -95,7 +95,7 @@ test('never calls api.iconify.design', async ({ page }) => {
   await page.waitForLoadState('networkidle')
   expect(iconify).toEqual([])
   // Icons are inline SVG in the prerendered HTML.
-  await expect(page.locator('a[aria-label="GitHub profile"] svg').first()).toBeVisible()
+  await expect(page.locator('a[href*="github.com"] svg').first()).toBeVisible()
 })
 
 test('video tile loads its iframe only after the play button', async ({ page }) => {
