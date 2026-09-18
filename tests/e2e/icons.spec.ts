@@ -7,6 +7,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
+import { resolveLinkIcon } from '../../app/components/blocks/media'
 import { allBrandIcons } from '../../app/utils/brand-icons'
 import { ICON_NAME_RE, ICON_SETS, ICON_SETS_MESSAGE, iconSetOf, isAllowedIconName } from '../../app/utils/icon-sets'
 import { NETWORKS, UI_ICONS } from '../../app/utils/networks'
@@ -21,7 +22,16 @@ import {
   searchIcons,
 } from '../../content/icon-index'
 import { foreignIconAdvice, foreignIcons, migrateIconsText, removedIconLine } from '../../content/migrate'
-import { BlockSchema, LinkBlockSchema, ProfileSchema } from '../../types/profile'
+import type { Profile } from '../../types/profile'
+import {
+  BlockSchema,
+  blockDropReason,
+  incompleteMessage,
+  incompleteReason,
+  LinkBlockSchema,
+  ProfileSchema,
+  toPublicProfile,
+} from '../../types/profile'
 import { ROOT } from './helpers'
 
 const prefixOf = (name: string) => name.slice(0, name.indexOf(':'))
@@ -359,5 +369,74 @@ test.describe('WP19: the relaxed schema keeps the icon rule', () => {
     // The allowed one passes in the same minimal file: only the icon rule refused it.
     minimal.blocks[0]!.icon = 'simple-icons:github'
     expect(ProfileSchema.safeParse(minimal).success).toBe(true)
+  })
+})
+
+test.describe('WP19: an icon the migration removed never makes a block incomplete', () => {
+  /** The example profile with a foreign icon on one https link block, as an old file would have it. */
+  function oldProfileText(): { text: string, blockId: string, url: string } {
+    const data = JSON.parse(readFileSync(resolve(ROOT, 'content/profile.example.json'), 'utf8')) as {
+      blocks: Record<string, unknown>[]
+    }
+    const link = data.blocks.find(block => block.type === 'link' && typeof block.url === 'string'
+      && (block.url as string).startsWith('https://'))
+    if (!link) throw new Error('The example profile needs a link block with an https URL.')
+    link.icon = 'lucide:mail'
+    return { text: `${JSON.stringify(data, null, 2)}\n`, blockId: link.id as string, url: link.url as string }
+  }
+
+  function migrated(): Profile {
+    const result = migrateIconsText(oldProfileText().text)
+    if (!result) throw new Error('the migration had work to do')
+    return ProfileSchema.parse(JSON.parse(result.text))
+  }
+
+  test('the migration removes the icon, the block stays valid and is NOT incomplete', () => {
+    const { text, blockId } = oldProfileText()
+    const result = migrateIconsText(text)
+    expect(result).not.toBeNull()
+    if (!result) return
+    expect(result.removed.map(item => item.icon)).toEqual(['lucide:mail'])
+
+    const block = ProfileSchema.parse(JSON.parse(result.text)).blocks.find(item => item.id === blockId)
+    expect(block, blockId).toBeDefined()
+    if (!block) return
+    expect('icon' in block ? block.icon : undefined).toBeUndefined()
+    // The seam: the icon is gone, but an icon is not an ESSENTIAL value, so the
+    // tile is complete and the build keeps it.
+    expect(incompleteReason(block)).toBeNull()
+    expect(incompleteMessage(block)).toBeNull()
+    expect(blockDropReason(block, new Date('2026-06-01T00:00:00Z'))).toBeNull()
+  })
+
+  test('it still renders: the automatic icon takes over, and it is a legal name', () => {
+    const { blockId, url } = oldProfileText()
+    const block = migrated().blocks.find(item => item.id === blockId)
+    if (!block || block.type !== 'link') throw new Error('the migrated link block')
+
+    const icon = resolveLinkIcon(block)
+    // Never "manual": the own icon is gone. The brand icon of the URL, the local
+    // favicon or the default link icon takes its place.
+    if (icon.kind === 'icon') {
+      expect(icon.source).not.toBe('manual')
+      expect(isAllowedIconName(icon.name), icon.name).toBe(true)
+      expect(iconProblem(icon.name), icon.name).toBeNull()
+    }
+    // With the foreign icon still on it, the picture came from that icon instead.
+    const before = resolveLinkIcon({ ...block, icon: 'lucide:mail' })
+    expect(before).toEqual({ kind: 'icon', name: 'lucide:mail', source: 'manual' })
+    expect(icon).not.toEqual(before)
+    expect(url.startsWith('https://')).toBe(true)
+  })
+
+  test('the build keeps the migrated block on the page, and no foreign name reaches it', () => {
+    const { blockId } = oldProfileText()
+    const published = toPublicProfile(migrated(), undefined, undefined, { now: new Date('2026-06-01T00:00:00Z') })
+    const tile = published.blocks.find(item => item.id === blockId)
+    expect(tile, `${blockId} must still be on the page`).toBeDefined()
+    expect(published.layout.desktop).toContain(blockId)
+    for (const item of published.blocks) {
+      if ('icon' in item && typeof item.icon === 'string') expect(isAllowedIconName(item.icon), item.icon).toBe(true)
+    }
   })
 })
