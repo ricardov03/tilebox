@@ -42,39 +42,57 @@ test('highlights render as a list under the bio', async ({ page }) => {
   await expect(list.locator('> li')).toHaveText(highlights)
 })
 
-test('the email shows as a mailto link only when showEmail is true', async ({ page }) => {
-  await page.goto('/')
-  const { email, showEmail } = profile.profile
+test('the email line shows only when showEmail is true, and never as a raw address (WP17)', async ({ page }) => {
+  const { showEmail, email } = profile.profile
   if (!profileIsPersonal()) expect(showEmail).toBe(false)
-  const link = page.locator(`a[href="mailto:${email}"]`)
-  if (showEmail) {
-    await expect(link).toHaveCount(1)
-    await expect(link).toContainText(email)
+  await page.goto('/')
+  const line = page.locator('[data-profile-email]')
+  if (!showEmail || !email) {
+    await expect(line).toHaveCount(0)
+    if (email) await expect(page.locator('body')).not.toContainText(email)
     return
   }
-  await expect(link).toHaveCount(0)
-  await expect(page.locator('body')).not.toContainText(email)
-  // The example has no mailto link at all.
-  if (!profileIsPersonal()) await expect(page.locator('a[href^="mailto:"]')).toHaveCount(0)
+  // Prerendered: a button, no href, the human form. The address is nowhere in the document.
+  await expect(line).toHaveCount(1)
+  expect(await page.content()).not.toContain(email)
+  await expect(line).toHaveText(email.replace(/@/g, ' at ').replace(/\./g, ' dot '))
+  await expect(line).toHaveAttribute('aria-label', `Email ${profile.profile.name}`)
 })
 
-test('the status dot pulses and is hidden from assistive tech', async ({ page }) => {
+test('the status dot pings: a halo behind a solid dot, both hidden from assistive tech, no layout shift', async ({ page }) => {
   test.skip(!profile.profile.status, 'profile has no status')
   await page.goto('/')
-  const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
-  await expect(dot).toHaveClass(/animate-pulse/)
-  expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('pulse')
+  const dot = page.locator('[data-status-dot]')
+  await expect(dot).toHaveCount(1)
+  const parts = dot.locator('span[aria-hidden="true"]')
+  await expect(parts).toHaveCount(2)
+  const halo = parts.nth(0)
+  await expect(halo).toHaveClass(/animate-ping/)
+  expect(await halo.evaluate(el => getComputedStyle(el).animationName)).toBe('ping')
+  expect(await halo.evaluate(el => getComputedStyle(el).position)).toBe('absolute')
+  expect(await parts.nth(1).evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+  // The wrapper carries the size (10px): the halo scales with `transform`, which never moves the text.
+  const box = async () => dot.evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const text = el.nextElementSibling?.getBoundingClientRect()
+    return [rect.width, rect.height, Math.round(rect.left), Math.round(text?.left ?? 0)]
+  })
+  const before = await box()
+  expect(before.slice(0, 2)).toEqual([10, 10])
+  await page.waitForTimeout(500)
+  expect(await box()).toEqual(before)
 })
 
 test('a link without an icon shows the brand icon of its URL', async ({ page }) => {
-  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && brandIconFor(b.url) !== undefined)
+  // A web URL: a mail tile has a brand icon too (the envelope), but no `href` to find it by (WP17).
+  const block = visibleBlocks.find(b => b.type === 'link' && !b.icon && b.url?.startsWith('https://') && brandIconFor(b.url) !== undefined)
   if (!profileIsPersonal()) expect(block?.id).toBe('b10')
   test.skip(!block || block.type !== 'link', 'this profile has no such link')
-  if (!block || block.type !== 'link') return
+  if (!block || block.type !== 'link' || !block.url) return
   if (!profileIsPersonal()) expect(brandIconFor(block.url)).toBe('line-md:github')
   await page.goto('/')
   const tile = page.locator(`${TILES} a[href="${block.url}"]`).first()
-  await expect(tile).toContainText(block.title)
+  if (block.title) await expect(tile).toContainText(block.title)
   // Inline SVG from the client bundle: no favicon <img>, no request to another host.
   await expect(tile.locator('svg').first()).toBeVisible()
   await expect(tile.locator('img')).toHaveCount(0)
@@ -138,11 +156,16 @@ test.describe('reduced motion', () => {
     expect(await tile.evaluate(el => getComputedStyle(el).animationName)).toBe('none')
   })
 
-  test('the status dot does not pulse', async ({ page }) => {
+  test('the status dot has no halo: it is not rendered and not animated', async ({ page }) => {
     test.skip(!profile.profile.status, 'profile has no status')
     await page.goto('/')
-    const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
-    expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+    const parts = page.locator('[data-status-dot] span[aria-hidden="true"]')
+    await expect(parts).toHaveCount(2)
+    await expect(parts.nth(0)).toBeHidden()
+    expect(await parts.nth(0).evaluate(el => getComputedStyle(el).display)).toBe('none')
+    await expect(parts.nth(1)).toBeVisible()
+    expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations === Infinity
+      && (a.effect as KeyframeEffect).target?.closest('[data-status-dot]')).length)).toBe(0)
   })
 })
 

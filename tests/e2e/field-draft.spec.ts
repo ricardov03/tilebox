@@ -20,7 +20,6 @@ function setup(initial: string, options: Partial<FieldDraftOptions> = {}) {
       field.modelChanged(value)
     },
     validate: value => (value.startsWith('https://') && value.includes('.') ? undefined : 'Invalid URL'),
-    required: () => true,
     setTimer: (run, ms) => {
       timers.set(nextHandle, { at: now + ms, run })
       return nextHandle++
@@ -78,19 +77,47 @@ test('typing through invalid states: no check on a key, the text is never rewrit
   expect(t.field.state).toMatchObject({ text: 'https://example.com', error: undefined, pending: false })
 })
 
-test('an empty required field: "Required", the model keeps the last valid value', () => {
+test('WP17: an emptied field is never an error: it commits "" (key removed), also for a field with a format check', () => {
   const t = setup('https://old.example')
   t.field.focus()
   t.field.input('')
   t.field.blur()
-  expect(t.field.state).toMatchObject({ text: '', error: 'Required', blurred: true, pending: false })
-  expect(t.commits).toEqual([])
-  expect(t.model()).toBe('https://old.example')
-  expect(t.field.flush()).toBe(false)
+  expect(t.field.state).toMatchObject({ text: '', error: undefined, kept: false, blurred: true, pending: false })
+  expect(t.commits).toEqual([''])
+  expect(t.model()).toBe('')
+  expect(t.field.flush()).toBe(true)
 })
 
-test('an empty optional field commits the empty value', () => {
-  const t = setup('A note', { required: () => false, validate: undefined })
+test('WP17: emptying a field clears the format error it had', () => {
+  const t = setup('https://old.example')
+  t.field.focus()
+  t.field.input('not a url', true)
+  expect(t.field.state.error).toBe('Invalid URL')
+  t.field.input('', true)
+  expect(t.field.state.error).toBeUndefined()
+  expect(t.commits).toEqual([''])
+})
+
+test('WP17: a `keepLast` field (the name): empty commits nothing, no error, `kept` is set, the model keeps the last valid value', () => {
+  const t = setup('Ada', { keepLast: () => true, validate: undefined })
+  t.field.focus()
+  t.field.input('')
+  t.field.blur()
+  expect(t.field.state).toMatchObject({ text: '', error: undefined, kept: true })
+  expect(t.commits).toEqual([])
+  expect(t.model()).toBe('Ada')
+  expect(t.field.flush()).toBe(true)
+  // A key ends the note, a value is committed as always.
+  t.field.focus()
+  t.field.input('Grace')
+  expect(t.field.state.kept).toBe(false)
+  t.field.blur()
+  expect(t.commits).toEqual(['Grace'])
+  expect(t.field.state.kept).toBe(false)
+})
+
+test('whitespace only counts as empty', () => {
+  const t = setup('A note', { validate: undefined })
   t.field.focus()
   t.field.input('   ')
   t.field.blur()
@@ -134,9 +161,14 @@ test('a change from outside: taken without the focus, never over the text you ty
   expect(t.model()).toBe('Mine')
 
   // A refused text goes when the model changes from outside (undo, "Use fetched title").
-  t.field.input('')
+  const refused = setup('https://old.example')
+  refused.field.focus()
+  refused.field.input('nope')
+  refused.field.blur()
+  expect(refused.field.state.error).toBe('Invalid URL')
+  refused.setModel('https://restored.example')
+  expect(refused.field.state).toMatchObject({ text: 'https://restored.example', error: undefined })
   t.field.blur()
-  expect(t.field.state.error).toBe('Required')
   t.setModel('Restored')
   expect(t.field.state).toMatchObject({ text: 'Restored', error: undefined })
 })

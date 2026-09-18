@@ -17,6 +17,7 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 - [Stock photos (Pexels)](#stock-photos-pexels)
 - [Site metadata](#site-metadata)
 - [Scheduling](#scheduling)
+- [Email protection](#email-protection)
 - [Save contact](#save-contact)
 - [QR code](#qr-code)
 - [Share button](#share-button)
@@ -36,8 +37,8 @@ A self-hosted alternative to Bento.me (shut down in February 2026) and Linktree.
 
 ## Features
 
-- Profile block: avatar, name, handle, bio, up to 3 highlights, status line with a pulsing dot, optional email link.
-- Email privacy: your email is required but hidden by default. A hidden email is removed at build time and is in no file of the site.
+- Profile block: avatar, name, handle, bio, up to 3 highlights, status line with a pinging dot, optional email link.
+- Email protection: your email is optional and hidden by default. A hidden email is in no file of the site, and a shown email (or a mail tile) ships as a token, never as an address. See [Email protection](#email-protection).
 - Avatar from your email: the build downloads your Gravatar picture once. The public page never calls gravatar.com.
 - Site metadata from your profile: title, description, canonical link, Open Graph and X card, JSON-LD (`ProfilePage` + `Person`), `rel="me"` on social links, optional `noindex`. Edit it in `/edit` > **Site**.
 - Favicon set and social preview image made at build time from your avatar or your initials, in your colors. Your own upload wins. No network, no service.
@@ -85,7 +86,9 @@ npm run dev
 3. `npm run publish`. Your page goes to Cloudflare Pages or Netlify from your machine (see Publish).
 
 Text fields in the editor keep what you type. The check runs 0.6 s after your last key, and at once when you leave the field, press Enter or press Cmd/Ctrl+S.
-A value that fails the check stays in the field with the reason under it; the file keeps the last valid value. The save bar lists those fields under **Not saved yet**, and Save waits until you fix them.
+**An empty field is never an error.** Clear a field and the key leaves your file: the tile keeps working, the editor says what is missing, and Save writes the change. Only the profile **Name** is kept: an empty name field saves the last name you gave, with the note "Name is empty: kept the last saved name".
+A value with a bad FORMAT (text that is not a URL, not an email, not an icon name) stays in the field with the reason under it; the file keeps the last valid value. The save bar lists those under **Not saved:**, and Save still writes everything else. Nothing blocks Save.
+A tile that lost the value it needs to exist (a link without a URL, an image without a file) shows an **Incomplete: add a URL** badge in the list and on the preview. It saves like any other tile, and the published page leaves it out until you complete it.
 
 The first `npm run dev` creates `content/profile.json` from `content/profile.example.json`.
 Restart `npm run dev` after you change the color preset, the font preset or an icon name.
@@ -157,12 +160,13 @@ Profile fields:
 
 | Field | Required | What it is |
 |---|---|---|
-| `name`, `handle`, `bio`, `theme` | yes | The basics |
-| `email` | yes | A valid email. Hidden unless `showEmail` is true. Also used to find your Gravatar picture |
-| `showEmail` | no, default `false` | `true` shows the email as a `mailto:` link under the highlights |
+| `name`, `theme` | yes | The two values a page cannot do without |
+| `handle`, `bio` | no | Leave them out and the page simply shows nothing there |
+| `email` | no | A valid email. Hidden unless `showEmail` is true. Also used to find your Gravatar picture. No email = no Gravatar lookup and no email line |
+| `showEmail` | no, default `false` | `true` shows the email under the highlights. It is published as a token, never as a raw address (see [Email protection](#email-protection)) |
 | `highlights` | no, default `[]` | Up to 3 short lines under the bio, 1 to 80 characters each. With 3 of them, each gets one line on phones |
 | `avatar` | no | Path of an uploaded picture. It wins over the Gravatar picture. Without both, the page shows your initials |
-| `status` | no | The line with the pulsing dot (no pulse with `prefers-reduced-motion`) |
+| `status` | no | The line with the pinging dot: a halo grows and fades behind a solid dot (no halo with `prefers-reduced-motion`) |
 
 With highlights or a visible email the profile tile uses a compact scale (smaller avatar and name, bio limited to 3 lines), so everything fits the fixed tile.
 An older `profile.json` without `email`, `showEmail` and `highlights` is upgraded by `npm run dev` (`ensure:profile`): it adds `"email": "you@example.com"`, `"showEmail": false`, `"highlights": []` and changes nothing else. `check:profile` warns while the placeholder email is still there.
@@ -172,14 +176,16 @@ Rules: every block `id` is unique. `layout.desktop` lists every block id. `layou
 Every block type takes `"hidden": true`: the block stays in your file and in the editor, and the build leaves it out (no HTML, no payload, no JS).
 Every block type also takes `"startsAt"` and `"endsAt"` (see [Scheduling](#scheduling)). `link`, `social`, `map` and `video` blocks take `"noUtm": true` (see [UTM tags](#utm-tags)).
 
-| Type | Required fields | Optional fields |
+Every text of a block is OPTIONAL in the file. The column "Needs to be published" is the one value a tile cannot exist without: while it is missing the tile is *incomplete*, it still saves, and the build leaves it out.
+
+| Type | Needs to be published | Other fields |
 |---|---|---|
-| `link` | `title`, `url` | `description`, `icon`, `accent`, `pop`, `spotlight`, `enrich`, `showImage`, `favicon`, `image`, `imageAlt`, `meta` |
-| `social` | `network`, `url` | `label` |
-| `image` | `src`, `alt`, `source` (or `null`) | `caption` |
+| `link` | `url` | `title` (default: the host of the URL), `description`, `icon`, `accent`, `pop`, `spotlight`, `enrich`, `showImage`, `favicon`, `image`, `imageAlt`, `meta` |
+| `social` | `url` | `network` (required by the schema), `label` |
+| `image` | `src` | `alt` (missing = `alt=""`, a decorative image), `caption`, `source` (required by the schema, `null` for your own file) |
 | `text` | `body` | `title`, `footnote` |
 | `section` | `title` | |
-| `map` | `label`, `url` | `sublabel` |
+| `map` | `url` | `label` (default "Map"), `sublabel` |
 | `video` | `url` | `title`, `thumbnail` |
 | `contact` | | `title` (default "Save my contact"), `description`, `icon` (default `line-md:account`). See [Save contact](#save-contact) |
 | `qr` | | `caption` (default: the host of your site). `size` is `1x1` or `2x2` only. See [QR code](#qr-code) |
@@ -188,7 +194,7 @@ New top-level keys (all optional, an old file stays valid):
 
 | Key | What it is |
 |---|---|
-| `contact` | The PUBLIC contact card: `enabled`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. See [Save contact](#save-contact) |
+| `contact` | The PUBLIC contact card: `enabled`, `shareEmail`, `fullName`, `org`, `title`, `phone`, `email`, `url`, `note`. See [Save contact](#save-contact) |
 | `site.share` | `false` removes the share button. Missing = on. See [Share button](#share-button) |
 | `site.utm` | `{ "source": "tilebox", "medium": "profile", "campaign": "spring-2027" }`. `campaign` is optional. See [UTM tags](#utm-tags) |
 
@@ -355,6 +361,26 @@ The page is static, so be clear about what a date can do:
 - `npm run check:profile` prints one warning per expired block and per block that has not started yet, with the date to publish after.
 - The editor shows a status badge (Live, Scheduled from, Ends, Expired) and a calendar badge on the tile and on the list row.
 
+## Email protection
+
+The owner's words: *"I don't want my email inbox to get dynamite of spam."*
+So **no email address and no `mailto:` string is in any file of your built site**: not in the HTML, not in `_payload.json`, not in a JS chunk, not in a JSON file.
+
+What happens instead:
+
+1. The build turns every address into a **token**. The part before the `@` and the part after it are each reversed and then base64url encoded. A `?subject=...` query gets the same treatment. `profile.email` becomes `emailToken`; a tile whose URL is a mail link loses that URL and gets a `mail` token.
+2. The page ships that token inside a real `<button type="button">`. It has no `href` and no address in any attribute. A mail tile shows its title; the profile line shows **"hello at example dot com"**.
+3. In the browser, after the first sign that a person is there (a pointer move, a pointer down, a touch, a key, a scroll, a focus), the page decodes the token **in memory** and the button becomes `<a href="mailto:...">`. The profile line then shows the real address. Enter, Space and a click work before and after; the keyboard focus follows.
+4. With JavaScript off, the visitor still reads the human form and can type it.
+
+No network, no third party, no CAPTCHA, no image of your address. The whole thing is `app/utils/mail-shield.ts` and `app/components/ProtectedEmail.vue`.
+
+**The honest limit.** This is not encryption and does not pretend to be. It defeats a harvester that reads HTML or runs without ever touching the page, which is nearly all of them. A bot that drives a full browser and fakes one input event can still read your address, exactly like a visitor can. **The strongest protection is an address you can throw away**: a forwarding alias (`hi@your-domain`, or a provider alias) that you rotate when the spam starts. Use this shield *and* an alias.
+
+**The contact card is the exception.** `/site/contact.vcf` is a vCard, and that format needs the address as plain text. So the address is **opt-in**: `/edit` > **Site** > **Contact card** > "Include my email in the contact file (the file is public; bots can read it)". Off by default, and then the card has no `EMAIL` line at all. `public/robots.txt` carries `Disallow: /site/contact.vcf`, which asks crawlers to skip the file: only polite bots listen, so treat the card as fully public whenever you turn the address on.
+
+In the editor nothing changes: you see and edit your real email and your real `mailto:` URLs. The shield only touches what the build publishes.
+
 ## Save contact
 
 A `contact` block is a tile that downloads your contact card: `<a href="/site/contact.vcf" download>`. The card is a local file. No service, no network call.
@@ -363,9 +389,10 @@ A `contact` block is a tile that downloads your contact card: `<a href="/site/co
 2. `/edit` > **Blocks** > **Add block** > **Save contact**.
 
 **Everything in the contact card is public.** It is a file anyone can download. Your profile `email` is private and is never copied into the card: `contact.email` is its own field. Leave it empty to publish no email.
+**The address in the card is opt-in.** Tick "Include my email in the contact file" (off by default) or the card has no `EMAIL` line. The card is the one public place an address can be: see [Email protection](#email-protection).
 
 - The build (`npm run build:site-assets`, inside `predev` and `pregenerate`) writes `public/site/contact.vcf` (not tracked) when `contact.enabled` is true. Else it removes the file.
-- Format: vCard 3.0, UTF-8, CRLF line ends, lines folded at 75 bytes; `,` `;` `\` and line breaks are escaped. Fields: `N`, `FN`, `ORG`, `TITLE`, `TEL;TYPE=CELL`, `EMAIL`, `URL`, `NOTE`. No `PHOTO`.
+- Format: vCard 3.0, UTF-8, CRLF line ends, lines folded at 75 bytes; `,` `;` `\` and line breaks are escaped. Fields: `N`, `FN`, `ORG`, `TITLE`, `TEL;TYPE=CELL`, `EMAIL` (only with `shareEmail`), `URL`, `NOTE`. No `PHOTO`.
 - `fullName` defaults to your profile name. The download is named after it: `ada-lovelace.vcf`.
 - No file = no tile: the build leaves a `contact` block out while the card is off, and `check:profile` warns.
 - "Download preview" in the editor gives you the same text, made from what you see, saved or not.
@@ -457,8 +484,8 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the dot pulses (not with reduced motion). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back). `field-draft.spec.ts`: the state machine of an editor text field, with a fake clock (no browser). `second-wave.spec.ts` (WP11): with no browser and a fixed date, the schedule matrix, the UTM matrix, the vCard text (escaping, CRLF, no `PHOTO`, no profile email), the QR file only with a site URL, the link checker with a mocked connection; on the built page, the end-date script, the share button (copy, announce, `navigator.share`, clear of the theme toggle at 1280 and 390), the contact tile download. `pexels.spec.ts` (WP12, mocked connection, no key): the search mapping, 401, 429 with the reset time, the 10-minute memory, input checks, the pick route refuses a file that is not on `images.pexels.com`, a redirect to another host and a fake jpeg, writes a WebP without metadata, a second pick downloads nothing, the credit line, and the key canary (the key and the name of its variable are in no built file). `icons.spec.ts` (WP18, no browser, no internet): the two-set list and its pattern, the schema message, `package.json` lists exactly those two packs, the local index (build under 1.5 s, a query under 50 ms), hidden icons and hidden aliases left out, the ranking for `git`, `github`, `mail`, `you tube`, a full name first, the 48-name page, the 64-character cut, a foreign prefix dropped, the empty-query defaults, the SVG builder (valid SVG, `currentColor`, nothing that runs), that the two routes import no network code, and the profile migration (removes an icon of another set, keeps the layout, idempotent) | `node scripts/serve-dist.mjs` on :4173 | yes |
-| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts; the three delete buttons share one outlined `danger` look with a 44 px hit area; axe on the block list and the form footer with the confirm open, light and dark), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only. `editor-inputs.spec.ts`: the text fields (a cleared field stays empty, typing through an invalid text is never rewritten, no message while typing, "Required" after a blur, the draft keeps the last valid value, Save is blocked with a message, Cmd/Ctrl+S checks first, an emptied optional field leaves the file, a change from outside, the email and the Site URL fields). `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `second-wave-editor.spec.ts` (WP11): the schedule inputs round-trip to ISO in the saved file, the contact panel, the live UTM example, the share checkbox, "Check links" with a mocked route, the guards of the two new dev routes and the 1024 px QR PNG. `pexels-editor.spec.ts`: the Pexels tab with mocked routes (no key state, search, grid, pick, save, keyboard pick, rate limit, offline) and the guards of the real routes. `icons-dev.spec.ts` (WP18): `/api/icons/search` answers from the local packs (`line-md:github` first, only the two sets, no `lucide:` name, a removed brand never, the default list for an empty `q`, `?q=a&q=b` is 400, a foreign `Host` is 403), `/api/icons/svg` serves one icon as `image/svg+xml` with the sandbox headers (400 for another set, 404 for a missing or hidden icon), and `/api/save` refuses `lucide:mail` with the two-sets message. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 violations of any level at 1280 and 390, light and dark), `/edit` and `/api` answer 404, no request leaves the static origin, highlights list, no `mailto:` link while the email is hidden, the status dot pings (no halo with reduced motion, no layout shift). Plus `repo.spec.ts`: no personal file is tracked by git, and `privacy.spec.ts`: a hidden email is in no text file of `dist/`, and the sanitizer keeps or removes the email; a hidden block is in no file of `dist/`. WP10a: a link without an icon shows its brand icon, the spotlight runs (not with reduced motion). No browser and no internet: `links.spec.ts` (brand map against the installed packs, tile rules, schema) and `unfurl.spec.ts` (the link preview engine against a local `node:http` server: head parsing, redirects, the 512 KB cut, ICO and magic bytes, private addresses refused, the cache and `304`, oEmbed with a mocked connection). `site.spec.ts`: the head of the built page (title, description, Open Graph, X card, JSON-LD, favicon links, manifest, no canonical without a site URL), `rel="me"`, and, with no browser, `buildHead()` and the asset builder in a temp folder (ICO bytes, sizes, 1200x630 under 1 MB, uploads win, broken uploads fall back). `field-draft.spec.ts`: the state machine of an editor text field, with a fake clock (no browser). `second-wave.spec.ts` (WP11): with no browser and a fixed date, the schedule matrix, the UTM matrix, the vCard text (escaping, CRLF, no `PHOTO`, no profile email), the QR file only with a site URL, the link checker with a mocked connection; on the built page, the end-date script, the share button (copy, announce, `navigator.share`, clear of the theme toggle at 1280 and 390), the contact tile download. `pexels.spec.ts` (WP12, mocked connection, no key): the search mapping, 401, 429 with the reset time, the 10-minute memory, input checks, the pick route refuses a file that is not on `images.pexels.com`, a redirect to another host and a fake jpeg, writes a WebP without metadata, a second pick downloads nothing, the credit line, and the key canary (the key and the name of its variable are in no built file). `icons.spec.ts` (WP18, no browser, no internet): the two-set list and its pattern, the schema message, `package.json` lists exactly those two packs, the local index (build under 1.5 s, a query under 50 ms), hidden icons and hidden aliases left out, the ranking for `git`, `github`, `mail`, `you tube`, a full name first, the 48-name page, the 64-character cut, a foreign prefix dropped, the empty-query defaults, the SVG builder (valid SVG, `currentColor`, nothing that runs), that the two routes import no network code, and the profile migration (removes an icon of another set, keeps the layout, idempotent). `incomplete.spec.ts` (WP17, no browser): every emptied block is still valid and only "Incomplete", the essential value of each block type, hidden wins over incomplete, an empty string is refused where the key can be removed, the profile needs only `name`, and the head, the icon, the link check and the link preview all take a profile without handle, bio and URLs. `mail-shield.spec.ts` (WP17, no browser for the token, the sanitizer and the `dist/` scan, a browser for the tile): every address round-trips through the token and the token holds no piece of it, a subject query rides along, the human form matches no harvester pattern, `mailto:` URLs become tokens and lose their `url` key, the scheme literal is in no bundled source, the public guard refuses an address, UTM tags and `check:links` never touch a mail token, no file of `dist/` holds `mailto:` or a sample address, and in a browser the tile is a button with no address until one human signal upgrades it to a real mail link (same accessible name, focus survives, 0 axe violations, no request leaves the site) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload, delete a block (list row, tile button, Delete key, "No" and Escape keep it, Undo restores both layouts; the three delete buttons share one outlined `danger` look with a 44 px hit area; axe on the block list and the form footer with the confirm open, light and dark), email + show email + highlights (saved to the file, the public page follows without a restart), invalid email, link preview with a mocked `/api/unfurl` (preview card, fetched text fills empty fields only, "Use fetched title", the two switches saved, the reason of a failed fetch), Hide / Show, Duplicate, one spotlight only, and the icon picker (WP17: no icon-name field, a `mailto:` link shows the envelope by itself in the form and on the preview tile, a typed URL changes both live, "Back to auto" appears only with an own icon and clears it). `editor-inputs.spec.ts`: the text fields (a cleared field stays empty, typing through an invalid text is never rewritten, no message while typing, the draft keeps the last valid value, Cmd/Ctrl+S checks first, a change from outside, the email and the Site URL fields) and WP17 (a cleared URL is no error and makes the tile "Incomplete" but still saves, a bad format is listed under "Not saved:" while Save writes the rest, cleared title / handle / bio / email save as absent keys, an emptied name keeps the last name with a soft note). `site-editor.spec.ts`: the Site tab (keyboard model, fields saved to the file, inline URL error, "Regenerate" with a mocked route, the real upload and build routes). `second-wave-editor.spec.ts` (WP11): the schedule inputs round-trip to ISO in the saved file, the contact panel, the live UTM example, the share checkbox, "Check links" with a mocked route, the guards of the two new dev routes and the 1024 px QR PNG. `pexels-editor.spec.ts`: the Pexels tab with mocked routes (no key state, search, grid, pick, save, keyboard pick, rate limit, offline) and the guards of the real routes. `icons-dev.spec.ts` (WP18): `/api/icons/search` answers from the local packs (`line-md:github` first, only the two sets, no `lucide:` name, a removed brand never, the default list for an empty `q`, `?q=a&q=b` is 400, a foreign `Host` is 403), `/api/icons/svg` serves one icon as `image/svg+xml` with the sandbox headers (400 for another set, 404 for a missing or hidden icon), and `/api/save` refuses `lucide:mail` with the two-sets message. Writes `content/profile.json` (backed up and restored), `public/blocks/` and `public/site/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
 npx playwright install chromium   # once
@@ -781,7 +808,8 @@ PLAN.md  NOTES.md        the plan with every decision, and the build log per wor
 | The tag exists but there is no GitHub Release | The pipeline failed or `gh` was missing. Make the release: `npm run release:publish -- vX.Y.Z --no-push`. See why the pipeline failed: `gh run list --workflow=release.yml`, then `gh run view <id> --log-failed`. After the fix is on `main`, run it again: `gh workflow run release.yml -f tag=vX.Y.Z` |
 | The tag exists and the GitHub Release exists, but it has no zip | The pipeline is still running (`gh run watch`) or it failed. Run `npm run release:publish -- vX.Y.Z --no-push --rerun --watch`: it checks the files of the release, starts the pipeline again (`gh workflow run release.yml -f tag=vX.Y.Z`) and waits for that new run. Without `--rerun` it asks first, or prints the command when there is no terminal. Do not upload a local zip: it holds your personal data |
 | `release:publish` said `pipeline: FAILED` but the release has the zip | Fixed. Old versions watched the newest run of the tag, also an old failed one, and never looked at the release. Now the script checks the files first and prints `release is complete` |
-| The editor says `Save is blocked` | A text field holds a value the check refused (empty but required, not a URL, not an email). The save bar lists it under **Not saved yet**. Fix it, or type the old value again. The file was not changed |
+| A field shows a message and Save does not write that value | The text has a bad FORMAT (not a URL, not an email, not an icon name). Save is never blocked: it writes everything else, and the file keeps the last valid value of that one field. The save bar lists it under **Not saved:**. Fix the text, or clear the field to remove the key |
+| A tile says `Incomplete: add a URL` | The tile lost the value it needs to exist. It is saved and kept in the editor; the published page leaves it out until you fill that value. `npm run check:profile` prints one warning line per incomplete tile |
 | Playwright says the browser is missing | `npx playwright install chromium` |
 
 ## More docs

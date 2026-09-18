@@ -11,6 +11,7 @@
 -->
 <script setup lang="ts">
 import { BlockSchema, type Block } from '~~/types/profile'
+import { UI_ICONS } from '~/utils/networks'
 
 const props = defineProps<{ block: Block }>()
 const emit = defineEmits<{ 'update:block': [block: Block] }>()
@@ -72,11 +73,14 @@ const fid = (name: string) => `extra-${props.block.id}-${name}`
       :validate="checks.description"
       @commit="patch({ description: $event })"
     />
+    <!-- WP17: the picture and the search box only. No icon name on screen; "Back to auto" gives the default back. -->
     <EditorIconPicker
       :id="fid('icon')"
       :key="fid('icon')"
       :model-value="block.icon"
-      label="Icon (default: line-md:account)"
+      label="Icon"
+      auto-caption="Auto, the default icon"
+      :auto="{ kind: 'icon', name: UI_ICONS.contact, source: 'fallback' }"
       @update:model-value="patch({ icon: $event })"
     />
     <p class="text-xs text-muted">

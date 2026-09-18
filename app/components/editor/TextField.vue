@@ -3,8 +3,11 @@
   input or textarea, inline error. The input shows a LOCAL text, never the
   model, so a re-render cannot rewrite what you type. The check waits 600 ms
   after the last key and runs at once on blur, Enter and a paste. A value that
-  passes is emitted with `commit` ('' = an emptied optional field). A value that
-  fails is not emitted: the text stays and the reason shows under the field.
+  passes is emitted with `commit` ('' = an emptied field: the owner removes the
+  key). EMPTY IS NEVER AN ERROR (WP17). Only a format can fail (not a URL, not
+  an email): that text is not emitted, it stays, and the reason shows under the
+  field. With `keep-last` (the profile name) an emptied field emits nothing and
+  shows a soft note: the draft keeps the last valid value.
   Use it with a `key` when the same form shows another record (BlockForm).
 -->
 <script setup lang="ts">
@@ -15,10 +18,8 @@ const props = withDefaults(defineProps<{
   label: string
   /** The value in the draft. `undefined` and `null` mean "no key". */
   modelValue?: string | null
-  /** An empty value is refused with "Required". */
-  required?: boolean
-  /** Shows "(required)" after the label. */
-  requiredMark?: boolean
+  /** An emptied field emits nothing and the draft keeps the last valid value. A soft note, never an error. The profile name only. */
+  keepLast?: boolean
   type?: 'text' | 'url' | 'email' | 'tel'
   multiline?: boolean
   rows?: number
@@ -66,7 +67,7 @@ const field = useFieldDraft({
   model: () => props.modelValue ?? '',
   commit: value => emit('commit', value),
   validate: value => props.validate?.(value),
-  required: () => props.required,
+  keepLast: () => props.keepLast,
   normalize: normalizeText,
   label: () => props.problemLabel ?? props.label,
 })
@@ -109,7 +110,8 @@ defineExpose({
 })
 
 const errorId = computed(() => `${props.id}-error`)
-const describedBy = computed(() => [state.error ? errorId.value : '', props.describedby ?? ''].filter(Boolean).join(' ') || undefined)
+const keptId = computed(() => `${props.id}-kept`)
+const describedBy = computed(() => [state.error ? errorId.value : '', state.kept ? keptId.value : '', props.describedby ?? ''].filter(Boolean).join(' ') || undefined)
 const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ? 'font-mono' : '', props.multiline ? 'py-2' : ''])
 </script>
 
@@ -118,10 +120,7 @@ const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ?
     <label
       :for="id"
       :class="labelHidden ? 'sr-only' : LABEL_CLASS"
-    >{{ label }}<span
-      v-if="requiredMark"
-      class="font-normal text-muted"
-    > (required)</span></label>
+    >{{ label }}</label>
     <div
       class="flex gap-2"
       :class="multiline ? 'items-start' : 'items-center'"
@@ -132,7 +131,6 @@ const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ?
         :id="id"
         :value="state.text"
         :rows="rows"
-        :required="required || undefined"
         :maxlength="counter ?? maxlength"
         :aria-invalid="state.error ? 'true' : undefined"
         :aria-describedby="describedBy"
@@ -149,7 +147,6 @@ const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ?
         :id="id"
         :value="state.text"
         :type="type"
-        :required="required || undefined"
         :maxlength="counter ?? maxlength"
         :aria-invalid="state.error ? 'true' : undefined"
         :aria-describedby="describedBy"
@@ -177,6 +174,15 @@ const controlClass = computed(() => [INPUT_CLASS, 'min-w-0 flex-1', props.mono ?
       :role="state.blurred ? 'alert' : undefined"
     >
       {{ state.error }}
+    </p>
+    <!-- Soft, not an error: no `aria-invalid`, muted ink, and the save goes on. -->
+    <p
+      v-else-if="state.kept"
+      :id="keptId"
+      data-field-kept
+      class="text-xs text-muted"
+    >
+      Empty: the page keeps the last saved {{ label.toLowerCase() }}.
     </p>
     <slot />
   </div>

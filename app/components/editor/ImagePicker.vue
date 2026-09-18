@@ -1,15 +1,15 @@
 <!--
   Image field. A file input uploads through /api/upload (dev only) and
-  sets `src`. Shows a preview. `alt` is required by the schema for image
-  blocks; pass `require-alt` to show that field, and `require-src` when the
-  path may not be empty. Both text fields are `EditorTextField`: an empty
-  required value stays in the input, shows "Required" and is never emitted.
+  sets `src`. Shows a preview. Pass `with-alt` to show the alt text field
+  (image blocks). Both text fields are `EditorTextField`, and both may be empty
+  (WP17): an emptied path makes the block incomplete, an emptied alt text shows
+  the soft hint "Add a description for screen readers" and the page renders `alt=""`.
   With `stock-size` (image blocks only, WP12) the field has two tabs: "Upload" (the same controls as
   before) and "Pexels" (PexelsPicker.vue). A picked stock photo is ONE `stock` event with `src`, `alt`
   and `source` together, so the form saves them in one step. An upload still emits `update:src`, and
   the form clears `source` then (a local file has no stock credit). After a pick the alt field follows
   the new `alt` of the block (a change from outside, the field has no focus). "Is the alt the owner's
-  own?" is decided from the text in the FIELD: an emptied, refused field is not the owner's text.
+  own?" is decided from the text in the FIELD: an emptied field is not the owner's text.
 -->
 <script setup lang="ts">
 import type { PickResult } from '~~/content/pexels'
@@ -21,8 +21,8 @@ const alt = defineModel<string | undefined>('alt')
 const props = defineProps<{
   id: string
   label?: string
-  requireSrc?: boolean
-  requireAlt?: boolean
+  /** Show the alt text field. */
+  withAlt?: boolean
   /** The tile size of an image block. Set = the "Pexels" tab shows. Thumbnails have no credit field, so they get no stock tab. */
   stockSize?: Size
 }>()
@@ -54,7 +54,7 @@ function onTabKey(event: KeyboardEvent) {
   void nextTick(() => tabButtons.value?.find(button => button.dataset.tab === next)?.focus())
 }
 
-/** The alt text field (EditorTextField): its text may differ from the draft while a value is refused. */
+/** The alt text field (EditorTextField): its text may differ from the draft while its check waits. */
 const altField = useTemplateRef<{ text: () => string, sync: (value: string) => void }>('altField')
 
 /** The alt text this field filled in from a stock photo. Still the same = the owner did not write their own. */
@@ -72,8 +72,8 @@ watch(() => props.id, () => {
  * text of a new block, or the text of the stock photo picked before. A text the owner wrote stays.
  */
 function onStockPick(result: PickResult) {
-  // The text in the FIELD decides, not only the draft: a cleared field is refused ("Required"), so the
-  // draft still holds the old alt, and that old alt is not what the owner wants for the new photo.
+  // The text in the FIELD decides, not only the draft: a field the owner just cleared may still wait
+  // for its check (600 ms), so the draft can hold the old alt for a moment.
   const current = (altField.value?.text() ?? alt.value ?? '').trim()
   const replace = current === '' || current.startsWith('Sample image') || current === prefilledAlt.value
   const nextAlt = replace ? result.alt : current
@@ -206,7 +206,6 @@ const altId = computed(() => `${props.id}-alt`)
           label="Image path"
           label-hidden
           :problem-label="`${label ?? 'Image'}: path`"
-          :required="requireSrc"
           :model-value="src"
           placeholder="/blocks/sample.jpg"
           mono
@@ -239,14 +238,23 @@ const altId = computed(() => `${props.id}-alt`)
     </p>
 
     <EditorTextField
-      v-if="requireAlt"
+      v-if="withAlt"
       :id="altId"
       ref="altField"
       label="Alt text"
-      required
-      required-mark
       :model-value="alt"
-      @commit="alt = $event"
-    />
+      :describedby="src && !alt ? `${altId}-hint` : undefined"
+      @commit="alt = $event || undefined"
+    >
+      <!-- Soft and non-blocking: no error state, the save goes on. -->
+      <p
+        v-if="src && !alt"
+        :id="`${altId}-hint`"
+        data-alt-hint
+        class="text-xs text-muted"
+      >
+        Add a description for screen readers. Without one the page treats the image as decoration.
+      </p>
+    </EditorTextField>
   </fieldset>
 </template>

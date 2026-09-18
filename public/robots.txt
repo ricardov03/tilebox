@@ -1,2 +1,6 @@
 User-Agent: *
-Disallow:
+Allow: /
+# WP17, the email spam shield. The contact card is a vCard, and that format needs a
+# raw email address, so the file is the one public place an address can be (opt-in:
+# `contact.shareEmail`). This line asks crawlers to skip it. Only polite bots listen.
+Disallow: /site/contact.vcf

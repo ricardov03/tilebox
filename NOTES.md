@@ -321,8 +321,11 @@ Branch: `wp/3-editor`. Date: 2026-09-17. Node used: 22.23.1.
 
 ### WP4 review (OCR / DeepSeek, branch range, 2026-09-17)
 Applied: `permissions: contents: read`, `timeout-minutes: 10`, push trigger limited to `main`, dist check also guards `dist/edit.html`. `.node-version` kept next to `.nvmrc` on purpose: Cloudflare Pages reads `.node-version`, nvm reads `.nvmrc`. Ownership recorded here.
+
+`npm run lint`
 ```
 (exit 0, no output)
+```
 
 `npm run typecheck`
 ```
@@ -1866,6 +1869,97 @@ findings-ledger: rows=111 top_category=untrusted-input top_count=22 grok=41 ocr=
 
 ### Verification
 
+```
+$ npm ci                                   -> exit 0
+$ npm run lint                             -> exit 0
+$ npm run typecheck                        -> exit 0
+$ npm run test:review                      -> exit 0, passed=143 failed=0 total=143 expected=143
+$ npm run check:contrast                   -> exit 0, all 72 pairs pass
+$ npm run check:icons                      -> exit 0, 68 icons found
+$ npm run generate                         -> exit 0
+$ grep -r "hello@example.com" dist | wc -l -> 0
+$ E2E_STATIC_PORT=4461 E2E_DEV_PORT=3461 npx playwright test   (ONE run, both projects)
+    static: 239 passed, 2 skipped   dev: 83 passed   total: 322 passed, 2 skipped, exit 0
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the two "example only" static tests, the same as in WP15 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server writes `content/profile.json` before they start, so they skip themselves. New since WP15: dev +2 (the delete-button look, the axe check of the list and the footer), static +1 (the draft QR code that cannot be drawn).
+
+### Open
+- The fixes of this branch (`0c68b41`, the delete button, the two docs commits) have no Grok verdict of their own. Command in part B.
+- The fresh retry is proven on 1 live stub here and 8 in the owner's other project. To measure it further: count `retries=` over the next 20 trailers.
+- The three Grok rows of this round carry `branch=main` in the ledger (they review code that is on `main`); the task asked for `wp/16-review-align`. The agent rows of the fixes carry the branch.
+- `docs/invariants.md` 8 keeps its stated exception from WP15 (a draft may WRITE a generated preview, never DELETE a saved file). The QR code now follows the delete half of it in every path.
+- Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport; Safari and Firefox were never checked by hand; the history rewrite that drops the old attribution trailers.
+
+## WP17
+
+Branch `wp/17-owner-feedback` (from `merge/main-tmp`, itself from `main` plus the merged WP15 follow-up). Date: 2026-09-18. Work was done in a git worktree. Not merged into `main`, no tag. Goal: the four things Ricardo asked for after he used the editor.
+
+Two other agents ran from the same base at the same time: one restyles every delete control and the `BlockForm.vue` footer and adds `danger` color tokens; one makes the icon search local and adds the dev route `GET /api/icons/svg?name=<prefix:name>`. This branch never touched their files.
+
+### A. The pinging status dot (commit `92aa40f`, from the interrupted first run)
+A halo grows and fades behind a solid dot. The wrapper carries the size, so nothing moves. No halo with `prefers-reduced-motion`. Test in `public.spec.ts`.
+
+### B. The icon picker (commit `6c8fb6e`)
+Owner: *"By default, the block should select the icon based on the link value... To avoid confusions, let's hide the field that presents the icon name and just present the icon and the search input."*
+- The automatic order already existed (`resolveLinkIcon`): `block.icon` > `brandIconFor(url)` (`mailto:` = `line-md:email`, `tel:` = `line-md:phone`) > the local favicon > `line-md:link`. Nothing changed there.
+- `IconPicker.vue` is now: the current icon at **32 px**, one caption (`Auto, from the link` / `Custom` / `From the network`), a search input with the placeholder `Search icons`, the results grid, and **Back to auto** only while an own icon is set (it clears `block.icon`). The `prefix:name` string is on NO visible text. It stays the `aria-label` and the `title` of every result, so a screen reader still reads it.
+- The power-user path needs no second field: the search route answers a typed `prefix:name` with that exact icon first, so it is the first result you click.
+- `LinkIconField.vue` is now a thin wrapper that passes the AUTO icon (`resolveLinkIcon` without `block.icon`), so the picture follows the URL field live. "Choose another" is gone: the search box is always there.
+- A social tile shows its network icon read only ("From the network"), in `BlockForm.vue`. A contact tile shows the default `line-md:account` with "Auto, the default icon".
+- Previews come from `/api/icons/svg?name=<prefix:name>` (the other agent's dev route) instead of `api.iconify.design`. `<Icon>` is the fallback when that route answers nothing, so the picker still draws bundled icons if the route is missing.
+- Dev test in `editor.spec.ts` ("the icon picker has no name field, and a mailto link gets the envelope by itself"): a new link with `mailto:you@example.com` shows the envelope in the form (the picker asks for `line-md:email`) and on the preview tile (its icon markup equals the markup of an Email network tile, the yardstick); typing `https://github.com/nuxt` changes both live; there is no icon-name input; a result button is still named `line-md:home`; "Back to auto" appears only with an own icon and clears it. Both icon routes are mocked: no network, and the test checks OUR contract, not the other agent's route.
+
+### C. The email spam shield (commits `26d3dbc`, `0f89e53`, `97404a9`, `07959bd`, `2ffb1c2`, `0a827b4`)
+Owner: *"Let's add something that avoids spam on the use of emails. I don't want my email inbox to get dynamite of spam."*
+- `app/utils/mail-shield.ts`, pure and client safe. `encodeEmail(address, params?)` gives `{ u, d, q? }`: the local part and the domain are each REVERSED by code point and then base64url encoded (base64 is written out by hand: no `Buffer`, and `btoa` cannot take unicode). `q` is an encoded query. `encodeMailto(url)` never throws (`null` for anything it cannot read). `decodeEmail`, `mailHref`, `humanEmail` ("hello at example dot com"). `RAW_EMAIL_PATTERN` is the ONE "this looks harvestable" rule, shared by the schema guard, `check:profile` and the tests; its leading group refuses a local part that follows a letter, a digit or a `/`, so `https://mastodon.social/@ada` is not a false hit.
+- **Deviation worth knowing.** `MAILTO_PREFIX` is built from code points with `.map(...).join('')`. A literal would be bundled into a JS chunk and break the new invariant. `String.fromCharCode(109, 97, ...)` was tried first: esbuild folds it straight back into the literal. Every message of the feature says "a mail link" or "the mail scheme", never the scheme itself, for the same reason. `app/utils/brand-icons.ts` takes the map key from the constant.
+- `types/profile.ts`: `MailTokenSchema`; `mail` added to the link, social, map and video schemas as PUBLIC ONLY (`ProfileSchema` refuses it in a saved file); `PublicProfileInfoSchema` has `emailToken` and no `email`; `toPublicProfileInfo()` encodes a shown email; `toPublicBlock()` sends every url through `publicTarget()`, which turns a mail url into `mail` and removes `url` (so UTM tagging has nothing to touch and `check:links` nothing to ask); `hasTarget()` makes a token count as the essential value, and a `mailto:` the shield cannot read makes the tile incomplete; `PublicProfileSchema` has a guard `superRefine` over `{ profile, blocks }` that fails on an address or the scheme (`PUBLIC_MAIL_GUARD_MESSAGE`). `check:profile` prints that guard as a WARNING, never a failure: an address typed into a bio must not stop a build.
+- **Deviation.** The guard reads `profile` and `blocks`, as asked, not `site`. `site.description` with an address would not be caught. Said here on purpose.
+- `app/components/ProtectedEmail.vue` + `app/composables/useHumanSignal.ts`. Prerendered: `<button type="button">`, no href, no address in any attribute, `data-protected-email="button"`. One shared set of `{ once: true, passive: true }` listeners (`pointermove pointerdown touchstart keydown scroll focusin`) armed in `onMounted` (not in setup: a scroll during hydration would flip the flag between the two renders). After the signal the token is decoded in memory and the control becomes `<a href="mailto:...">`; the profile line swaps its text to the real address, a tile keeps its title. `aria-label` keeps the name stable ("Email <Name>"). The focus is restored across the swap. `go()` uses `window.open(href, '_self')`: the members of `location` are unforgeable, so that is the only seam a test can watch. Enter and Space are handled with `.prevent` on the BUTTON, because the swap happens on the same key press and the browser's own click would land on an element that is already gone.
+- `Tile.vue` takes a `mail` prop and renders `ProtectedEmail` as the whole tile; `LinkBlock`, `SocialBlock`, `MapBlock` and the non-YouTube `VideoBlock` pass it. A mail link tile shows `humanEmail()` on its small line instead of the host.
+- The vCard: `ContactSchema.shareEmail` (absent = off). No `EMAIL` line without it. `ContactPanel.vue` has the checkbox "Include my email in the contact file (the file is public; bots can read it)" and a note that says why. `public/robots.txt` gets `Disallow: /site/contact.vcf` and says in a comment that only polite bots listen.
+- The sample profile now exercises all of it: `b7` is `mailto:hello@example.com?subject=...` with NO own icon (so it also demonstrates the automatic envelope), and a new `b14` is a social `email` tile. `contact.email` stays in the example with `shareEmail` off, which is what the default looks like.
+- Docs: README "Email protection" (what ships, when it becomes a link, and the honest limit: it defeats harvesters that read HTML or run without interaction, which is nearly all of them; a bot driving a full browser and faking input still reads it; the strongest protection is a forwarding alias you can rotate), the vCard note, `docs/security.md` "The email shield (WP17)", `docs/invariants.md` rules 17 and 18 (numbered 20 and 21 on the branch; WP19 renumbered them after WP18 took 16).
+- No migration was needed (`content/migrate.ts` belongs to the other agent this round): every new field is optional and every removed requirement is a relaxation, so an old file stays valid and `shareEmail` absent is the safe default.
+
+### D. Empty fields never block (commit `d4410c0`, built on the interrupted first run)
+Owner: *"The validator should allow the inputs to be empty. Right now the validator is blocking a field to be empty."*
+- Schema: `profile.handle`, `profile.bio`, `profile.email`, link `title` and `url`, social `url`, image `src` and `alt`, text `body`, section `title`, map `label` and `url`, video `url` are optional now. The contact and qr tile texts were already optional. `profile.name` stays required.
+- `incompleteReason()` / `incompleteMessage()` in `types/profile.ts` name the one value a tile cannot exist without; `blockDropReason()` gained `incomplete`, so the build drops such a tile like a hidden one, and `check:profile` prints one warning line per incomplete block.
+- Editor: an "Incomplete: add a URL" badge in the list row, on the preview tile (dimmed like hidden) and a note in the form. `TextField.vue` and `app/utils/field-draft.ts` lost the "Required" state: an empty value always commits as "key removed" and clears any message. The one exception is `keepLast` (the profile name): the field stays empty, nothing is committed, `state.kept` is true and a soft note says "Empty: the page keeps the last saved name". `useEditor`/`edit.vue` lost the "Save is blocked" state; the bar now says "Not saved:" with the refused FORMATS and "Save writes everything else".
+- Fallbacks so a half-filled tile still renders in the editor preview: a link without a title shows the host, a map without a label shows "Map", a section without a title renders no heading, an image without `alt` renders `alt=""` with a soft hint, `hostOf` / `domainLabel` / `youtubeId` / `resolveLinkIcon` / `cleanHandle` / `siteDescription` take `undefined`.
+- Scripts: `fetch-avatar` skips without an email, `fetch-links` skips a link without a URL, `linkNeedsFetch` is false without a URL, `nuxt.config.ts` only asks `brandIconFor` when there is a URL.
+- **Behaviour change in an old test.** `second-wave-editor.spec.ts` used to assert that a refused UTM value leaves the FILE untouched. Under WP17 the save writes everything else, so the test now asserts that the refused text is nowhere in the file while the other changes are written. Same for the email and Site URL tests.
+
+### Verification
+```
+$ npm ci                                       -> exit 0
+$ npm run lint                                 -> exit 0
+$ npm run typecheck                            -> exit 0
+$ npm run test:review                          -> passed=130 failed=0 total=130 expected=130
+$ rm -f content/profile.json && npm run generate -> exit 0
+$ grep -rEi "mailto:" dist | wc -l             -> 0
+$ grep -r "hello@example.com" dist | wc -l     -> 0
+$ grep -r "contact@example.com" dist | wc -l   -> 0
+$ grep -r "you@example.com" dist | wc -l       -> 0
+$ npm run check:icons                          -> exit 0 (68 icons)
+$ npm run check:links                          -> exit 0 (6 ok, 0 blocked, 3 broken: the example.com links of the sample)
+$ E2E_STATIC_PORT=4471 E2E_DEV_PORT=3471 npx playwright test   (ONE run, both projects)
+    static: 271 passed, 2 skipped   dev: 86 passed   total: 355 passed, 2 skipped
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the same two "example only" tests as in WP14 and WP15 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before they start, so `profileIsPersonal()` is true by then. The first of those two is no longer the only guard: `mail-shield.spec.ts` reads `content/profile.example.json` directly and scans `dist/` for every address of the sample, so that check now runs unconditionally.
+
+New tests: static +33 (`mail-shield.spec.ts` 23, `incomplete.spec.ts` 6, `field-draft.spec.ts` +3, and the 2 example-only tests that were already there), dev +5 (`editor-inputs.spec.ts` +4, `editor.spec.ts` +1). 13 test titles carry `WP17`.
+
+### Open
+- No Grok verdict for this branch. Next: `npm run review -- --range main..wp/17-owner-feedback --files app/utils/mail-shield.ts app/components/ProtectedEmail.vue app/composables/useHumanSignal.ts types/profile.ts` and a second block for the editor files.
+- The icon picker previews depend on the other agent's `GET /api/icons/svg`. Until that lands, the box falls back to `<Icon>` and a freshly picked icon shows nothing until `npm run dev` restarts. The dev test mocks both icon routes, so it does not prove the route.
+- The guard of `PublicProfileSchema` does not read `site` (see the deviation above).
+- The dev server still prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. They were there before this branch.
+- `contact.email` of the sample is never published now. If Ricardo wants the sample to SHOW the opt-in, set `"shareEmail": true` in `content/profile.example.json` and the dist scan for `contact@example.com` has to allow that one file.
+
 ## WP18. Two icon sets, local search
 
 Branch `wp/18-icon-sets`. Date 2026-09-18. Plan: `PLAN.md` section 5.5 and section 8 `WP18`.
@@ -1901,27 +1995,6 @@ Index build 61 ms (budget 1500 ms). One query: `mail` 1.4 ms, `github`/`a` 2.0 m
 
 ### Checks
 ```
-$ npm ci                                   -> exit 0
-$ npm run lint                             -> exit 0
-$ npm run typecheck                        -> exit 0
-$ npm run test:review                      -> exit 0, passed=143 failed=0 total=143 expected=143
-$ npm run check:contrast                   -> exit 0, all 72 pairs pass
-$ npm run check:icons                      -> exit 0, 68 icons found
-$ npm run generate                         -> exit 0
-$ grep -r "hello@example.com" dist | wc -l -> 0
-$ E2E_STATIC_PORT=4461 E2E_DEV_PORT=3461 npx playwright test   (ONE run, both projects)
-    static: 239 passed, 2 skipped   dev: 83 passed   total: 322 passed, 2 skipped, exit 0
-$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
-```
-The 2 skips are the two "example only" static tests, the same as in WP15 (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server writes `content/profile.json` before they start, so they skip themselves. New since WP15: dev +2 (the delete-button look, the axe check of the list and the footer), static +1 (the draft QR code that cannot be drawn).
-
-### Open
-- The fixes of this branch (`0c68b41`, the delete button, the two docs commits) have no Grok verdict of their own. Command in part B.
-- The fresh retry is proven on 1 live stub here and 8 in the owner's other project. To measure it further: count `retries=` over the next 20 trailers.
-- The three Grok rows of this round carry `branch=main` in the ledger (they review code that is on `main`); the task asked for `wp/16-review-align`. The agent rows of the fixes carry the branch.
-- `docs/invariants.md` 8 keeps its stated exception from WP15 (a draft may WRITE a generated preview, never DELETE a saved file). The QR code now follows the delete half of it in every path.
-- Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport; Safari and Firefox were never checked by hand; the history rewrite that drops the old attribution trailers.
-
 $ npm run test:review                      -> exit 0 (passed=130 failed=0)
 $ npm run check:icons                      -> exit 0 (68 icons, line-md and simple-icons)
 $ npm run generate                         -> exit 0
@@ -1932,6 +2005,7 @@ $ npm run dev -- --port 3482               -> /edit 200, /api/icons/search?q=mai
                                               /api/icons/svg?name=line-md:email 200 image/svg+xml,
                                               0 ERROR lines in 20 s
 ```
+
 New tests: static +24 (`icons.spec.ts`), dev +10 (`icons-dev.spec.ts`).
 The 2 skips are the same two "example only" tests as before (`privacy.spec.ts` "the example email is in no file of dist/", `second-wave.spec.ts` "no qr tile and no qr file without a site URL"): the `predev` of the dev server creates `content/profile.json` before the static project reads it, so `profileIsPersonal()` is true and both skip themselves.
 Live migration check: two foreign icons put into `content/profile.json` by hand, then `npm run ensure:profile` printed

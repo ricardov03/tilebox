@@ -11,14 +11,18 @@
  *   a paste and `flush()` (the save key). Never on every key.
  * - A value that passes is committed. A value that fails is not: the text
  *   stays, `state.error` says why, the model keeps its last valid value.
+ *   Only a FORMAT can fail (text that is not a URL, an email, an icon name).
+ *   Nothing here ever blocks a save (WP17): the page saves the rest.
  * - With the focus the input keeps the raw text. Without it (a blur, the save key)
  *   a value that passed shows its stored form (a trimmed URL), whoever committed it.
- * - Empty + required = the error "Required". Empty + optional = `commit('')`.
+ * - Empty is never an error (WP17). Empty = `commit('')`: the owner removes the key, and any old
+ *   message goes. The one exception is a field with `keepLast` (the profile name, the only text the
+ *   schema needs): the input stays empty, nothing is committed, `state.kept` is true and the
+ *   model keeps the last valid value. That is a soft note, not an error.
  */
 
 /** How long the check waits after the last key. */
 export const FIELD_DEBOUNCE_MS = 600
-export const FIELD_REQUIRED_MESSAGE = 'Required'
 
 export interface FieldDraftState {
   /** What the input shows. */
@@ -32,6 +36,8 @@ export interface FieldDraftState {
   edited: boolean
   /** The field lost the focus at least once: an error may be announced (`role="alert"`). */
   blurred: boolean
+  /** The text is empty, the field has `keepLast`, and the model kept its last valid value. Not an error. */
+  kept: boolean
 }
 
 export interface FieldDraftOptions {
@@ -41,8 +47,8 @@ export interface FieldDraftOptions {
   commit: (value: string) => void
   /** The reason a non-empty value is refused, or `undefined`. */
   validate?: (value: string) => string | undefined
-  /** An empty value is an error. */
-  required?: () => boolean
+  /** An empty value is never committed: the model keeps the last valid value (`state.kept`). The profile name only. */
+  keepLast?: () => boolean
   /** Text to value: trim a URL, drop the `@` of a handle. The input keeps the raw text. */
   normalize?: (text: string) => string
   delay?: number
@@ -69,7 +75,7 @@ export interface FieldDraft {
 }
 
 export function fieldDraftState(text: string): FieldDraftState {
-  return { text, error: undefined, pending: false, focused: false, edited: false, blurred: false }
+  return { text, error: undefined, pending: false, focused: false, edited: false, blurred: false, kept: false }
 }
 
 export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftState = fieldDraftState(options.model())): FieldDraft {
@@ -107,15 +113,17 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
     state.pending = false
     const value = options.normalize ? options.normalize(state.text) : state.text
     if (value.trim() === '') {
-      if (options.required?.()) {
-        state.error = FIELD_REQUIRED_MESSAGE
-        return false
-      }
+      // Empty never blocks and never shows an error.
       state.error = undefined
+      if (options.keepLast?.()) {
+        state.kept = true
+        return true
+      }
       commit('')
       showStored('')
       return true
     }
+    state.kept = false
     const reason = options.validate?.(value)
     if (reason !== undefined) {
       state.error = reason
@@ -133,6 +141,7 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
     state.edited = true
     // No message while the user types: the old one is about the old text.
     state.error = undefined
+    state.kept = false
     state.pending = true
     stopTimer()
     if (now) check()
@@ -159,6 +168,7 @@ export function createFieldDraft(options: FieldDraftOptions, state: FieldDraftSt
     stopTimer()
     state.text = value
     state.error = undefined
+    state.kept = false
     state.pending = false
     state.edited = false
   }

@@ -9,7 +9,11 @@ defineProps<{ block: SectionBlock }>()
 
 <template>
   <div class="flex h-full min-h-0 w-full items-center gap-4 py-2">
-    <h2 class="font-display text-[22px] font-semibold leading-[1.1] md:text-[26px]">
+    <!-- No title = an incomplete block (WP17). Only the editor preview renders it: no empty heading. -->
+    <h2
+      v-if="block.title"
+      class="font-display text-[22px] font-semibold leading-[1.1] md:text-[26px]"
+    >
       {{ block.title }}
     </h2>
     <span

@@ -5,9 +5,11 @@
   The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
   do not exist, so the page renders one short message and nothing else.
   Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice,
-  "Block deleted. Undo" for 8 seconds, and "Not saved yet" with the text fields
-  whose value the check refused (NOTES.md, "Editor input fix"). Save checks the
-  field you are typing in first, and is blocked while such a field exists.
+  "Block deleted. Undo" for 8 seconds, and "Not saved:" with the text fields
+  whose FORMAT the check refused (NOTES.md, "Editor input fix" and "WP17"). Save
+  checks the field you are typing in first and is NEVER blocked: it writes
+  everything else, and the file keeps the last valid value of a refused field.
+  An empty field is never an error. An emptied name keeps the last saved name.
   Delete or Backspace (focus outside a field) opens the delete confirm of the selected block.
 -->
 <script setup lang="ts">
@@ -85,18 +87,17 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /** Text fields tell the page about a refused value (`useFieldDraft`). The draft keeps the last valid one. */
-const { problems: fieldProblems, flushAll } = provideFieldDrafts()
+const { problems: fieldProblems, kept: fieldsKept, flushAll } = provideFieldDrafts()
 provideFieldDraftGroup('Profile')
-/** A save was asked while a field had a refused value. */
-const saveBlocked = ref(false)
-watch(fieldProblems, (list) => {
-  if (list.length === 0) saveBlocked.value = false
-})
 
-/** The save key does not wait for the 600 ms of a field: check now, then save when every field is fine. */
+/**
+ * The save key does not wait for the 600 ms of a field: check now, then save. A field never blocks
+ * the save (WP17): a refused text is not in the draft, so the file keeps its last valid value, and
+ * the bar lists it under "Not saved:".
+ */
 async function trySave() {
-  saveBlocked.value = !flushAll()
-  if (!saveBlocked.value) await editor.save()
+  flushAll()
+  await editor.save()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -211,14 +212,15 @@ const buttonClass = `min-h-11 rounded-full text-sm font-medium ${FOCUS_RING}`
 
 type ProfileTextKey = 'name' | 'handle' | 'bio' | 'status' | 'email'
 
-/** A checked value from a Profile field. An empty status leaves the file. */
+/** A checked value from a Profile field. An emptied field removes its key (WP17). The name is never emptied: its field keeps the last valid one. */
 function setProfile(key: ProfileTextKey, value: string) {
   if (!draft.value) return
-  if (key === 'status' && value === '') {
-    delete draft.value.profile.status
+  if (key === 'name') {
+    if (value !== '') draft.value.profile.name = value
     return
   }
-  draft.value.profile[key] = value
+  if (value === '') Reflect.deleteProperty(draft.value.profile, key)
+  else draft.value.profile[key] = value
 }
 
 /** Why the schema refuses a value, or `undefined`. One stable function per key. */
@@ -421,7 +423,7 @@ const previewProfile = computed(() => {
             <EditorTextField
               id="p-name"
               label="Name"
-              required
+              keep-last
               :model-value="draft.profile.name"
               :validate="profileChecks.name"
               @commit="setProfile('name', $event)"
@@ -429,7 +431,6 @@ const previewProfile = computed(() => {
             <EditorTextField
               id="p-handle"
               label="Handle"
-              required
               mono
               :model-value="draft.profile.handle"
               :validate="profileChecks.handle"
@@ -460,8 +461,6 @@ const previewProfile = computed(() => {
               id="p-email"
               label="Email"
               type="email"
-              required
-              required-mark
               mono
               autocomplete="email"
               :model-value="draft.profile.email"
@@ -488,7 +487,7 @@ const previewProfile = computed(() => {
                 id="p-show-email-help"
                 class="text-xs text-muted"
               >
-                Hidden: the email is removed from the published page and is only used to find your Gravatar picture.
+                Hidden: the email is removed from the published page and is only used to find your Gravatar picture. No email: no Gravatar lookup and no email line.
               </p>
             </div>
             <EditorImagePicker
@@ -645,32 +644,36 @@ const previewProfile = computed(() => {
       >
         Restart <code class="font-mono">npm run dev</code> to apply the new color preset, download the new fonts or bundle the new icons.
       </p>
-      <!-- Text fields whose value the check refused. The draft still has their last valid value. -->
+      <!-- Text whose FORMAT the check refused, and an emptied name. Save never waits for them: the file keeps their last valid value. -->
       <div
-        v-if="fieldProblems.length"
+        v-if="fieldProblems.length || fieldsKept.length"
         data-field-problems
         class="mt-2 rounded-xl border border-line px-3 py-2 text-sm text-ink"
         role="status"
       >
-        <p>Not saved yet:</p>
-        <ul class="list-disc pl-4">
-          <li
-            v-for="problem in fieldProblems"
-            :key="problem"
-            class="font-mono text-xs"
-          >
-            {{ problem }}
-          </li>
-        </ul>
+        <template v-if="fieldProblems.length">
+          <p>Not saved:</p>
+          <ul class="list-disc pl-4">
+            <li
+              v-for="problem in fieldProblems"
+              :key="problem"
+              class="font-mono text-xs"
+            >
+              {{ problem }}
+            </li>
+          </ul>
+        </template>
+        <p
+          v-for="line in fieldsKept"
+          :key="line"
+          data-field-kept-line
+        >
+          {{ line }}
+        </p>
+        <p class="text-xs text-muted">
+          Save writes everything else.
+        </p>
       </div>
-      <p
-        v-if="saveBlocked"
-        data-save-blocked
-        class="mt-2 rounded-xl border border-pop px-3 py-2 text-sm text-ink"
-        role="alert"
-      >
-        Save is blocked. Fix the fields in "Not saved yet" first, or type their old value again. Nothing was written.
-      </p>
       <ul
         v-if="errors.length"
         class="mt-2 list-disc rounded-xl border border-pop px-3 py-2 pl-7 text-sm text-ink"

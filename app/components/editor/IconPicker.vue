@@ -1,19 +1,33 @@
 <!--
-  Icon field. Search (300 ms debounce) goes through /api/icons/search
-  (dev-only proxy of the Iconify search API). Results show a live preview
-  and the full name. You can also paste any `prefix:name`.
-  Note: with `icon.provider: 'none'` <Icon> renders only icons that are in
-  the client bundle. Results therefore preview through the Iconify SVG
-  endpoint (dev only) and fall back to the name as text.
+  Icon field of the editor. WP17 made it one picture and one search box:
+  the current icon at 32 px, one short caption ("Auto, from the link",
+  "Custom", "From the network"), the search input, the results, and
+  "Back to auto" while your own icon is set. There is NO field with the icon
+  NAME any more: the owner asked for the icon and the search box only.
+  The name is not lost for assistive tech: every result button is NAMED after
+  its icon, so a screen reader still reads `line-md:github`.
+  Power user, without a second field: type a full `prefix:name` in the search
+  box. The search route answers with that exact icon first, so it is the first
+  result you can click.
+  Previews come from the dev route `/api/icons/svg?name=` (the icon packs on
+  this machine, no network): with `icon.provider: 'none'` <Icon> draws only the
+  icons the build bundled, and a freshly picked one is not among them yet.
+  <Icon> is the fallback when that route answers nothing.
 -->
 <script setup lang="ts">
-import { LinkBlockSchema } from '~~/types/profile'
+import type { LinkIcon } from '~/components/blocks/media'
 
 const model = defineModel<string | undefined>()
 
 const props = defineProps<{
   id: string
   label?: string
+  /** The icon the tile shows while no own icon is set. It follows the URL live. */
+  auto?: LinkIcon
+  /** The caption while no own icon is set. */
+  autoCaption?: string
+  /** The icon comes from somewhere else and cannot be changed here (a social tile): no search, no results, no button. */
+  readonly?: boolean
 }>()
 
 const query = ref('')
@@ -25,18 +39,24 @@ let timer: ReturnType<typeof setTimeout> | undefined
 /** Id of the latest search. A response for an older id is dropped. */
 let requestId = 0
 
-const inkHex = ref('000000')
-onMounted(() => {
-  const value = getComputedStyle(document.documentElement).getPropertyValue('--color-ink').trim()
-  if (/^#[0-9a-f]{6}$/i.test(value)) inkHex.value = value.slice(1)
-})
-
-/** Preview URL for `prefix:name`. `null` for a name without a prefix. */
-function previewUrl(name: string): string | null {
-  const [prefix, icon] = name.split(':')
-  if (!prefix || !icon) return null
-  return `https://api.iconify.design/${encodeURIComponent(prefix)}/${encodeURIComponent(icon)}.svg?color=%23${inkHex.value}`
+/** The dev route that draws one icon of the local packs. Dev only, like the whole editor. */
+function svgUrl(name: string): string {
+  return `/api/icons/svg?name=${encodeURIComponent(name)}`
 }
+
+/** Your own icon wins, else the automatic one. */
+const shown = computed<LinkIcon | null>(() =>
+  model.value ? { kind: 'icon', name: model.value, source: 'manual' } : (props.auto ?? null),
+)
+const iconName = computed(() => (shown.value?.kind === 'icon' ? shown.value.name : null))
+const faviconSrc = computed(() => (shown.value?.kind === 'favicon' ? shown.value.src : null))
+const caption = computed(() => (model.value ? 'Custom' : (props.autoCaption ?? 'Auto, from the link')))
+
+/** The dev route did not draw the current icon: fall back to <Icon>. Reset when the icon changes. */
+const previewFailed = ref(false)
+watch(iconName, () => {
+  previewFailed.value = false
+})
 
 async function search() {
   const q = query.value.trim()
@@ -78,20 +98,18 @@ function pick(name: string) {
   model.value = name
 }
 
-/** The pasted name must be a full Iconify name. The schema of the link block has the rule. */
-function iconError(value: string): string | undefined {
-  const result = LinkBlockSchema.shape.icon.safeParse(value)
-  return result.success ? undefined : result.error.issues[0]?.message
+/** Removes your own icon. The automatic one (the brand icon of the URL, the favicon, the default) comes back. */
+function backToAuto() {
+  model.value = undefined
 }
 
 function markFailed(name: string) {
   failed.value = new Set(failed.value).add(name)
 }
 
-const trimmed = (text: string) => text.trim()
-
 const inputId = computed(() => `${props.id}-icon`)
 const inputClass = INPUT_CLASS
+const smallButton = `min-h-9 rounded-full border border-line px-3 text-xs font-medium text-ink hover:border-accent ${FOCUS_RING}`
 </script>
 
 <template>
@@ -100,123 +118,132 @@ const inputClass = INPUT_CLASS
       {{ label ?? 'Icon' }}
     </legend>
 
-    <div class="flex items-start gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <span
-        class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-ground"
+        class="flex size-11 shrink-0 items-center justify-center rounded-xl border border-line bg-ground text-ink"
         aria-hidden="true"
       >
+        <img
+          v-if="faviconSrc"
+          :src="faviconSrc"
+          alt=""
+          width="32"
+          height="32"
+          class="size-8 rounded"
+        >
+        <img
+          v-else-if="iconName && !previewFailed"
+          :src="svgUrl(iconName)"
+          alt=""
+          width="32"
+          height="32"
+          class="size-8"
+          @error="previewFailed = true"
+        >
         <Icon
-          v-if="model"
-          :name="model"
-          class="size-6 text-ink"
+          v-else-if="iconName"
+          :name="iconName"
+          class="size-8"
         />
         <span
           v-else
           class="text-xs text-muted"
         >none</span>
       </span>
-      <div class="min-w-0 flex-1">
-        <EditorTextField
-          :id="inputId"
-          label="Icon name (prefix:name)"
-          label-hidden
-          problem-label="Icon name"
-          :model-value="model"
-          :validate="iconError"
-          :normalize="trimmed"
-          placeholder="line-md:github"
-          spellcheck="false"
-          mono
-          @commit="model = $event || undefined"
-        />
-      </div>
+      <!-- The caption never shows the `prefix:name` string: the owner asked for the picture and the search box only. -->
+      <span
+        data-icon-caption
+        class="text-xs text-muted"
+      >{{ caption }}</span>
       <button
-        v-if="model"
+        v-if="model && !readonly"
         type="button"
-        :class="FOCUS_RING"
-        class="min-h-11 rounded-xl px-3 text-sm text-muted hover:text-ink"
-        @click="model = undefined"
+        :class="smallButton"
+        @click="backToAuto"
       >
-        Clear
+        Back to auto
       </button>
     </div>
 
-    <label
-      :for="`${inputId}-search`"
-      class="sr-only"
-    >Search icons</label>
-    <input
-      :id="`${inputId}-search`"
-      v-model="query"
-      type="search"
-      placeholder="Search line-md and simple-icons"
-      :class="inputClass"
-    >
-
-    <p
-      v-if="searching"
-      class="text-xs text-muted"
-      aria-live="polite"
-    >
-      Searching...
-    </p>
-    <p
-      v-else-if="searchError"
-      class="text-xs text-pop"
-      role="alert"
-    >
-      {{ searchError }}
-    </p>
-    <p
-      v-else-if="query.trim() && results.length === 0"
-      class="text-xs text-muted"
-      aria-live="polite"
-    >
-      No icons match "{{ query.trim() }}".
-    </p>
-
-    <ul
-      v-if="results.length"
-      class="grid list-none grid-cols-6 gap-1 p-0"
-      aria-label="Search results"
-    >
-      <li
-        v-for="name in results"
-        :key="name"
+    <template v-if="!readonly">
+      <label
+        :for="`${inputId}-search`"
+        class="sr-only"
+      >Search icons</label>
+      <input
+        :id="`${inputId}-search`"
+        v-model="query"
+        type="search"
+        placeholder="Search icons"
+        :class="inputClass"
       >
-        <button
-          type="button"
-          :title="name"
-          :aria-label="name"
-          :aria-pressed="model === name"
-          :class="[FOCUS_RING, model === name ? 'border-accent' : 'border-line hover:border-accent']"
-          class="flex size-11 w-full items-center justify-center overflow-hidden rounded-xl border bg-ground"
-          @click="pick(name)"
-        >
-          <img
-            v-if="!failed.has(name) && previewUrl(name)"
-            :src="previewUrl(name) ?? undefined"
-            alt=""
-            width="24"
-            height="24"
-            class="size-6"
-            loading="lazy"
-            @error="markFailed(name)"
-          >
-          <span
-            v-else
-            class="px-1 font-mono text-[10px] leading-tight text-muted"
-          >{{ name.split(':')[1] }}</span>
-        </button>
-      </li>
-    </ul>
 
-    <a
-      href="https://icones.js.org/collection/line-md"
-      target="_blank"
-      rel="noopener noreferrer"
-      :class="FOCUS_RING"
-      class="self-start rounded-sm text-xs text-muted underline hover:text-hover"
-    >Browse all on icones.js.org<span class="sr-only"> (opens in a new tab)</span></a>
+      <p
+        v-if="searching"
+        class="text-xs text-muted"
+        aria-live="polite"
+      >
+        Searching...
+      </p>
+      <p
+        v-else-if="searchError"
+        class="text-xs text-pop"
+        role="alert"
+      >
+        {{ searchError }}
+      </p>
+      <p
+        v-else-if="query.trim() && results.length === 0"
+        class="text-xs text-muted"
+        aria-live="polite"
+      >
+        No icons match "{{ query.trim() }}".
+      </p>
+
+      <ul
+        v-if="results.length"
+        class="grid list-none grid-cols-6 gap-1 p-0"
+        aria-label="Search results"
+      >
+        <li
+          v-for="name in results"
+          :key="name"
+        >
+          <!-- The accessible name stays the icon name: a screen reader needs it, the eye does not. -->
+          <button
+            type="button"
+            :title="name"
+            :aria-label="name"
+            :aria-pressed="model === name"
+            :class="[FOCUS_RING, model === name ? 'border-accent' : 'border-line hover:border-accent']"
+            class="flex size-11 w-full items-center justify-center overflow-hidden rounded-xl border bg-ground"
+            @click="pick(name)"
+          >
+            <img
+              v-if="!failed.has(name)"
+              :src="svgUrl(name)"
+              alt=""
+              width="24"
+              height="24"
+              class="size-6"
+              loading="lazy"
+              @error="markFailed(name)"
+            >
+            <span
+              v-else
+              class="px-1 font-mono text-[10px] leading-tight text-muted"
+            >{{ name.split(':')[1] }}</span>
+          </button>
+        </li>
+      </ul>
+
+      <a
+        href="https://icones.js.org/collection/line-md"
+        target="_blank"
+        rel="noopener noreferrer"
+        :class="FOCUS_RING"
+        class="self-start rounded-sm text-xs text-muted underline hover:text-hover"
+      >Browse all on icones.js.org<span class="sr-only"> (opens in a new tab)</span></a>
+    </template>
   </fieldset>
 </template>

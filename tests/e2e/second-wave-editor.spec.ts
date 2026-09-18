@@ -195,17 +195,30 @@ test('contact panel: says that everything is public, refuses a bad email, saves,
   await panel.getByLabel('Note').fill('Met at the engine fair.')
   await panel.getByLabel('Note').blur()
 
+  // WP17: the address is OPT-IN. The card has no EMAIL line until the owner asks for it.
+  const cardText = async () => {
+    const href = await panel.locator('[data-contact-preview]').getAttribute('href')
+    return decodeURIComponent((href ?? '').replace('data:text/vcard;charset=utf-8,', ''))
+  }
+  const shareEmail = panel.getByLabel('Include my email in the contact file')
+  await expect(shareEmail).not.toBeChecked()
+  await expect(panel).toContainText('the file is public; bots can read it')
+  await expect(panel.locator('[data-share-email-note]')).toContainText('anyone who downloads')
+  expect(await cardText()).not.toContain('ada.public@a.example')
+  await shareEmail.check()
+
   // The preview is the text the build writes, made from the draft.
-  const href = await panel.locator('[data-contact-preview]').getAttribute('href')
-  const preview = decodeURIComponent((href ?? '').replace('data:text/vcard;charset=utf-8,', ''))
+  const preview = await cardText()
   expect(preview).toContain('FN:Ada Lovelace\r\n')
   expect(preview).toContain('ORG:Analytical Engines\\, Ltd.\r\n')
+  expect(preview).toContain('EMAIL;TYPE=INTERNET:ada.public@a.example')
   expect(preview).not.toContain(before.profile.email)
   await expect(panel.locator('[data-contact-preview]')).toHaveAttribute('download', 'ada-lovelace.vcf')
 
   await save(page)
   expect(readProfile().contact).toEqual({
     enabled: true,
+    shareEmail: true,
     fullName: 'Ada Lovelace',
     org: 'Analytical Engines, Ltd.',
     title: 'Mathematician',
@@ -264,7 +277,7 @@ test('UTM panel: the example follows the checked fields, a bad value is refused,
   expect(readProfile().site?.utm).toBeUndefined()
 })
 
-test('the contact card and UTM fields are clearable, wait for the typing to stop, and block the save on a refused value', async ({ page }) => {
+test('the contact card and UTM fields are clearable, wait for the typing to stop, and never block the save', async ({ page }) => {
   const before = readFileSync(PROFILE_PATH, 'utf8')
   const profileFile = readProfile()
   await openSiteTab(page)
@@ -325,14 +338,20 @@ test('the contact card and UTM fields are clearable, wait for the typing to stop
   await expect(source).toHaveValue('')
   await expect(incomplete).toHaveCount(0)
 
-  // A refused value: the save key checks the field at once and writes nothing.
+  // A refused value: the save key checks the field at once. It never reaches the draft, so it is never
+  // written. WP17: the save is NOT blocked either. It writes everything else the draft holds.
   await source.pressSequentially('Bad Value', { delay: 10 })
   await page.keyboard.press('ControlOrMeta+s')
-  await expect(page.locator('[data-save-blocked]')).toContainText('Save is blocked')
+  await expect(page.locator('[data-save-blocked]')).toHaveCount(0)
   await expect(page.locator('[data-field-problems]')).toContainText('Site > Source (utm_source): Use lowercase')
   await expect(utmPanel.locator('[data-field-error]')).toContainText('lowercase')
-  await page.waitForTimeout(500)
-  expect(readFileSync(PROFILE_PATH, 'utf8')).toBe(before)
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 })
+  const written = readFileSync(PROFILE_PATH, 'utf8')
+  expect(written).not.toContain('Bad Value')
+  // The fields this test cleared are gone from the file, which is what "Save writes everything else" means.
+  expect(before).toContain('ada.public@a.example')
+  expect(written).not.toContain('ada.public@a.example')
+  expect(readProfile().contact?.fullName).toBeUndefined()
   await clear(source)
   await source.blur()
   await expect(page.locator('[data-field-problems]')).toHaveCount(0)

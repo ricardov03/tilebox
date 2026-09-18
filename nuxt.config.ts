@@ -69,7 +69,7 @@ function iconsIn(data: typeof profile, withHidden = false): string[] {
     if (block.hidden && !withHidden) continue
     if ('icon' in block && block.icon) icons.add(block.icon)
     if (block.type === 'social') icons.add(NETWORKS[block.network].icon)
-    if (block.type === 'link' && !block.icon) {
+    if (block.type === 'link' && !block.icon && block.url) {
       const brand = brandIconFor(block.url)
       if (brand) icons.add(brand)
     }

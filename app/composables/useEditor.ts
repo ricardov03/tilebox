@@ -4,6 +4,7 @@
  * and talks to the dev-only routes in server/api.
  */
 import type { Block, BlockType, Profile, Theme } from '~~/types/profile'
+import { hostOf } from '~/components/blocks/media'
 
 export type LayoutKey = 'desktop' | 'mobile'
 export type EditorTab = 'profile' | 'blocks' | 'theme' | 'site'
@@ -103,11 +104,9 @@ export function copyOf(source: Block, takenIds: readonly string[]): Block {
   switch (copy.type) {
     case 'link':
       delete copy.spotlight
-      copy.title = `${copy.title} copy`
+      if (copy.title) copy.title = `${copy.title} copy`
       break
     case 'section':
-      copy.title = `${copy.title} copy`
-      break
     case 'text':
     case 'video':
     case 'contact':
@@ -120,7 +119,7 @@ export function copyOf(source: Block, takenIds: readonly string[]): Block {
       if (copy.label) copy.label = `${copy.label} copy`
       break
     case 'map':
-      copy.label = `${copy.label} copy`
+      if (copy.label) copy.label = `${copy.label} copy`
       break
     case 'image':
       if (copy.caption) copy.caption = `${copy.caption} copy`
@@ -132,13 +131,13 @@ export function copyOf(source: Block, takenIds: readonly string[]): Block {
 /** One short line that names a block in lists and preview tiles. */
 export function blockSummary(block: Block): string {
   switch (block.type) {
-    case 'link': return block.title
+    case 'link': return block.title ?? (hostOf(block.url) || 'Link without a title')
     case 'social': return block.label ?? block.network
-    case 'image': return block.caption ?? block.alt
-    case 'text': return block.title ?? block.body.slice(0, 40)
-    case 'section': return block.title
-    case 'map': return block.label
-    case 'video': return block.title ?? block.url
+    case 'image': return block.caption ?? block.alt ?? 'Image without a description'
+    case 'text': return block.title ?? (block.body?.slice(0, 40) || 'Empty text')
+    case 'section': return block.title ?? 'Section without a title'
+    case 'map': return block.label ?? 'Map'
+    case 'video': return block.title ?? block.url ?? 'Video'
     case 'contact': return block.title ?? 'Save my contact'
     case 'qr': return block.caption ?? 'QR code of the page'
   }

@@ -13,10 +13,11 @@
   A hidden block (WP10a) is dimmed and carries an eye-off badge. The Hide / Show
   control sits next to Delete. Its name says the action ("Hide x" / "Show x"); it has
   no `aria-pressed`, because `[data-editor-control][aria-pressed]` finds the Edit control.
-  The build leaves hidden blocks out.
+  The build leaves hidden blocks out. An INCOMPLETE block (WP17: a link without a URL, an image without a
+  file) is dimmed the same way and carries the "Incomplete: ..." badge of BlockRowBadges: the build leaves it out too.
 -->
 <script setup lang="ts">
-import type { Block } from '~~/types/profile'
+import { incompleteReason, type Block } from '~~/types/profile'
 import { SIZE_CLASSES, sizeToSpan } from '~/utils/sizes'
 import { UI_ICONS } from '~/utils/networks'
 import { BlockRenderer } from '~/components/blocks'
@@ -51,6 +52,7 @@ async function cancelDelete() {
 const ROW_1 = 'h-[var(--row)]'
 const ROW_2 = 'h-[calc(var(--row)*2+var(--gap))]'
 
+const incomplete = computed(() => incompleteReason(props.block) !== null)
 const isSection = computed(() => props.block.type === 'section')
 const spanClass = computed(() =>
   props.block.type === 'section' ? 'col-span-full row-auto' : SIZE_CLASSES[props.block.size],
@@ -71,7 +73,7 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
     class="group relative"
   >
     <div
-      :class="[selected ? 'outline-2 outline-offset-2 outline-accent' : '', block.hidden ? 'opacity-40' : '']"
+      :class="[selected ? 'outline-2 outline-offset-2 outline-accent' : '', block.hidden || incomplete ? 'opacity-40' : '']"
       class="h-full rounded-tile"
     >
       <BlockRenderer :block="block" />

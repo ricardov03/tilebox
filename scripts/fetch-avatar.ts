@@ -15,6 +15,8 @@ import { isPlaceholderEmail, parseProfile } from '../types/profile'
 async function main(): Promise<string> {
   const { profile } = parseProfile(JSON.parse(await readFile(profilePath(), 'utf8')))
   if (profile.avatar) return 'avatar: profile.avatar is set, gravatar skipped'
+  // WP17: the email is optional. No email = no lookup, and an old Gravatar file stays as it is.
+  if (!profile.email) return 'avatar: no email in the profile, gravatar skipped'
   if (isPlaceholderEmail(profile.email)) return 'avatar: placeholder email, gravatar skipped'
   // The saved email: a 404 may remove a stale file.
   return (await fetchGravatar(profile.email, { allowDelete: true })).message

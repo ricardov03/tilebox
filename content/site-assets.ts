@@ -278,6 +278,7 @@ async function avatarDataUri(file: string, size: number): Promise<string> {
 function ogCard(profile: Profile, colors: ColorSet, host: string, avatar: string | null): CardNode {
   const info = profile.profile
   const handle = cleanHandle(info.handle)
+  const bio = (info.bio ?? '').trim()
   const footer = [handle ? `@${handle}` : '', host].filter(Boolean).join('  ·  ')
   const avatarSize = 184
   const picture: CardNode = avatar
@@ -352,12 +353,12 @@ function ogCard(profile: Profile, colors: ColorSet, host: string, avatar: string
                             children: info.name,
                           },
                         },
-                        ...(info.bio.trim()
+                        ...(bio
                           ? [{
                               type: 'div' as const,
                               props: {
                                 style: { display: 'block', lineClamp: 3, color: colors.muted, fontSize: 32, lineHeight: 1.4 },
-                                children: info.bio.trim(),
+                                children: bio,
                               },
                             }]
                           : []),

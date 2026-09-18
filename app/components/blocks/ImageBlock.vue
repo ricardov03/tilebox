@@ -39,11 +39,12 @@ const creditLink = 'rounded-sm text-ground underline underline-offset-2 focus-vi
       class="absolute inset-0 bg-photo"
       aria-hidden="true"
     />
+    <!-- No `alt` (WP17) = `alt=""`: a decorative image, never the file name. No `src` = the editor preview of an incomplete block. -->
     <img
-      v-if="!failed"
+      v-if="block.src && !failed"
       ref="img"
       :src="block.src"
-      :alt="block.alt"
+      :alt="block.alt ?? ''"
       :loading="priority ? 'eager' : 'lazy'"
       :fetchpriority="priority ? 'high' : undefined"
       decoding="async"

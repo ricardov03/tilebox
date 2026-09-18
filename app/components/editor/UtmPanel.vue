@@ -57,8 +57,8 @@ function setValue(key: Key, value: string) {
 const envSiteUrl = useRuntimeConfig().public.siteUrl
 const siteUrl = computed(() => resolveSiteUrl(envSiteUrl, site.value))
 const sample = computed(() => {
-  const block = draft.value?.blocks.find(item => item.type === 'link' && /^https?:\/\//i.test(item.url) && !item.noUtm)
-  return block && block.type === 'link' ? block.url : 'https://example.com/page?ref=1'
+  const block = draft.value?.blocks.find(item => item.type === 'link' && /^https?:\/\//i.test(item.url ?? '') && !item.noUtm)
+  return (block && block.type === 'link' ? block.url : undefined) ?? 'https://example.com/page?ref=1'
 })
 const rewritten = computed(() => withUtm(sample.value, typed.value, siteUrl.value))
 </script>

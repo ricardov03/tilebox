@@ -42,8 +42,16 @@ Code: `app/utils/icon-sets.ts`, `content/icon-index.ts`, `server/api/icons/searc
 
 ## Generated files of `public/site/` (WP11)
 - `qr.svg` is an SVG, and it is safe: THIS project draws it (`uqr`) from one checked `https` URL string and two preset colors. No remote bytes, no user markup. A remote SVG is still never stored. The folder has the sandbox CSP of layer 5 on top.
-- `contact.vcf` holds only the fields of the top-level `contact` object, which the owner marks as public, and the profile name. The private `profile.email` is never an input of the card builder (`app/utils/vcard.ts`). Text values are escaped, control and bidi characters are removed, no line break can start a new vCard property.
+- `contact.vcf` holds only the fields of the top-level `contact` object, which the owner marks as public, and the profile name. The private `profile.email` is never an input of the card builder (`app/utils/vcard.ts`). Its own `contact.email` reaches the file only with `contact.shareEmail: true` (WP17, default off). Text values are escaped, control and bidi characters are removed, no line break can start a new vCard property.
 - The dev route `GET /api/site/qr.png` takes no input: it draws the local `qr.svg` again with sharp.
+
+## The email shield (WP17)
+Code: `app/utils/mail-shield.ts`, `app/components/ProtectedEmail.vue`, `app/composables/useHumanSignal.ts`, the sanitizer in `types/profile.ts`. Tests: `tests/e2e/mail-shield.spec.ts`, plus the dist scan in `privacy.spec.ts`.
+- **The threat.** An address harvester. It reads HTML, or runs a headless browser and never touches the page, and collects every mail link and every `name@host` it finds. The owner's ask was plain: no dynamite of spam.
+- **What ships.** No address and no mail scheme in any file of `dist/`. The build replaces `profile.email` with `emailToken` and the URL of a mail tile with a `mail` token: both parts of the address reversed, then base64url, plus an encoded query. A tile keeps its title; the profile line shows "hello at example dot com". The control is a real `<button type="button">` with no `href` and no address in any attribute. `PublicProfileSchema` has a guard refinement that fails on an address or the scheme, and `check:profile` prints it as a warning.
+- **When it becomes a link.** One shared set of once-only, passive listeners waits for a pointer move, a pointer down, a touch, a key, a scroll or a focus. Then the token is decoded IN MEMORY and the button becomes `<a href="mailto:...">`. No network, no third party, no CAPTCHA, no image of the address. The token is not a secret and is not encryption: it is a shape no harvester regex matches.
+- **The honest limit.** A bot that drives a full browser and fakes one input event reads the address, like a visitor does. This shield stops the cheap harvesters, which are nearly all of them. The advice in the README is to add a forwarding alias that the owner can rotate.
+- **The one exception.** `/site/contact.vcf` needs a plain address by format. `contact.shareEmail` (default off) decides, the editor names the risk in the panel, and `public/robots.txt` carries `Disallow: /site/contact.vcf`, which only polite bots honour.
 
 ## The public page (WP11)
 Still no runtime network call. The end-date script (under 400 bytes, inline) only reads `data-ends-at` attributes and sets `hidden`. The share button calls `navigator.share` or `navigator.clipboard` on a click. UTM tags are added at build time, from values limited to `[a-z0-9_-]`.

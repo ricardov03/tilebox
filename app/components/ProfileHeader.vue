@@ -3,7 +3,11 @@ import type { PublicProfileInfo } from '~~/types/profile'
 import { UI_ICONS } from '~/utils/networks'
 
 const props = defineProps<{
-  /** The public shape: `email` is set only when the owner chose to show it. */
+  /**
+   * The public shape: `emailToken` is set only when the owner chose to show the email.
+   * It is a TOKEN, never an address (WP17, app/utils/mail-shield.ts): `ProtectedEmail`
+   * shows the human form and becomes a real `mailto:` link once a person is on the page.
+   */
   profile: PublicProfileInfo
   /**
    * Editor preview only. Its tiles are lower than the real desktop tile
@@ -31,7 +35,7 @@ const initials = computed(() =>
  * a line limit, so the worst case (long bio, 3 long highlights, email, status)
  * still fits. Without them the header keeps the original scale. NOTES.md, WP9.
  */
-const compact = computed(() => props.profile.highlights.length > 0 || Boolean(props.profile.email))
+const compact = computed(() => props.profile.highlights.length > 0 || Boolean(props.profile.emailToken))
 
 type Part = 'avatar' | 'initials' | 'stack' | 'name' | 'bio' | 'highlight'
 
@@ -137,27 +141,41 @@ const classes = computed<Record<Part, string>>(() => {
           <span :class="classes.highlight">{{ highlight }}</span>
         </li>
       </ul>
-      <a
-        v-if="profile.email"
-        :href="`mailto:${profile.email}`"
-        class="flex max-w-full items-center gap-2 self-start rounded-sm font-mono text-sm leading-5 text-muted hover:text-hover"
+      <ProtectedEmail
+        v-if="profile.emailToken"
+        :token="profile.emailToken"
+        :aria-label="`Email ${profile.name}`"
+        data-profile-email
+        class="flex max-w-full items-center gap-2 self-start rounded-sm border-0 bg-transparent p-0 text-left font-mono text-sm leading-5 text-muted hover:text-hover"
       >
-        <Icon
-          :name="UI_ICONS.email"
-          class="size-4 shrink-0"
-          :aria-hidden="true"
-        />
-        <span class="truncate">{{ profile.email }}</span>
-      </a>
+        <template #default="{ text }">
+          <Icon
+            :name="UI_ICONS.email"
+            class="size-4 shrink-0"
+            :aria-hidden="true"
+          />
+          <span class="truncate">{{ text }}</span>
+        </template>
+      </ProtectedEmail>
       <p
         v-if="profile.status"
         :class="compact ? '' : 'md:mt-1.5'"
         class="flex items-center gap-2 text-sm font-medium md:gap-2.5 md:text-[15px]"
       >
+        <!-- The ping pattern: a halo that grows and fades behind a solid dot. The wrapper has the size, so nothing moves. No halo with reduced motion. -->
         <span
-          class="size-2.5 shrink-0 animate-pulse rounded-full bg-dot motion-reduce:animate-none"
-          aria-hidden="true"
-        />
+          data-status-dot
+          class="relative inline-flex size-2.5 shrink-0"
+        >
+          <span
+            class="absolute inline-flex h-full w-full rounded-full bg-dot opacity-75 animate-ping motion-reduce:hidden"
+            aria-hidden="true"
+          />
+          <span
+            class="relative inline-flex size-2.5 rounded-full bg-dot"
+            aria-hidden="true"
+          />
+        </span>
         <span :class="compact ? 'truncate' : ''">{{ profile.status }}</span>
       </p>
     </div>

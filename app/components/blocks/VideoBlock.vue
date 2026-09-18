@@ -73,6 +73,7 @@ const embedUrl = computed(() => (videoId.value && playing.value ? youtubeEmbedUr
   <Tile
     v-else
     :href="block.url"
+    :mail="block.mail"
   >
     <Icon
       :name="UI_ICONS.play"

@@ -44,22 +44,22 @@ export interface SiteHead {
 }
 
 /** `ricardov` for `@ricardov`. */
-export function cleanHandle(handle: string): string {
-  return handle.trim().replace(/^@+/, '')
+export function cleanHandle(handle: string | undefined): string {
+  return (handle ?? '').trim().replace(/^@+/, '')
 }
 
 /** `Name (@handle)`, or the name alone when the handle is empty. */
-export function defaultSiteTitle(info: { name: string, handle: string }): string {
+export function defaultSiteTitle(info: { name: string, handle?: string }): string {
   const handle = cleanHandle(info.handle)
   return handle ? `${info.name} (@${handle})` : info.name
 }
 
-export function siteTitle(info: { name: string, handle: string }, site?: Site | PublicSite): string {
+export function siteTitle(info: { name: string, handle?: string }, site?: Site | PublicSite): string {
   return site?.title?.trim() || defaultSiteTitle(info)
 }
 
-export function siteDescription(info: { bio: string }, site?: Site | PublicSite): string {
-  return site?.description?.trim() || info.bio.trim()
+export function siteDescription(info: { bio?: string }, site?: Site | PublicSite): string {
+  return site?.description?.trim() || (info.bio ?? '').trim()
 }
 
 /** The env value wins, then `site.url`. No trailing slash. '' = unknown. Only http(s) counts. */
@@ -118,7 +118,7 @@ function absolute(path: string, siteUrl: string): string {
 /** Every http(s) URL of the social blocks of the PUBLIC profile, unique, in block order. */
 export function sameAsOf(profile: PublicProfile): string[] {
   const urls = profile.blocks.flatMap((block) => {
-    if (block.type !== 'social' || !/^https?:\/\//i.test(block.url)) return []
+    if (block.type !== 'social' || !block.url || !/^https?:\/\//i.test(block.url)) return []
     // A block hidden from the page is not public (the `hidden` flag of the link blocks work package).
     if ('hidden' in block && block.hidden === true) return []
     // WP11: the build may have added UTM tags to the link. An identity URL carries no tracking.
@@ -132,11 +132,12 @@ export function buildJsonLd(profile: PublicProfile, siteUrl: string): Record<str
   const site = profile.site
   const handle = cleanHandle(info.handle)
   const sameAs = sameAsOf(profile)
+  const bio = (info.bio ?? '').trim()
   const person: Record<string, unknown> = {
     '@type': 'Person',
     'name': info.name,
     ...(handle ? { alternateName: handle } : {}),
-    ...(info.bio.trim() ? { description: info.bio.trim() } : {}),
+    ...(bio ? { description: bio } : {}),
     ...(info.avatar ? { image: absolute(info.avatar, siteUrl) } : {}),
     ...(siteUrl ? { url: `${siteUrl}/` } : {}),
     ...(site?.jobTitle ? { jobTitle: site.jobTitle } : {}),

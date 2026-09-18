@@ -5,13 +5,17 @@
  * A personal file with a placeholder email gets a warning, not a failure.
  * WP11: one warning per expired block, per block that has not started yet, and per
  * contact / QR tile the build will leave out. Warnings never fail the build.
+ * WP17: one warning per INCOMPLETE block (a link without a URL, an image without a file, ...). Never a failure.
+ * WP17: one warning when the PUBLIC copy would carry an email address or the string `mailto:`
+ * (the guard of `PublicProfileSchema`). That means the shield missed something, for example an
+ * address typed into the bio. Still a warning: it never stops a build.
  */
 import { readFile } from 'node:fs/promises'
 import { scheduleState } from '../app/utils/schedule'
 import { resolveSiteUrl } from '../app/utils/site-head'
 import { foreignIconAdvice, foreignIcons } from '../content/migrate'
 import { describeProfile, profileIsPersonal, profilePath } from '../content/resolve'
-import { isPlaceholderEmail, parseProfile, type Profile } from '../types/profile'
+import { incompleteReason, isPlaceholderEmail, parseProfile, PublicProfileSchema, toPublicProfile, type Profile } from '../types/profile'
 
 const PROFILE_PATH = profilePath()
 const label = describeProfile(PROFILE_PATH)
@@ -29,6 +33,11 @@ function secondWaveWarnings(profile: Profile, now: Date): string[] {
   for (const block of profile.blocks) {
     if (block.hidden) continue
     const name = `block "${block.id}"`
+    const missing = incompleteReason(block)
+    if (missing !== null) {
+      lines.push(`warning: ${name} (${block.type}) is incomplete: ${missing}. This build leaves it out.`)
+      continue
+    }
     const state = scheduleState(block, now)
     if (state === 'expired') lines.push(`warning: ${name} expired on ${block.endsAt}. This build leaves it out.`)
     if (state === 'scheduled') lines.push(`warning: ${name} starts on ${block.startsAt}. This build leaves it out: publish again after ${block.startsAt} to show it.`)
@@ -52,6 +61,11 @@ try {
     process.stdout.write(`warning: profile.email is still the placeholder "${profile.profile.email}". Set your real email in /edit. It stays hidden unless you turn on "Show my email".\n`)
   }
   for (const line of secondWaveWarnings(profile, new Date())) process.stdout.write(`${line}\n`)
+  // The mail shield (WP17). `toPublicProfile` is what the build ships, so the guard runs on the real thing.
+  const guard = PublicProfileSchema.safeParse(toPublicProfile(profile))
+  for (const issue of guard.success ? [] : guard.error.issues) {
+    process.stdout.write(`warning: the published copy is not clean: ${issue.message} (at ${issue.path.join('.') || 'profile'})\n`)
+  }
   process.stdout.write(`OK  ${label}  (${profile.blocks.length} blocks, theme ${profile.profile.theme.colors}/${profile.profile.theme.fonts})\n`)
 }
 catch (error) {
