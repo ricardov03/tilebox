@@ -1,0 +1,455 @@
+/**
+ * The link preview engine (content/unfurl.ts). No browser, no internet.
+ * A local `node:http` server on 127.0.0.1 plays the websites. The SSRF guard
+ * blocks loopback, so these tests pass `allowHosts: ['127.0.0.1']`, the option
+ * that exists only for them. Every other host fails its DNS lookup here
+ * (`lookup` throws), so a fallback such as the Google favicon service can never
+ * reach the network. Files go to a temp folder (`dirs`), never to `public/`.
+ */
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect, test } from '@playwright/test'
+import sharp from 'sharp'
+import {
+  checkTarget,
+  cleanText,
+  decodeHtml,
+  githubAvatarFor,
+  isPublicAddress,
+  largestPngFromIco,
+  normalizeUrl,
+  oembedUrlFor,
+  parseHead,
+  pickBySize,
+  safeRequest,
+  sniffImage,
+  unfurl,
+  USER_AGENT,
+  type Transport,
+  type UnfurlDirs,
+  type UnfurlOptions,
+} from '../../content/unfurl'
+import { FRESH_MS, readCacheSync } from '../../content/unfurl-cache'
+
+/** 1x1 transparent PNG. */
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+/** An ICO with two entries: a 16 px BMP (skipped) and a 64 px PNG. */
+function makeIco(entries: { size: number, data: Buffer }[]): Buffer {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(1, 2)
+  header.writeUInt16LE(entries.length, 4)
+  const directory = Buffer.alloc(16 * entries.length)
+  let offset = 6 + directory.length
+  entries.forEach((entry, i) => {
+    const at = i * 16
+    directory[at] = entry.size
+    directory[at + 1] = entry.size
+    directory.writeUInt16LE(1, at + 4)
+    directory.writeUInt16LE(32, at + 6)
+    directory.writeUInt32LE(entry.data.length, at + 8)
+    directory.writeUInt32LE(offset, at + 12)
+    offset += entry.data.length
+  })
+  return Buffer.concat([header, directory, ...entries.map(entry => entry.data)])
+}
+
+/** A BMP entry starts with its 40-byte header size, not with the PNG signature. */
+const BMP_ENTRY = Buffer.concat([Buffer.from([0x28, 0, 0, 0]), Buffer.alloc(60)])
+const ICO = makeIco([{ size: 16, data: BMP_ENTRY }, { size: 64, data: TINY_PNG }])
+
+const PAGE = `<!doctype html><html><head>
+<meta charset="utf-8">
+<title>  Plain   title </title>
+<meta property="og:title" content="OG title">
+<meta name="twitter:title" content="Twitter title">
+<meta name="description" content="Plain description">
+<meta property="og:description" content="OG   description">
+<meta property="og:site_name" content="Test Site">
+<meta property="og:image" content="/real.png">
+<meta property="og:image:alt" content="A red square">
+<meta name="theme-color" content="#123456">
+<link rel="icon" href="/favicon.ico">
+</head><body><meta property="og:title" content="Body title"></body></html>`
+
+let server: Server
+let base = ''
+let realPng: Buffer
+const hits = new Map<string, number>()
+const seenHeaders = new Map<string, IncomingMessage['headers']>()
+
+function handle(req: IncomingMessage, res: ServerResponse): void {
+  const url = new URL(req.url ?? '/', base)
+  const path = url.pathname
+  hits.set(path, (hits.get(path) ?? 0) + 1)
+  seenHeaders.set(path, req.headers)
+  const html = (body: string, headers: Record<string, string> = {}) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...headers })
+    res.end(body)
+  }
+  const hop = path.match(/^\/hop\/(\d+)$/)
+  if (hop) {
+    const left = Number(hop[1])
+    res.writeHead(302, { location: left > 0 ? `/hop/${left - 1}` : '/page' })
+    res.end()
+    return
+  }
+  switch (path) {
+    case '/page':
+      return html(PAGE)
+    case '/fake-image':
+      return html(PAGE.replace('/real.png', '/fake.png'))
+    case '/big':
+      // The description comes after 600 KB of padding and there is no </head> before it.
+      return html(`<html><head><title>Big page</title><!--${'x'.repeat(600 * 1024)}--><meta name="description" content="too far"></head></html>`)
+    case '/etag':
+      if (req.headers['if-none-match'] === '"v1"') {
+        res.writeHead(304)
+        res.end()
+        return
+      }
+      return html('<html><head><title>Etag page</title></head></html>', { etag: '"v1"' })
+    case '/pdf':
+      res.writeHead(200, { 'content-type': 'application/pdf' })
+      res.end('%PDF-1.4')
+      return
+    case '/to-private':
+      res.writeHead(302, { location: 'http://10.0.0.1/' })
+      res.end()
+      return
+    case '/favicon.ico':
+      res.writeHead(200, { 'content-type': 'image/x-icon' })
+      res.end(ICO)
+      return
+    case '/real.png':
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(realPng)
+      return
+    case '/fake.png':
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end('<html>this is not a png</html>')
+      return
+    default:
+      res.writeHead(404)
+      res.end()
+  }
+}
+
+let root = ''
+let dirs: UnfurlDirs
+let options: UnfurlOptions
+
+test.beforeAll(async () => {
+  realPng = await sharp({ create: { width: 300, height: 240, channels: 3, background: { r: 200, g: 30, b: 30 } } }).png().toBuffer()
+  server = createServer(handle)
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done))
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+})
+
+test.afterAll(async () => {
+  await new Promise<void>(done => server.close(() => done()))
+})
+
+test.beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'tilebox-unfurl-'))
+  dirs = { icons: join(root, 'icons'), thumbs: join(root, 'thumbs'), cache: join(root, 'cache.json') }
+  options = {
+    allowHosts: ['127.0.0.1'],
+    dirs,
+    lookup: () => Promise.reject(new Error('no DNS in tests')),
+  }
+  hits.clear()
+  seenHeaders.clear()
+})
+
+test.afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
+
+test.describe('pure helpers', () => {
+  test('normalizeUrl: http(s) only, no credentials, no fragment, 2048 characters at most', () => {
+    expect(normalizeUrl('https://user:pass@example.com/a?b=1#frag')).toBe('https://example.com/a?b=1')
+    expect(normalizeUrl('  https://example.com  ')).toBe('https://example.com/')
+    expect(normalizeUrl('ftp://example.com')).toBeNull()
+    expect(normalizeUrl('mailto:a@b.c')).toBeNull()
+    expect(normalizeUrl('javascript:alert(1)')).toBeNull()
+    expect(normalizeUrl('not a url')).toBeNull()
+    expect(normalizeUrl(`https://example.com/${'a'.repeat(2048)}`)).toBeNull()
+  })
+
+  test('parseHead: og beats twitter beats <title>, og:description beats description, the body is ignored', () => {
+    const head = parseHead(PAGE, 'https://site.test/dir/page.html')
+    expect(head.title).toBe('OG title')
+    expect(head.description).toBe('OG description')
+    expect(head.siteName).toBe('Test Site')
+    expect(head.themeColor).toBe('#123456')
+
+    const twitter = parseHead('<head><title>T</title><meta name="twitter:title" content="Tw"></head>', 'https://site.test/')
+    expect(twitter.title).toBe('Tw')
+    const plain = parseHead('<head><title> Just \n a   title </title><meta name="description" content="Desc"><meta property="og:title" content="  "></head>', 'https://site.test/')
+    expect(plain.title).toBe('Just a title')
+    expect(plain.description).toBe('Desc')
+  })
+
+  test('parseHead: relative URLs resolve against the final URL', () => {
+    const head = parseHead(`<head>
+      <meta property="og:image" content="../img/cover.png">
+      <meta name="twitter:image" content="//cdn.site.test/tw.png">
+      <link rel="icon" type="image/svg+xml" href="icon.svg">
+      <link rel="apple-touch-icon" sizes="180x180" href="/apple.png">
+      <link rel="icon" sizes="32x32 192x192" href="/fav.png">
+      <link rel="manifest" href="/site.webmanifest">
+      <link rel="icon" href="javascript:alert(1)">
+    </head>`, 'https://site.test/blog/post/')
+    expect(head.image?.url).toBe('https://site.test/blog/img/cover.png')
+    expect(head.twitterImage).toBe('https://cdn.site.test/tw.png')
+    expect(head.manifest).toBe('https://site.test/site.webmanifest')
+    expect(head.icons).toEqual([
+      { url: 'https://site.test/blog/post/icon.svg', rel: 'icon', size: 0, svg: true },
+      { url: 'https://site.test/apple.png', rel: 'apple-touch-icon', size: 180, svg: false },
+      { url: 'https://site.test/fav.png', rel: 'icon', size: 192, svg: false },
+    ])
+  })
+
+  test('cleanText caps the length, pickBySize takes the smallest icon of 96 px or more', () => {
+    expect(cleanText('a'.repeat(300), 120)).toHaveLength(120)
+    expect(cleanText('   ', 120)).toBeUndefined()
+    expect(pickBySize([{ size: 32 }, { size: 512 }, { size: 180 }, { size: 96 }])?.size).toBe(96)
+    expect(pickBySize([{ size: 16 }, { size: 48 }])?.size).toBe(48)
+  })
+
+  test('decodeHtml: the header charset first, then <meta charset>, then utf-8', () => {
+    const latin1 = Buffer.from('<meta charset="iso-8859-1"><title>caf\xE9</title>', 'latin1')
+    expect(decodeHtml(latin1, 'text/html')).toContain('café')
+    expect(decodeHtml(latin1, 'text/html; charset=windows-1252')).toContain('café')
+    expect(decodeHtml(Buffer.from('<title>café</title>', 'utf8'), 'text/html')).toContain('café')
+  })
+
+  test('sniffImage reads the magic bytes and refuses a fake png', () => {
+    expect(sniffImage(TINY_PNG)).toBe('png')
+    expect(sniffImage(Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]))).toBe('jpeg')
+    expect(sniffImage(Buffer.from('GIF89a......'))).toBe('gif')
+    expect(sniffImage(Buffer.from('RIFF\0\0\0\0WEBPVP8 '))).toBe('webp')
+    expect(sniffImage(Buffer.from('\0\0\0\x1Cftypavif\0\0\0\0', 'latin1'))).toBe('avif')
+    expect(sniffImage(ICO)).toBe('ico')
+    expect(sniffImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))).toBe('svg')
+    expect(sniffImage(Buffer.from('<html>this is not a png</html>'))).toBeNull()
+  })
+
+  test('largestPngFromIco takes the PNG entry and skips BMP entries', () => {
+    expect(largestPngFromIco(ICO)?.equals(TINY_PNG)).toBe(true)
+    const two = makeIco([{ size: 32, data: TINY_PNG }, { size: 128, data: Buffer.concat([TINY_PNG, Buffer.from([1])]) }])
+    expect(largestPngFromIco(two)?.length).toBe(TINY_PNG.length + 1)
+    expect(largestPngFromIco(makeIco([{ size: 16, data: BMP_ENTRY }]))).toBeNull()
+    expect(largestPngFromIco(TINY_PNG)).toBeNull()
+  })
+
+  test('oembedUrlFor and githubAvatarFor know their URLs', () => {
+    expect(oembedUrlFor('https://www.youtube.com/watch?v=dQw4w9WgXcQ')?.url)
+      .toBe('https://www.youtube.com/oembed?format=json&url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DdQw4w9WgXcQ')
+    expect(oembedUrlFor('https://youtu.be/dQw4w9WgXcQ')?.provider).toBe('YouTube')
+    expect(oembedUrlFor('https://x.com/nuxt_js/status/1234567890')?.provider).toBe('X')
+    expect(oembedUrlFor('https://x.com/nuxt_js')).toBeNull()
+    expect(oembedUrlFor('https://bsky.app/profile/nuxt.com/post/abc')?.provider).toBe('Bluesky')
+    expect(oembedUrlFor('https://nuxt.com/')).toBeNull()
+    expect(githubAvatarFor('https://github.com/nuxt')).toBe('https://github.com/nuxt.png?size=200')
+    expect(githubAvatarFor('https://github.com/nuxt/nuxt')).toBeNull()
+    expect(githubAvatarFor('https://gitlab.com/nuxt')).toBeNull()
+  })
+})
+
+test.describe('the SSRF guard (no allowHosts)', () => {
+  const blocked = ['10.0.0.1', '127.0.0.1', '169.254.169.254', '192.168.1.10', '172.16.0.1', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '::ffff:127.0.0.1']
+
+  test('private, loopback, link-local, CGNAT, unique-local and IPv4-mapped addresses are not public', () => {
+    for (const address of blocked) expect(isPublicAddress(address), address).toBe(false)
+    expect(isPublicAddress('93.184.216.34')).toBe(true)
+    expect(isPublicAddress('2606:2800:220:1:248:1893:25c8:1946')).toBe(true)
+    expect(isPublicAddress('not an ip')).toBe(false)
+  })
+
+  test('an IP literal in the URL is refused before any connection', async () => {
+    for (const address of blocked) {
+      const host = address.includes(':') ? `[${address}]` : address
+      await expect(checkTarget(new URL(`http://${host}/`)), address).rejects.toMatchObject({ reason: 'blocked address' })
+    }
+  })
+
+  test('a host name that resolves to a private address is refused, also when only one answer is private', async () => {
+    const privateOnly = () => Promise.resolve([{ address: '192.168.1.5', family: 4 }])
+    await expect(checkTarget(new URL('https://intranet.test/'), { lookup: privateOnly })).rejects.toMatchObject({ reason: 'blocked address' })
+    const mixed = () => Promise.resolve([{ address: '93.184.216.34', family: 4 }, { address: '::ffff:10.0.0.1', family: 6 }])
+    await expect(checkTarget(new URL('https://rebind.test/'), { lookup: mixed })).rejects.toMatchObject({ reason: 'blocked address' })
+    const open = () => Promise.resolve([{ address: '93.184.216.34', family: 4 }])
+    await expect(checkTarget(new URL('https://public.test/'), { lookup: open })).resolves.toEqual({ address: '93.184.216.34', family: 4 })
+  })
+
+  test('only ports 80 and 443, only http and https', async () => {
+    const open = () => Promise.resolve([{ address: '93.184.216.34', family: 4 }])
+    await expect(checkTarget(new URL('https://public.test:8443/'), { lookup: open })).rejects.toMatchObject({ reason: 'blocked port' })
+    await expect(checkTarget(new URL('http://public.test:443/'), { lookup: open })).resolves.toBeTruthy()
+    await expect(checkTarget(new URL('ftp://public.test/'), { lookup: open })).rejects.toMatchObject({ reason: 'not a web address' })
+  })
+
+  test('unfurl answers { ok: false } for a loopback URL and never connects', async () => {
+    const result = await unfurl(`${base}/page`, { dirs })
+    expect(result).toEqual({ ok: false, reason: 'blocked port' })
+    expect(await unfurl('http://127.0.0.1/page', { dirs })).toEqual({ ok: false, reason: 'blocked address' })
+    expect(await unfurl('http://169.254.169.254/latest/meta-data/', { dirs })).toEqual({ ok: false, reason: 'blocked address' })
+    expect(hits.size).toBe(0)
+  })
+
+  test('a redirect to a private address is refused at that hop', async () => {
+    const result = await unfurl(`${base}/to-private`, options)
+    expect(result).toEqual({ ok: false, reason: 'blocked address' })
+  })
+})
+
+test.describe('fetching (local server, allowHosts)', () => {
+  test('reads the head, saves the PNG from favicon.ico, sends the honest user agent', async () => {
+    const result = await unfurl(`${base}/page#section`, options)
+    expect(result).toMatchObject({ ok: true, cached: false, title: 'OG title', description: 'OG description', siteName: 'Test Site', themeColor: '#123456', source: 'html' })
+    if (!result.ok) return
+    expect(result.url).toBe(`${base}/page`)
+    expect(result.favicon).toMatch(/^\/icons\/[0-9a-f]{16}\.png$/)
+    expect(readFileSync(join(dirs.icons, result.favicon!.slice('/icons/'.length)))).toEqual(TINY_PNG)
+    // The image is the second switch: not asked for, not downloaded.
+    expect(result.image).toBeUndefined()
+    expect(hits.get('/real.png')).toBeUndefined()
+
+    const headers = seenHeaders.get('/page')
+    expect(headers?.['user-agent']).toBe(USER_AGENT)
+    expect(USER_AGENT).toMatch(/^tilebox-unfurl\/\d+\.\d+\.\d+\S* \(\+https:\/\/github\.com\/ricardov03\/tilebox\)$/)
+    expect(USER_AGENT).not.toMatch(/mozilla|chrome|safari|bot/i)
+    expect(headers?.accept).toBe('text/html,application/xhtml+xml')
+  })
+
+  test('showImage: the og:image becomes a local webp, and a fake png is refused by its bytes', async () => {
+    const result = await unfurl(`${base}/page`, { ...options, showImage: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.image).toMatch(/^\/thumbs\/[0-9a-f]{16}\.webp$/)
+    expect(result.imageAlt).toBe('A red square')
+    const file = readFileSync(join(dirs.thumbs, result.image!.slice('/thumbs/'.length)))
+    expect(sniffImage(file)).toBe('webp')
+    expect((await sharp(file).metadata()).width).toBe(300)
+
+    const fake = await unfurl(`${base}/fake-image`, { ...options, showImage: true })
+    expect(fake.ok).toBe(true)
+    if (!fake.ok) return
+    expect(hits.get('/fake.png')).toBe(1)
+    expect(fake.image).toBeUndefined()
+    expect(readdirSync(dirs.thumbs)).toHaveLength(1)
+  })
+
+  test('follows 5 redirects and stops at 6', async () => {
+    const five = await unfurl(`${base}/hop/4`, options)
+    expect(five).toMatchObject({ ok: true, title: 'OG title', finalUrl: `${base}/page` })
+    const six = await unfurl(`${base}/hop/5`, options)
+    expect(six).toEqual({ ok: false, reason: 'too many redirects' })
+  })
+
+  test('stops reading at 512 KB', async () => {
+    const response = await safeRequest(`${base}/big`, { accept: 'text/html', maxBytes: 512 * 1024, overflow: 'cut', stopAtHeadEnd: true }, options)
+    expect(response.body.byteLength).toBe(512 * 1024)
+    const result = await unfurl(`${base}/big`, options)
+    expect(result).toMatchObject({ ok: true, title: 'Big page' })
+    if (result.ok) expect(result.description).toBeUndefined()
+  })
+
+  test('stops reading at </head>', async () => {
+    const response = await safeRequest(`${base}/page`, { accept: 'text/html', maxBytes: 512 * 1024, overflow: 'cut', stopAtHeadEnd: true }, options)
+    expect(response.body.toString('utf8')).toContain('</head>')
+  })
+
+  test('a body over the limit fails when it must not be cut', async () => {
+    await expect(safeRequest(`${base}/big`, { accept: 'image/*', maxBytes: 1024, overflow: 'fail' }, options)).rejects.toMatchObject({ reason: 'file too large' })
+  })
+
+  test('a page that is not html gives a reason, an error status too', async () => {
+    expect(await unfurl(`${base}/pdf`, options)).toEqual({ ok: false, reason: 'not html' })
+    expect(await unfurl(`${base}/missing`, options)).toEqual({ ok: false, reason: 'http 404' })
+    expect(await unfurl('not a url', options)).toMatchObject({ ok: false })
+    expect(existsSync(dirs.cache)).toBe(false)
+  })
+
+  test('the cache is fresh for 30 days, then a 304 keeps the data, and force asks again', async () => {
+    let now = Date.parse('2026-01-01T00:00:00Z')
+    const timed: UnfurlOptions = { ...options, now: () => now }
+    const url = `${base}/etag`
+
+    const first = await unfurl(url, timed)
+    expect(first).toMatchObject({ ok: true, cached: false, title: 'Etag page' })
+    expect(hits.get('/etag')).toBe(1)
+    expect(readCacheSync(dirs)[url]).toMatchObject({ etag: '"v1"', imageTried: false })
+
+    now += FRESH_MS - 1000
+    expect(await unfurl(url, timed)).toMatchObject({ ok: true, cached: true, title: 'Etag page' })
+    expect(hits.get('/etag')).toBe(1)
+
+    now += 2000
+    const stale = await unfurl(url, timed)
+    expect(stale).toMatchObject({ ok: true, cached: true, title: 'Etag page' })
+    expect(hits.get('/etag')).toBe(2)
+    expect(seenHeaders.get('/etag')?.['if-none-match']).toBe('"v1"')
+    expect(readCacheSync(dirs)[url]?.data.fetchedAt).toBe(new Date(now).toISOString())
+
+    // Fresh again after the 304.
+    expect(await unfurl(url, timed)).toMatchObject({ cached: true })
+    expect(hits.get('/etag')).toBe(2)
+
+    await unfurl(url, { ...timed, force: true })
+    expect(hits.get('/etag')).toBe(3)
+  })
+})
+
+test.describe('oEmbed (mocked transport, no network)', () => {
+  test('a YouTube link asks the oEmbed endpoint on the pinned address and never loads the page', async () => {
+    const calls: { url: string, pinned: string | undefined, agent: string | undefined }[] = []
+    const transport: Transport = (url, init) => {
+      calls.push({ url: url.href, pinned: init.pinned?.address, agent: init.headers['user-agent'] })
+      if (url.href.startsWith('https://www.youtube.com/oembed?')) {
+        return Promise.resolve(Response.json({
+          title: 'Never Gonna Give You Up',
+          author_name: 'Rick Astley',
+          provider_name: 'YouTube',
+          thumbnail_url: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+        }))
+      }
+      return Promise.resolve(new Response('', { status: 404 }))
+    }
+    const result = await unfurl('https://www.youtube.com/watch?v=dQw4w9WgXcQ', {
+      dirs,
+      transport,
+      lookup: () => Promise.resolve([{ address: '93.184.216.34', family: 4 }]),
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      source: 'oembed',
+      title: 'Never Gonna Give You Up',
+      description: 'By Rick Astley',
+      siteName: 'YouTube',
+    })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toContain(encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ'))
+    expect(calls[0]?.pinned).toBe('93.184.216.34')
+    expect(calls[0]?.agent).toBe(USER_AGENT)
+  })
+
+  test('a website that blocks the request still gives the brand icon answer', async () => {
+    const transport: Transport = () => Promise.resolve(new Response('', { status: 403 }))
+    const lookup = () => Promise.resolve([{ address: '93.184.216.34', family: 4 }])
+    const brand = await unfurl('https://x.com/nuxt_js', { dirs, transport, lookup })
+    expect(brand).toMatchObject({ ok: true, source: 'brand', siteName: 'x.com' })
+    if (brand.ok) expect(brand.note).toContain('http 403')
+    // Not cached: the next try asks the website again.
+    expect(existsSync(dirs.cache)).toBe(false)
+    expect(await unfurl('https://unknown-site.test/', { dirs, transport, lookup })).toEqual({ ok: false, reason: 'http 403' })
+  })
+})
