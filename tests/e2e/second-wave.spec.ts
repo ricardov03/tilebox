@@ -396,6 +396,38 @@ test.describe('contact card (vCard 3.0)', () => {
   })
 })
 
+test('a DRAFT never rewrites the contact card of the saved profile; the QR code it asked for is drawn (POST /api/site/assets)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'tilebox-draft-card-'))
+  try {
+    const blocks: Parameters<typeof profileOf>[0] = [{ id: 'c', type: 'contact', size: '1x1' }, { id: 'q', type: 'qr', size: '1x1' }]
+    const saved = profileOf(blocks, { contact: { enabled: true, email: 'ada@saved.example' }, site: { url: 'https://ada.example' } })
+    await buildSiteExtras({ profile: saved, outDir: dir })
+    const card = readFileSync(join(dir, 'contact.vcf'), 'utf8')
+    expect(card).toContain('ada@saved.example')
+
+    // Typed, not saved: another public email and another site URL. "Regenerate" and "Make the QR code" send this.
+    const draft = profileOf(blocks, { contact: { enabled: true, email: 'draft@unsaved.example' }, site: { url: 'https://new.example' } })
+    const result = await buildSiteExtras({ profile: draft, outDir: dir, draft: true })
+    // The card is a file the public tile serves: it follows the SAVE, never the draft.
+    expect(readFileSync(join(dir, 'contact.vcf'), 'utf8')).toBe(card)
+    expect(result.files).toEqual(['qr.svg'])
+    expect(result.messages.join('\n')).not.toContain('contact card written')
+    // The QR code is what the owner pressed the button for. A save and every build draw it again.
+    expect(result.qrUrl).toBe('https://new.example/')
+
+    // No card on disk yet: a draft does not make one either.
+    rmSync(join(dir, 'contact.vcf'))
+    await buildSiteExtras({ profile: draft, outDir: dir, draft: true })
+    expect(existsSync(join(dir, 'contact.vcf'))).toBe(false)
+    // The save does.
+    expect((await buildSiteExtras({ profile: draft, outDir: dir })).files).toEqual(['contact.vcf', 'qr.svg'])
+    expect(readFileSync(join(dir, 'contact.vcf'), 'utf8')).toContain('draft@unsaved.example')
+  }
+  finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('a DRAFT never removes the contact card or the QR code of the saved profile (POST /api/site/assets)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'tilebox-draft-extras-'))
   try {

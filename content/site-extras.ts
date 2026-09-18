@@ -32,9 +32,11 @@ export interface BuildSiteExtrasOptions {
   /** Default: `<ROOT>/public/site`. Tests pass a temp folder. */
   outDir?: string
   /**
-   * `profile` is the editor's DRAFT, not the saved file ("Regenerate", "Make the QR code"). A draft may
-   * write the files it wants. It never REMOVES one: `contact.vcf` and `qr.svg` on disk belong to the saved
-   * profile, and the page in dev drops their tiles when they are gone. The save and every build remove them.
+   * `profile` is the editor's DRAFT, not the saved file ("Regenerate", "Make the QR code"). A draft draws
+   * the QR code (the owner pressed a button for it, and the panel shows it). It never REMOVES a file:
+   * `contact.vcf` and `qr.svg` on disk belong to the saved profile, and the page in dev drops their tiles
+   * when they are gone. It never WRITES `contact.vcf` either: the public tile serves that file, and an email
+   * that is typed and not saved must not be in it. The save and every build write and remove both.
    */
   draft?: boolean
 }
@@ -75,7 +77,12 @@ export async function buildSiteExtras(options: BuildSiteExtrasOptions): Promise<
   }
 
   // Contact card. Only the `contact` object and the profile name go in: never `profile.email`.
-  if (profile.contact?.enabled) {
+  // A DRAFT never touches it: the public tile serves this file, no editor preview reads it, and an email
+  // that was typed and not saved must not be in a file the page hands out. It follows the save and the build.
+  if (options.draft) {
+    messages.push('site: the contact card follows the save, not the draft')
+  }
+  else if (profile.contact?.enabled) {
     try {
       await writeFile(vcfFile, buildVCard(profile.contact, profile.profile.name), 'utf8')
       files.push(SITE_EXTRA_FILES.contactCard)
@@ -87,7 +94,7 @@ export async function buildSiteExtras(options: BuildSiteExtrasOptions): Promise<
     }
   }
   else {
-    if (!options.draft) await rm(vcfFile, { force: true }).catch(() => undefined)
+    await rm(vcfFile, { force: true }).catch(() => undefined)
     if (hasBlock('contact')) messages.push('site: no contact card (contact.enabled is off), so the "Save my contact" tile is left out')
   }
 

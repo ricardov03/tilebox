@@ -14,7 +14,7 @@ One page. A change that breaks one of these is a defect, whatever its tests say.
 ## The editor and its server routes
 6. **Server routes are dev-only.** Every file in `server/api/` answers 404 outside `nuxt dev` first (`assertDev()`, or an `import.meta.dev` dynamic import that also keeps a node-only engine out of the build), then calls `assertEditorRequest(event, kind)` from `server/utils/editor.ts`: Host, Origin, `Sec-Fetch-Site`, content type. GET routes too: `/api/profile` holds the hidden email.
 7. **The repo root comes from `ROOT` in `content/resolve.ts`.** Never from `import.meta.url`, `__dirname` or `process.cwd()` of a file that Nitro or Vite bundles: under `nuxt dev` that points into `.nuxt/`. One resolver serves `nuxt.config.ts`, `scripts/*.ts` (tsx), the server and the tests.
-8. **The editor never loses or rewrites what the user typed.** A text input shows its local draft (`EditorTextField`), not the model. An unsaved draft value never changes or deletes a file that belongs to the SAVED profile.
+8. **The editor never loses or rewrites what the user typed.** A text input shows its local draft (`EditorTextField`), not the model. An unsaved draft value never changes or deletes a file that belongs to the SAVED profile. One stated exception: the generated previews in `public/site/` that the owner asks for with "Regenerate" or "Make the QR code" (favicons, social image, `qr.svg`) are drawn from the draft; a draft never deletes them, never writes `contact.vcf`, and every save and every build draws all of them again from the saved profile.
 9. **Writes are atomic** (temp file in the same folder, then rename) and only to the personal files, never to the example.
 
 ## Bytes from somewhere else
