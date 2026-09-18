@@ -69,6 +69,12 @@ export const UI_ICONS = {
   hidden: 'line-md:watch-off',
   /** Editor: the Duplicate action. */
   duplicate: 'line-md:text-box-multiple',
+  /** WP11. The "Save my contact" tile, the share button (and its "copied" state), the schedule badge, the download links of the editor. */
+  contact: 'line-md:account',
+  share: 'line-md:upload',
+  copied: 'line-md:confirm',
+  schedule: 'line-md:calendar',
+  download: 'line-md:download',
   /** ThemeToggle: system, light, dark. */
   themeSystem: 'line-md:monitor',
   themeLight: 'line-md:sunny',
