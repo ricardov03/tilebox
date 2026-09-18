@@ -248,6 +248,27 @@ test.describe('the sanitizer', () => {
     }
     expect(PublicProfileSchema.safeParse(withMailto).success).toBe(false)
   })
+
+  test('WP20: the guard reads every part of the public copy, `site` included', () => {
+    const paths = (value: unknown) => {
+      const result = PublicProfileSchema.safeParse(value)
+      return result.success ? [] : result.error.issues.map(issue => issue.path.join('.'))
+    }
+    const withSite = (site: Record<string, string>) =>
+      toPublicProfile({ ...FIXTURE, site }, undefined, undefined, { now: NOW })
+
+    // The head puts `site.description` straight into <meta name="description"> and og:description.
+    expect(paths(withSite({ description: 'Write to ada@shield.example' }))).toContain('site')
+    // Every other free text of the Site tab, and the mail scheme as well as a bare address.
+    expect(paths(withSite({ title: 'Ada · ada@shield.example' }))).toContain('site')
+    expect(paths(withSite({ jobTitle: 'Reach me at mailto:ada@shield.example' }))).toContain('site')
+    expect(paths(withSite({ location: 'Bogota, ada@shield.example' }))).toContain('site')
+    // The path names the part that is dirty, so `check:profile` says where to look.
+    expect(paths({ ...publicProfile, profile: { ...publicProfile.profile, bio: 'ada@shield.example' } })).toContain('profile')
+    // A clean Site tab stays clean: the wider guard is not noisy.
+    expect(paths(withSite({ jobTitle: 'Front-end developer', location: 'Bogota', description: 'Maths and machines.' }))).toEqual([])
+    expect(PublicProfileSchema.safeParse(publicProfile).success).toBe(true)
+  })
 })
 
 test.describe('the built site', () => {

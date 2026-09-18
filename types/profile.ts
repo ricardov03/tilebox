@@ -365,10 +365,17 @@ export const PublicProfileShapeSchema = z.object({
  * prints a WARNING per issue; the tests run it as the contract. Nothing that builds the page runs it.
  */
 export const PublicProfileSchema = PublicProfileShapeSchema.superRefine((data, ctx) => {
-  // The guard of the mail shield. It reads the profile and the blocks, the two places an owner types an address.
-  const text = JSON.stringify({ profile: data.profile, blocks: data.blocks })
-  if (text.toLowerCase().includes(MAILTO_PREFIX) || RAW_EMAIL_PATTERN.test(text)) {
-    ctx.addIssue({ code: 'custom', path: ['profile'], message: PUBLIC_MAIL_GUARD_MESSAGE })
+  // The guard of the mail shield, over EVERY part of the public copy (WP20). WP17 read `profile` and
+  // `blocks` only, so an address typed into a Site-tab field slipped through: `site.description` and
+  // `site.title` go straight into the head (`<meta name="description">`, `og:title`), and `jobTitle`
+  // and `location` into the JSON-LD. The parts come from the object itself, so a part added later is
+  // guarded with no change here, and the issue path names the part to look at.
+  for (const [key, part] of Object.entries(data)) {
+    if (part === undefined) continue
+    const text = JSON.stringify(part)
+    if (text.toLowerCase().includes(MAILTO_PREFIX) || RAW_EMAIL_PATTERN.test(text)) {
+      ctx.addIssue({ code: 'custom', path: [key], message: PUBLIC_MAIL_GUARD_MESSAGE })
+    }
   }
 })
 
