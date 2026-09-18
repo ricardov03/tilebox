@@ -660,3 +660,23 @@ Shims `wrangler` and `netlify` (shell scripts in the session scratchpad, not com
 └  ✨ You can now deploy .output/public to any static hosting!
 (exit 0)
 ```
+
+### Review (OCR, single file)
+
+Input: `scripts/publish.mjs`. Date: 2026-09-18. One commit per fix.
+
+0. `main` merged into `wp/8-publish` (`chore: merge main into wp/8-publish`), so the branch has WP7 (personal data out of git). Conflicts: `.gitignore` (union: the "Personal data" block, then `.tilebox/` and `.netlify/` once), `PLAN.md` (status line names WP7 and WP8; WP7 section, then WP8 section), `NOTES.md` (git mixed the two sections; rebuilt as `main` + the `## WP8` section, both checked byte for byte). `package.json` and `README.md` merged without conflict: all scripts from both sides, "Your personal data" and "Publish" both kept. `package-lock.json`: taken from `main`, then `npm install` to re-sync; `npm ci` passes. README and `content/README.md` now say the real site leaves the Mac with `npm run publish` (`deploy` is an alias); Quick start step 3 points at "Publish", not the removed "Deploy" section.
+1. `--yes` contract: `askProvider()` and `askName()` never prompt under `--yes`. Exit 2 with `Pass --provider cloudflare|netlify.` / `Pass --name <site-name>.`
+2. No `process.exit()` left in the file. The script sets `process.exitCode` and lets Node end, so `Live: <url>` is never lost on a piped stdout. A bad flag sets exit code 2 and skips `main()`. The Netlify HEAD check uses `agent: false`, so no keep-alive socket holds the process open.
+3. `--site-url` accepts only `https://` (`HTTPS_URL`). The flag is checked at the start, also with `--no-build`. The build step checks the resolved value again and names the source (`--site-url`, `NUXT_PUBLIC_SITE_URL` or the state file).
+4. `loadState()`: a Cloudflare state needs a non-empty string `accountId`, like `siteId` for Netlify. Also checked: JSON object, known `provider`, non-empty `name` and `url`. Message: `.tilebox/publish.json is broken: <why>. Fix the file, or start over with: npm run publish -- --reset`, exit 1.
+5. WP7 consistency: new step `Profile` before the build. Same rule as `content/resolve.ts` (path anchored on the script file, not on the working directory): `content/profile.json` exists = `personal`, else `example`. A production publish of the example asks `You are about to publish the sample profile. Continue? [y/N]`. `--yes`: warning, then continue. No terminal and no `--yes`: exit 2. `--preview`: no question. Answer no: exit 1 `stopped. Nothing was uploaded.`
+
+Shim checks, run again after the fixes in `.tilebox-test/` (ignored, deleted after the run; `wrangler` and `netlify` shell shims first on `PATH`). `demo-site.pages.dev` is a real project, so the Cloudflare runs load a test-only `--import` file that makes `dns.promises.resolve4` answer ENOTFOUND. No product code changed for that.
+
+- Cloudflare first run `--provider cloudflare --name demo-site --yes --no-build`: exit 0, state written with `accountId`, `Live: https://demo-site.pages.dev`.
+- Second run `--yes --no-build`: calls are `whoami --json` and `pages deploy` only. No create.
+- `--yes` without `--provider`: exit 2. `--yes --provider cloudflare` without `--name`: exit 2. `--site-url http://x`: exit 2.
+- State with `"accountId": ""` and state `{nope`: exit 1, both with the `--reset` hint.
+- `node scripts/publish.mjs --provider cloudflare --name demo-site --yes --no-build | cat` shows the `Live:` line. Same for Netlify with a random name (real HTTPS pre-check, 0.8 s, the process ends by itself).
+- `npm run lint`, `npm run typecheck`, `npm run generate` (`profile: content/profile.example.json (example)`), `npx playwright test --project=static` (16 passed): exit 0.
