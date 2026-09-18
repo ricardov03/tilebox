@@ -197,11 +197,11 @@ test('edits email, email visibility and highlights, and saves them', async ({ pa
   await page.locator('#p-highlight-2').fill('Third input, second highlight')
   await expect(page.getByText('15/80')).toBeVisible()
 
-  // The live preview shows the highlights, the email link and the pulsing dot.
+  // The live preview shows the highlights, the email link and the pinging dot.
   const preview = page.locator('li[data-profile]')
   await expect(preview.locator('ul[aria-label="Highlights"] > li')).toHaveText(['First highlight', 'Third input, second highlight'])
   await expect(preview.locator('a[href="mailto:me@tilebox.test"]')).toBeVisible()
-  await expect(preview.locator('.animate-pulse')).toHaveCount(1)
+  await expect(preview.locator('[data-status-dot] .animate-ping')).toHaveCount(1)
 
   await save(page)
 

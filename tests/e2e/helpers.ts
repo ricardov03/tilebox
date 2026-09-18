@@ -36,7 +36,7 @@ export async function tileLefts(page: Page, selector: string): Promise<number[]>
 
 /**
  * Wait for every running CSS animation (the page-load stagger) to finish.
- * Endless animations (the pulsing status dot) never finish, so they are skipped.
+ * Endless animations (the ping halo of the status dot) never finish, so they are skipped.
  */
 export async function settle(page: Page): Promise<void> {
   await page.evaluate(() => Promise.all(

@@ -154,10 +154,20 @@ const classes = computed<Record<Part, string>>(() => {
         :class="compact ? '' : 'md:mt-1.5'"
         class="flex items-center gap-2 text-sm font-medium md:gap-2.5 md:text-[15px]"
       >
+        <!-- The ping pattern: a halo that grows and fades behind a solid dot. The wrapper has the size, so nothing moves. No halo with reduced motion. -->
         <span
-          class="size-2.5 shrink-0 animate-pulse rounded-full bg-dot motion-reduce:animate-none"
-          aria-hidden="true"
-        />
+          data-status-dot
+          class="relative inline-flex size-2.5 shrink-0"
+        >
+          <span
+            class="absolute inline-flex h-full w-full rounded-full bg-dot opacity-75 animate-ping motion-reduce:hidden"
+            aria-hidden="true"
+          />
+          <span
+            class="relative inline-flex size-2.5 rounded-full bg-dot"
+            aria-hidden="true"
+          />
+        </span>
         <span :class="compact ? 'truncate' : ''">{{ profile.status }}</span>
       </p>
     </div>

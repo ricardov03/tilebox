@@ -58,12 +58,28 @@ test('the email shows as a mailto link only when showEmail is true', async ({ pa
   if (!profileIsPersonal()) await expect(page.locator('a[href^="mailto:"]')).toHaveCount(0)
 })
 
-test('the status dot pulses and is hidden from assistive tech', async ({ page }) => {
+test('the status dot pings: a halo behind a solid dot, both hidden from assistive tech, no layout shift', async ({ page }) => {
   test.skip(!profile.profile.status, 'profile has no status')
   await page.goto('/')
-  const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
-  await expect(dot).toHaveClass(/animate-pulse/)
-  expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('pulse')
+  const dot = page.locator('[data-status-dot]')
+  await expect(dot).toHaveCount(1)
+  const parts = dot.locator('span[aria-hidden="true"]')
+  await expect(parts).toHaveCount(2)
+  const halo = parts.nth(0)
+  await expect(halo).toHaveClass(/animate-ping/)
+  expect(await halo.evaluate(el => getComputedStyle(el).animationName)).toBe('ping')
+  expect(await halo.evaluate(el => getComputedStyle(el).position)).toBe('absolute')
+  expect(await parts.nth(1).evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+  // The wrapper carries the size (10px): the halo scales with `transform`, which never moves the text.
+  const box = async () => dot.evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    const text = el.nextElementSibling?.getBoundingClientRect()
+    return [rect.width, rect.height, Math.round(rect.left), Math.round(text?.left ?? 0)]
+  })
+  const before = await box()
+  expect(before.slice(0, 2)).toEqual([10, 10])
+  await page.waitForTimeout(500)
+  expect(await box()).toEqual(before)
 })
 
 test('a link without an icon shows the brand icon of its URL', async ({ page }) => {
@@ -138,11 +154,16 @@ test.describe('reduced motion', () => {
     expect(await tile.evaluate(el => getComputedStyle(el).animationName)).toBe('none')
   })
 
-  test('the status dot does not pulse', async ({ page }) => {
+  test('the status dot has no halo: it is not rendered and not animated', async ({ page }) => {
     test.skip(!profile.profile.status, 'profile has no status')
     await page.goto('/')
-    const dot = page.locator('h1 ~ p span[aria-hidden="true"]').first()
-    expect(await dot.evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+    const parts = page.locator('[data-status-dot] span[aria-hidden="true"]')
+    await expect(parts).toHaveCount(2)
+    await expect(parts.nth(0)).toBeHidden()
+    expect(await parts.nth(0).evaluate(el => getComputedStyle(el).display)).toBe('none')
+    await expect(parts.nth(1)).toBeVisible()
+    expect(await page.evaluate(() => document.getAnimations().filter(a => a.effect?.getComputedTiming().iterations === Infinity
+      && (a.effect as KeyframeEffect).target?.closest('[data-status-dot]')).length)).toBe(0)
   })
 })
 
