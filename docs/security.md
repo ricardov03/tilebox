@@ -27,6 +27,17 @@ State: WP10 security round, 2026-09-18. Code: `content/unfurl.ts`, `content/unfu
 ## The dev routes (`server/api/*`)
 All are 404 outside `nuxt dev`. One gate, `assertEditorRequest()`: `Host` must be localhost / 127.0.0.1 / [::1] (DNS rebinding) -> 403; `Origin`, when present, must be this origin -> 403; `Sec-Fetch-Site: cross-site` or `same-site` -> 403; `Content-Type` must be `application/json` (uploads: `multipart/form-data`) -> 415. An HTML form on another website can never send JSON, so it cannot save a profile or start a fetch. Uploads: an SVG is drawn as a PNG and only the PNG is stored; a raster must decode as the format its name says.
 
+## The link checker (WP11)
+`npm run check:links`, the step before the upload in `npm run publish`, and the dev route `POST /api/links/check` (`content/link-check.ts`) ask every external http(s) URL of the profile. They use the SAME guarded request as the engine (`safeRequest()`), so guard layers 1 and 2 apply without change: public unicast addresses only, the pinned address, ports 80 and 443, every redirect hop checked, 8 s per hop, one budget of 20 s and 8 redirects per URL, the honest user agent. The only addition to the engine is the method: `HEAD` first, then one `GET` that reads 1 KB at most when the site answers 403, 405 or 501. 60 URLs at most, 4 at a time, one request per host at a time. Nothing is stored: no file, no cache entry, no change to the profile. A link to a private address is reported as `broken` (`blocked address`) without any connection. The route goes through `assertEditorRequest()` like every other dev route, and a closed editor request stops the job.
+
+## Generated files of `public/site/` (WP11)
+- `qr.svg` is an SVG, and it is safe: THIS project draws it (`uqr`) from one checked `https` URL string and two preset colors. No remote bytes, no user markup. A remote SVG is still never stored. The folder has the sandbox CSP of layer 5 on top.
+- `contact.vcf` holds only the fields of the top-level `contact` object, which the owner marks as public, and the profile name. The private `profile.email` is never an input of the card builder (`app/utils/vcard.ts`). Text values are escaped, control and bidi characters are removed, no line break can start a new vCard property.
+- The dev route `GET /api/site/qr.png` takes no input: it draws the local `qr.svg` again with sharp.
+
+## The public page (WP11)
+Still no runtime network call. The end-date script (under 400 bytes, inline) only reads `data-ends-at` attributes and sets `hidden`. The share button calls `navigator.share` or `navigator.clipboard` on a click. UTM tags are added at build time, from values limited to `[a-z0-9_-]`.
+
 ## Not covered
 - The owner's own files in `public/blocks/` are trusted (their images, their choice).
 - A host that ignores `_headers` needs the same rules in its own format.

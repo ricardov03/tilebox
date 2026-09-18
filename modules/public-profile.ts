@@ -31,7 +31,9 @@ function render(): string {
   // Link tiles: only files that are on disk (public/icons, public/thumbs) reach the page. Hidden blocks are dropped.
   // WP10b: the generated files of `public/site/` that exist right now. A missing file = the tracked fallback in the head.
   const siteExtras = { assets: siteAssetsIfPresent(), builtAt: BUILT_AT }
-  return `${JSON.stringify(toPublicProfile(withLocalLinkFiles(profile), gravatarPathIfPresent(), siteExtras), null, 2)}\n`
+  // WP11: the schedule is applied at THIS time (the build time; in dev, the last profile change). UTM tags skip links to the site itself.
+  const build = { now: new Date(), envSiteUrl: process.env.NUXT_PUBLIC_SITE_URL }
+  return `${JSON.stringify(toPublicProfile(withLocalLinkFiles(profile), gravatarPathIfPresent(), siteExtras, build), null, 2)}\n`
 }
 
 export default defineNuxtModule({

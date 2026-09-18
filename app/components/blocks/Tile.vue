@@ -1,7 +1,8 @@
 <!--
   Base chrome for every tile. PLAN.md 5.6.
-  Renders an <a> when `href` is an http(s) or mailto: URL, else a <div>.
+  Renders an <a> when `href` is an http(s), mailto: or tel: URL, else a <div>.
   Fills the grid cell. http(s) links open in a new tab. mailto: stays.
+  With `download` (WP11, the contact tile) a LOCAL path like `/site/contact.vcf` is a link too.
 -->
 <script setup lang="ts">
 import { isHttpUrl, isSafeHref, type TileVariant } from './media'
@@ -17,6 +18,8 @@ const props = withDefaults(defineProps<{
   clip?: boolean
   /** Extra link relation, for example `me` on social tiles. Added to `noopener noreferrer` on external links. */
   rel?: string
+  /** File name for a download link to a local file of this site. Only then a local `href` becomes a link. */
+  download?: string
 }>(), {
   href: undefined,
   variant: 'tile',
@@ -24,10 +27,18 @@ const props = withDefaults(defineProps<{
   padded: true,
   clip: false,
   rel: undefined,
+  download: undefined,
 })
 
-/** Only http(s) and mailto: become links. Anything else renders as a plain tile. */
-const link = computed(() => (props.href !== undefined && isSafeHref(props.href) ? props.href : null))
+/** A path of this site: one leading slash, never `//host`. */
+const isLocalPath = (href: string) => /^\/(?!\/)/.test(href)
+
+/** Only http(s), mailto: and tel: become links, plus a local file with `download`. Anything else renders as a plain tile. */
+const link = computed(() => {
+  const href = props.href
+  if (href === undefined) return null
+  return isSafeHref(href) || (props.download !== undefined && isLocalPath(href)) ? href : null
+})
 const external = computed(() => link.value !== null && isHttpUrl(link.value))
 const relValue = computed(() => [props.rel, external.value ? 'noopener noreferrer' : ''].filter(Boolean).join(' ') || undefined)
 
@@ -54,6 +65,7 @@ const classes = computed(() => [
     :href="link"
     :target="external ? '_blank' : undefined"
     :rel="relValue"
+    :download="download"
     :aria-label="ariaLabel"
     :class="classes"
   >

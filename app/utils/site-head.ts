@@ -8,6 +8,7 @@
  */
 import type { PublicProfile } from '../../types/profile'
 import { SITE_DEFAULT_LANG, type PublicSite, type Site } from '../../types/site'
+import { withoutUtm } from './utm'
 
 /** Tracked fallbacks, used when `public/site/` has no generated file. */
 export const FALLBACK_OG_IMAGE = '/og.png'
@@ -120,7 +121,8 @@ export function sameAsOf(profile: PublicProfile): string[] {
     if (block.type !== 'social' || !/^https?:\/\//i.test(block.url)) return []
     // A block hidden from the page is not public (the `hidden` flag of the link blocks work package).
     if ('hidden' in block && block.hidden === true) return []
-    return [block.url]
+    // WP11: the build may have added UTM tags to the link. An identity URL carries no tracking.
+    return [withoutUtm(block.url)]
   })
   return [...new Set(urls)]
 }

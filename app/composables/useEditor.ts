@@ -28,7 +28,7 @@ interface DeletedBlock {
   wasSelected: boolean
 }
 
-export const BLOCK_TYPES: readonly BlockType[] = ['link', 'social', 'image', 'text', 'section', 'map', 'video'] as const
+export const BLOCK_TYPES: readonly BlockType[] = ['link', 'social', 'image', 'text', 'section', 'map', 'video', 'contact', 'qr'] as const
 
 /**
  * Grid columns, row height and gap for the preview. Same shape as BentoGrid
@@ -60,6 +60,8 @@ export const BLOCK_TYPE_LABELS: Record<BlockType, string> = {
   section: 'Section',
   map: 'Map',
   video: 'Video',
+  contact: 'Save contact',
+  qr: 'QR code',
 }
 
 /** The placeholder title of a new link. The link preview may replace it: it counts as "empty". */
@@ -84,6 +86,12 @@ export function newBlock(type: BlockType): Block {
       return { id, type, size: '1x1', label: 'City', sublabel: 'GMT-5', url: 'https://maps.google.com/?q=City' }
     case 'video':
       return { id, type, size: '2x1', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', title: 'Video' }
+    case 'contact':
+      // WP11. The vCard fields live in the Site tab (`contact`). The build drops the tile while `contact.enabled` is off.
+      return { id, type, size: '1x1', title: 'Save my contact' }
+    case 'qr':
+      // WP11. The build drops the tile while no site URL is known.
+      return { id, type, size: '1x1' }
   }
 }
 
@@ -102,7 +110,11 @@ export function copyOf(source: Block, takenIds: readonly string[]): Block {
       break
     case 'text':
     case 'video':
+    case 'contact':
       if (copy.title) copy.title = `${copy.title} copy`
+      break
+    case 'qr':
+      if (copy.caption) copy.caption = `${copy.caption} copy`
       break
     case 'social':
       if (copy.label) copy.label = `${copy.label} copy`
@@ -127,6 +139,8 @@ export function blockSummary(block: Block): string {
     case 'section': return block.title
     case 'map': return block.label
     case 'video': return block.title ?? block.url
+    case 'contact': return block.title ?? 'Save my contact'
+    case 'qr': return block.caption ?? 'QR code of the page'
   }
 }
 
@@ -192,8 +206,22 @@ function writeUi(ui: PersistedUi) {
   }
 }
 
+/**
+ * WP11. The draft, for the panels that edit top-level keys (`contact`, `site.share`, `site.utm`).
+ * `useEditor()` provides it, so `edit.vue`, `SitePanel.vue` and `BlockForm.vue` need no new prop or event.
+ */
+export const EDITOR_DRAFT: InjectionKey<Ref<Profile | null>> = Symbol('tilebox-editor-draft')
+
+/** The draft of the editor this component lives in. Throws outside /edit. */
+export function useEditorDraft(): Ref<Profile | null> {
+  const draft = inject(EDITOR_DRAFT, null)
+  if (!draft) throw new Error('useEditorDraft() needs useEditor() in a parent component')
+  return draft
+}
+
 export function useEditor() {
   const draft = ref<Profile | null>(null)
+  provide(EDITOR_DRAFT, draft)
   const saved = ref<string>('')
   const loading = ref(true)
   const loadError = ref<string | null>(null)

@@ -13,6 +13,8 @@ import TextBlock from './TextBlock.vue'
 import SectionBlock from './SectionBlock.vue'
 import MapBlock from './MapBlock.vue'
 import VideoBlock from './VideoBlock.vue'
+import ContactBlock from './ContactBlock.vue'
+import QrBlock from './QrBlock.vue'
 
 export const BLOCK_COMPONENTS: Readonly<Record<BlockType, Component>> = {
   link: LinkBlock,
@@ -22,9 +24,11 @@ export const BLOCK_COMPONENTS: Readonly<Record<BlockType, Component>> = {
   section: SectionBlock,
   map: MapBlock,
   video: VideoBlock,
+  contact: ContactBlock,
+  qr: QrBlock,
 }
 
-export { BlockRenderer, LinkBlock, SocialBlock, ImageBlock, TextBlock, SectionBlock, MapBlock, VideoBlock }
+export { BlockRenderer, LinkBlock, SocialBlock, ImageBlock, TextBlock, SectionBlock, MapBlock, VideoBlock, ContactBlock, QrBlock }
 export { default as Tile } from './Tile.vue'
 export * from './media'
 

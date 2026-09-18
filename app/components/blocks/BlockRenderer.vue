@@ -11,6 +11,8 @@ import TextBlock from './TextBlock.vue'
 import SectionBlock from './SectionBlock.vue'
 import MapBlock from './MapBlock.vue'
 import VideoBlock from './VideoBlock.vue'
+import ContactBlock from './ContactBlock.vue'
+import QrBlock from './QrBlock.vue'
 
 withDefaults(defineProps<{
   block: Block
@@ -48,6 +50,14 @@ withDefaults(defineProps<{
   />
   <VideoBlock
     v-else-if="block.type === 'video'"
+    :block="block"
+  />
+  <ContactBlock
+    v-else-if="block.type === 'contact'"
+    :block="block"
+  />
+  <QrBlock
+    v-else-if="block.type === 'qr'"
     :block="block"
   />
   <!-- An unknown type renders nothing. -->

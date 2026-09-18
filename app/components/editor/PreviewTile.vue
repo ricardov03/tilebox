@@ -87,6 +87,12 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
       />
       Hidden
     </span>
+    <EditorBlockRowBadges
+      :block="block"
+      schedule-only
+      :class="isSection ? 'top-1/2 -translate-y-1/2' : 'bottom-2'"
+      class="pointer-events-none absolute right-2"
+    />
 
     <!-- The inline delete confirm, over the top of the tile. -->
     <div
