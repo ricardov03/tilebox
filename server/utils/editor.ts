@@ -7,8 +7,15 @@ import { resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 import type { Profile } from '~~/types/profile'
+import { PERSONAL_PROFILE_PATH, resolveProfilePath } from '~~/content/resolve'
 
-export const PROFILE_PATH = resolve(process.cwd(), 'content/profile.json')
+/** The only file the editor writes: content/profile.json (yours, not tracked). */
+export const PROFILE_WRITE_PATH = PERSONAL_PROFILE_PATH
+
+/** The file the editor reads: content/profile.json when it exists, else the example. Checked on every call. */
+export function profileReadPath(): string {
+  return resolveProfilePath()
+}
 
 /** 404 outside `nuxt dev`. The routes never exist in a prod build. */
 export function assertDev(): void {
@@ -17,9 +24,10 @@ export function assertDev(): void {
   }
 }
 
-/** Raw JSON of content/profile.json. 500 with the path when the file is not valid JSON. */
+/** Raw JSON of the profile file (`profileReadPath()`). 500 with the path when the file is not valid JSON. */
 export async function readProfileFile(): Promise<unknown> {
-  const raw = await readFile(PROFILE_PATH, 'utf8')
+  const path = profileReadPath()
+  const raw = await readFile(path, 'utf8')
   try {
     return JSON.parse(raw) as unknown
   }
@@ -28,7 +36,7 @@ export async function readProfileFile(): Promise<unknown> {
     throw createError({
       statusCode: 500,
       statusMessage: 'Profile is not valid JSON',
-      message: `${PROFILE_PATH}: ${reason}`,
+      message: `${path}: ${reason}`,
     })
   }
 }
