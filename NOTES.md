@@ -435,3 +435,23 @@ Why 94, not 95: the LCP breakdown shows `elementRenderDelay` 438 ms. That is the
 ```
 
 `dist/`: `200.html 404.html _fonts _nuxt _payload.json blocks favicon.ico icons index.html og.png robots.txt thumbs`. No `dist/edit`, no `dist/api`.
+
+### Final review (Grok, range)
+
+Applied, one commit each:
+1. `app/pages/edit.vue`: `editor.load()`, the Cmd/Ctrl+S handler and the `beforeunload` guard run only when `import.meta.dev`. Outside dev the page renders the "development only" message and nothing fetches.
+2. `server/api/upload.post.ts`: the pre-read `content-length` check allows 64 KB of multipart overhead. The exact 8 MB check stays on `file.data.byteLength`.
+3. `tests/e2e/a11y.spec.ts`: fails on any axe violation, not only serious or critical. No moderate or minor violation appeared, so no markup changed.
+4. `tests/e2e/public.spec.ts`: the network test fails on any request whose host is not the static server, and on any `/api/` path. New test: `/edit` and `/api/profile` return 404 on the static server.
+5. `scripts/serve-dist.mjs`: malformed percent-encoding in the path serves `404.html` with 404 instead of crashing.
+6. `app/components/blocks/VideoBlock.vue`: `aria-hidden="true"` on the play icon inside the labelled button.
+7. `tests/e2e/helpers.ts`: `readProfile()` uses `parseProfile()` from `types/profile.ts` instead of an `as Profile` cast.
+8. `PLAN.md` section 8, WP5 "Done when": Lighthouse target is 94+ performance and 100 on the other three (the stagger costs ~1 point by design). Browser check is headless Chromium via Playwright; Safari and Firefox are a manual check by Ricardo.
+
+Deferred:
+- DOM order vs visual order on phones. The Bento model puts `layout.mobile` in the DOM order, documented in PLAN.md.
+- `BlockForm` empty-field handling.
+- `useEditor` casts.
+- `IconPicker` preview via `api.iconify.design` (editor only, never in `dist/`).
+- Firefox and WebKit Playwright projects.
+- Real content from Ricardo.

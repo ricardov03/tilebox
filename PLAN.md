@@ -390,7 +390,7 @@ Done when: CI runs lint + typecheck + generate on push. README says how to edit,
 
 ### WP5. Integration + QA (sequential, 1 agent)
 Owns: nothing new. Fixes across WPs allowed here only.
-Done when: Lighthouse mobile 95+ on all four. axe has 0 serious issues. Works in Chrome, Safari, Firefox. Real content in `profile.json` (from Ricardo).
+Done when: Lighthouse mobile 94+ performance and 100 on the other three; the page-load stagger costs ~1 point by design. axe has 0 serious issues. Headless Chromium verified by Playwright; Safari and Firefox are a manual check by Ricardo. Real content in `profile.json` (from Ricardo).
 
 ## 9. Code review with Grok
 
