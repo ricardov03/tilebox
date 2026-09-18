@@ -21,14 +21,42 @@ npm run dev
 
 1. Open http://localhost:3000/edit.
 2. Edit your profile and tiles. Click **Save**. This writes `content/profile.json`.
-3. `git commit` and `git push`. Your host builds and publishes the page.
+3. `npm run deploy`. Your page goes to Cloudflare Pages from your machine (see Deploy).
 
+The first `npm run dev` creates `content/profile.json` from `content/profile.example.json`.
 Restart `npm run dev` after you change the color preset, the font preset or an icon name.
-`nuxt.config.ts` reads `profile.json` once at start to pick fonts and bundle icons.
+`nuxt.config.ts` reads the profile once at start to pick fonts and bundle icons.
+
+## Your personal data
+
+`content/profile.json` is your document. Git never sees it, so a `git pull`, a release or a fresh clone cannot replace it.
+The repo ships a sample instead: `content/profile.example.json`.
+
+Ignored by git (`.gitignore`, block "Personal data"):
+
+```
+content/profile.json
+public/avatar.*
+public/blocks/*          except public/blocks/sample.jpg
+public/icons/*           favicons fetched at build
+public/thumbs/*          YouTube thumbnails fetched at build
+.tilebox/
+.netlify/
+```
+
+How a build picks the file (`content/resolve.ts`): `content/profile.json` when it exists, else the example.
+`npm run check:profile` prints which one: `profile: content/profile.json (personal)` or `profile: content/profile.example.json (example)`.
+
+- GitHub CI and the release zip have no `profile.json`. They build the **sample** site.
+- Your real site leaves your Mac only with `npm run deploy` or `npm run deploy:preview`.
+- `npm run release` refuses to run when `content/profile.json` or a personal image is tracked.
+- Back up `content/profile.json`, `public/blocks/` and `public/avatar.*` yourself. Reset to the sample: `rm content/profile.json && npm run ensure:profile`.
+
+Details: `content/README.md`.
 
 ## Editing by hand
 
-Everything lives in `content/profile.json`. The schema is in `types/profile.ts` (zod).
+Everything lives in `content/profile.json` (the sample is `content/profile.example.json`). The schema is in `types/profile.ts` (zod).
 Run `npm run check:profile` to validate it.
 
 ```json
@@ -70,7 +98,7 @@ Icons are Iconify names like `line-md:github`. Browse https://icones.js.org/coll
 Brand icons that `line-md` lacks come from `simple-icons`.
 Social `network` values: see `NETWORK_IDS` in `app/utils/networks.ts`.
 
-Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/`.
+Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg` (a sample ships there). Avatar goes in `public/` as `avatar.<ext>`. Both are ignored by git (see "Your personal data").
 
 ## Scripts
 
@@ -82,7 +110,8 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run typecheck` | `nuxt typecheck` (app, scripts, types) |
 | `npm run presets` | Writes `app/assets/css/presets.css` from `app/utils/presets.ts` |
 | `npm run check:contrast` | WCAG contrast check for every preset |
-| `npm run check:profile` | Validates `content/profile.json` |
+| `npm run ensure:profile` | Creates `content/profile.json` from the example when it is missing |
+| `npm run check:profile` | Validates the profile and prints which file is used (personal or example) |
 | `npm run check:icons` | Fails on an unknown icon name |
 | `npm run fetch:favicons` | Fetches favicons for link tiles into `public/icons/` and YouTube thumbnails into `public/thumbs/` |
 | `npm run test:e2e` | Playwright end-to-end tests (see Tests) |
@@ -90,7 +119,7 @@ Images: put files in `public/blocks/` and reference them as `/blocks/sample.jpg`
 | `npm run deploy` | Generate and upload `dist/` to Cloudflare Pages, production branch (see Deploy) |
 | `npm run deploy:preview` | Same, to the `preview` branch |
 
-`predev` runs presets and check:profile. `pregenerate` also runs check:contrast, check:icons and fetch:favicons.
+`predev` runs ensure:profile, presets and check:profile. `pregenerate` runs presets, check:profile, check:contrast, check:icons and fetch:favicons. It never creates `profile.json`: a build without it is the sample site.
 
 ## Tests
 
@@ -98,7 +127,7 @@ End-to-end tests run in headless Chromium with Playwright. Two projects:
 
 | Project | What it tests | Server | Runs in CI |
 |---|---|---|---|
-| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 serious or critical issues at 1280 and 390, light and dark) | `node scripts/serve-dist.mjs` on :4173 | yes |
+| `static` | The prerendered page in `dist/`: one h1, 4 and 2 columns, phone order, theme toggle, no light flash, no Iconify calls, click-to-load video, axe (0 serious or critical issues at 1280 and 390, light and dark). Plus `repo.spec.ts`: no personal file is tracked by git | `node scripts/serve-dist.mjs` on :4173 | yes |
 | `dev` | The editor: add and edit a block, mobile order, keyboard reorder, Cmd/Ctrl+S, validation errors, image upload. Writes `content/profile.json` (backed up and restored) and `public/blocks/` | `npm run dev -- --port 3111` | no, local only |
 
 ```sh
