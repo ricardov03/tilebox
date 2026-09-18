@@ -249,11 +249,12 @@ async function initialsArt(name: string, colors: { light: ColorSet, dark: ColorS
 
 /** The art on the ground color: full size for Apple, inside the safe zone for the maskable icon. */
 async function onGround(art: Buffer, size: number, inner: number, ground: string): Promise<Buffer> {
-  return sharp({ create: { width: size, height: size, channels: 4, background: ground } })
+  // Two steps: inside one sharp pipeline `removeAlpha()` would run before `composite()`.
+  const composed = await sharp({ create: { width: size, height: size, channels: 4, background: ground } })
     .composite([{ input: await resizeTo(art, inner), gravity: 'centre' }])
-    .flatten({ background: ground })
     .png()
     .toBuffer()
+  return sharp(composed).removeAlpha().png().toBuffer()
 }
 
 /* ---------- social image ---------- */
