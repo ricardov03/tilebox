@@ -58,8 +58,12 @@ export const UI_ICONS = {
   map: 'line-md:map-marker',
   play: 'line-md:play',
   home: 'line-md:home',
+  /** ProfileHeader: the email line (only when `showEmail` is true). */
+  email: 'line-md:email',
   /** Editor: the Edit control on a preview tile. */
   edit: 'line-md:edit',
+  /** Editor: the delete control on a list row and on a preview tile. */
+  trash: 'line-md:trash',
   /** ThemeToggle: system, light, dark. */
   themeSystem: 'line-md:monitor',
   themeLight: 'line-md:sunny',

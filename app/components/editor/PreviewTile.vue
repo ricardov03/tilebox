@@ -1,10 +1,13 @@
 <!--
   One tile in the editor preview. Renders the real block component
   (BlockRenderer) inside the <li> the grid and the drag library need.
-  Two controls float top-right on hover, focus or selection: Edit (selects
-  the block) and the drag grip (`[data-drag-handle]`, drag grid only). Clicks on the tile
-  body are caught by the preview wrapper in edit.vue, which selects the
-  block and stops links from navigating.
+  Three controls float top-right on hover, focus or selection, and always on
+  touch screens (`hover: none`): Edit (selects the block), Delete and the drag
+  grip (`[data-drag-handle]`, drag grid only). Delete opens the inline confirm
+  as a small overlay inside the tile. Delete and the confirm carry
+  `data-no-drag` (the drag grid filters them out) and `data-editor-control`.
+  Clicks on the tile body are caught by the preview wrapper in edit.vue, which
+  selects the block and stops links from navigating.
 -->
 <script setup lang="ts">
 import type { Block } from '~~/types/profile'
@@ -16,9 +19,25 @@ const props = defineProps<{
   block: Block
   selected: boolean
   draggable: boolean
+  /** The inline delete confirm is open on this tile. */
+  confirming: boolean
 }>()
 
-const emit = defineEmits<{ select: [id: string] }>()
+const emit = defineEmits<{
+  select: [id: string]
+  requestDelete: [id: string]
+  confirmDelete: [id: string]
+  cancelDelete: []
+}>()
+
+const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
+
+/** The controls come back after the next render: focus the delete button again. */
+async function cancelDelete() {
+  emit('cancelDelete')
+  await nextTick()
+  deleteButton.value?.focus()
+}
 
 /** Same rules as BentoGrid: row tracks are auto, the tile carries its own height. */
 const ROW_1 = 'h-[var(--row)]'
@@ -50,13 +69,31 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
       <BlockRenderer :block="block" />
     </div>
 
-    <!-- Top-right, shown on hover, focus or when selected, so the tile reads like the real one. -->
+    <!-- The inline delete confirm, over the top of the tile. -->
     <div
+      v-if="confirming"
+      data-editor-control
+      data-no-drag
+      :class="isSection ? 'top-1/2 -translate-y-1/2' : 'top-2'"
+      class="absolute inset-x-2 z-10 flex justify-end"
+    >
+      <EditorDeleteConfirm
+        :label="blockSummary(block)"
+        :stacked="!isSection"
+        class="max-w-full rounded-3xl border border-line bg-tile p-1 shadow-lg"
+        @confirm="emit('confirmDelete', block.id)"
+        @cancel="cancelDelete"
+      />
+    </div>
+
+    <!-- Top-right, shown on hover, focus or when selected, so the tile reads like the real one. Always shown without hover (touch). -->
+    <div
+      v-else
       :class="[
         isSection ? 'inset-y-0 my-auto h-11' : 'top-2',
         selected ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100',
       ]"
-      class="absolute right-2 flex items-center gap-1 transition-opacity motion-reduce:transition-none"
+      class="absolute right-2 flex items-center gap-1 transition-opacity motion-reduce:transition-none [@media(hover:none)]:opacity-100"
     >
       <button
         type="button"
@@ -68,6 +105,22 @@ const controlClass = 'flex size-11 items-center justify-center rounded-full bord
       >
         <Icon
           :name="UI_ICONS.edit"
+          class="size-5"
+          :aria-hidden="true"
+        />
+      </button>
+      <button
+        ref="deleteButton"
+        type="button"
+        data-editor-control
+        data-no-drag
+        :aria-label="`Delete ${blockSummary(block)}`"
+        :class="controlClass"
+        class="hover:text-pop"
+        @click.stop="emit('requestDelete', block.id)"
+      >
+        <Icon
+          :name="UI_ICONS.trash"
           class="size-5"
           :aria-hidden="true"
         />

@@ -4,25 +4,39 @@
   emits it only when valid, so the preview updates live and never sees a
   broken block. Optional string fields are removed when emptied (strict
   schema, no ""). An invalid value shows an inline error and is not emitted.
+  The last control is "Delete this block". It opens the shared inline confirm.
 -->
 <script setup lang="ts">
 import { BlockSchema, type Block } from '~~/types/profile'
 import { SIZES } from '~/utils/sizes'
 import { NETWORK_IDS, NETWORKS } from '~/utils/networks'
 
-const props = defineProps<{ block: Block }>()
+const props = defineProps<{
+  block: Block
+  /** The inline delete confirm is open in this form. */
+  confirming: boolean
+}>()
 
 const emit = defineEmits<{
   'update:block': [block: Block]
+  'requestDelete': [id: string]
   'delete': [id: string]
+  'cancelDelete': []
 }>()
 
-const confirming = ref(false)
 const errors = ref<string[]>([])
 watch(() => props.block.id, () => {
-  confirming.value = false
   errors.value = []
 })
+
+const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
+
+/** The button is back after the next render: focus it again. */
+async function cancelDelete() {
+  emit('cancelDelete')
+  await nextTick()
+  deleteButton.value?.focus()
+}
 
 type Patch = Partial<Record<string, string | boolean | null | undefined>>
 
@@ -67,7 +81,6 @@ function onImageAlt(value: string | undefined) {
 const fid = (name: string) => `blk-${props.block.id}-${name}`
 const inputClass = INPUT_CLASS
 const labelClass = LABEL_CLASS
-const buttonClass = `min-h-11 rounded-full px-3 text-sm ${FOCUS_RING}`
 </script>
 
 <template>
@@ -75,42 +88,9 @@ const buttonClass = `min-h-11 rounded-full px-3 text-sm ${FOCUS_RING}`
     class="flex flex-col gap-4"
     @submit.prevent
   >
-    <div class="flex items-center justify-between gap-2">
-      <p class="font-mono text-xs text-muted">
-        {{ block.type }} · id {{ block.id }}
-      </p>
-      <div
-        v-if="confirming"
-        class="flex items-center gap-2"
-      >
-        <span class="text-sm text-ink">Sure?</span>
-        <button
-          type="button"
-          :class="buttonClass"
-          class="bg-pop px-4 font-medium text-pop-ink"
-          @click="emit('delete', block.id)"
-        >
-          Yes, delete
-        </button>
-        <button
-          type="button"
-          :class="buttonClass"
-          class="text-muted hover:text-ink"
-          @click="confirming = false"
-        >
-          No
-        </button>
-      </div>
-      <button
-        v-else
-        type="button"
-        :class="buttonClass"
-        class="text-muted hover:text-pop"
-        @click="confirming = true"
-      >
-        Delete
-      </button>
-    </div>
+    <p class="font-mono text-xs text-muted">
+      {{ block.type }} · id {{ block.id }}
+    </p>
 
     <ul
       v-if="errors.length"
@@ -436,5 +416,25 @@ const buttonClass = `min-h-11 rounded-full px-3 text-sm ${FOCUS_RING}`
         @update:src="patch({ thumbnail: $event ?? undefined }, ['thumbnail'])"
       />
     </template>
+
+    <div class="mt-2 flex min-h-11 flex-col border-t border-line pt-4">
+      <EditorDeleteConfirm
+        v-if="confirming"
+        :label="blockSummary(block)"
+        class="justify-end"
+        @confirm="emit('delete', block.id)"
+        @cancel="cancelDelete"
+      />
+      <button
+        v-else
+        ref="deleteButton"
+        type="button"
+        :class="FOCUS_RING"
+        class="min-h-11 w-full rounded-full border border-line px-4 text-sm font-medium text-ink hover:border-pop hover:text-pop"
+        @click="emit('requestDelete', block.id)"
+      >
+        Delete this block
+      </button>
+    </div>
   </form>
 </template>

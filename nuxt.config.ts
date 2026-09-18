@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import tailwindcss from '@tailwindcss/vite'
 import { profilePath, ROOT } from './content/resolve'
+import { PUBLIC_PROFILE_TEMPLATE } from './modules/public-profile'
 import { parseProfile } from './types/profile'
 import { FONT_PRESETS } from './app/utils/presets'
 import { NETWORKS, UI_ICONS } from './app/utils/networks'
@@ -9,8 +10,9 @@ import { NETWORKS, UI_ICONS } from './app/utils/networks'
 // The profile is read here at config time (PLAN.md 5.4). content/resolve.ts
 // picks content/profile.json (yours, not tracked) or the tracked example.
 // A preset or icon change in the file needs a dev server restart.
-const PROFILE_PATH = profilePath()
-const profile = parseProfile(JSON.parse(readFileSync(PROFILE_PATH, 'utf8')))
+// The app never imports this file: `#profile` is the sanitized copy that
+// modules/public-profile.ts writes to `.nuxt/` (no hidden email in the bundle).
+const profile = parseProfile(JSON.parse(readFileSync(profilePath(), 'utf8')))
 
 /**
  * `public/<dir>/manifest.json` is written by scripts/fetch-favicons.ts (pregenerate)
@@ -24,7 +26,7 @@ function manifestOrEmpty(dir: 'icons' | 'thumbs'): string {
 
 /** Files that may be missing in a fresh clone, resolved once at config time. The app imports them by these names. */
 const FILE_ALIASES = {
-  '#profile': PROFILE_PATH,
+  '#profile': resolve(ROOT, '.nuxt', PUBLIC_PROFILE_TEMPLATE),
   '#manifest/icons': manifestOrEmpty('icons'),
   '#manifest/thumbs': manifestOrEmpty('thumbs'),
 }

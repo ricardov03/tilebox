@@ -4,10 +4,13 @@
   Left: live preview (the real tiles, drag to reorder). Right: Profile | Blocks | Theme.
   The theme mode lives in the Theme tab only. Outside `nuxt dev` the routes
   do not exist, so the page renders one short message and nothing else.
-  Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice.
+  Bottom: Save (Cmd/Ctrl+S), dirty state, last save, restart notice,
+  "Block deleted. Undo" for 8 seconds.
+  Delete or Backspace (focus outside a field) opens the delete confirm of the selected block.
 -->
 <script setup lang="ts">
-import type { EditorTab } from '~/composables/useEditor'
+import type { DeleteSource, EditorTab } from '~/composables/useEditor'
+import { GRAVATAR_PUBLIC_PATH, ProfileInfoSchema, toPublicProfileInfo } from '~~/types/profile'
 
 definePageMeta({ layout: false })
 
@@ -28,6 +31,9 @@ const {
   selectedId,
   orderedBlocks,
   selectedBlock,
+  deleteTarget,
+  notice,
+  canUndo,
 } = editor
 
 useHead({ title: computed(() => (draft.value ? `Edit · ${draft.value.profile.name}` : 'Edit')) })
@@ -68,11 +74,70 @@ const previewTheme = computed(() => {
   return mode
 })
 
+/** Delete and Backspace keep their normal job while the focus is in a field. */
+function isTyping(target: EventTarget | null): boolean {
+  return target instanceof Element
+    && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !== null
+}
+
 function onKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void editor.save()
+    return
   }
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  if (event.key === 'Escape' && deleteTarget.value) {
+    // The focus is outside the confirm (inside it, the confirm handles Escape itself).
+    editor.cancelDelete()
+    return
+  }
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return
+  if (!selectedId.value || deleteTarget.value || isTyping(event.target)) return
+  // Opens the confirm on the tile. It never deletes directly.
+  event.preventDefault()
+  editor.requestDelete(selectedId.value, 'tile')
+}
+
+/** The confirm id for one place, so only that place shows it. */
+function confirmingIn(where: DeleteSource): string | null {
+  return deleteTarget.value?.where === where ? deleteTarget.value.id : null
+}
+
+function focusFirst(selectors: string[]) {
+  for (const selector of selectors) {
+    const el = document.querySelector<HTMLElement>(selector)
+    if (el && el.offsetParent !== null) {
+      el.focus()
+      return
+    }
+  }
+}
+
+const editControl = (id: string) => `li[data-id="${CSS.escape(id)}"] button[data-editor-control][aria-pressed]`
+const listRow = (id: string) => `[data-select-block="${CSS.escape(id)}"]`
+
+/**
+ * "Yes" in any of the three confirms. After the delete the focus goes to the
+ * next block (the last one when the deleted block was last): its list row, or
+ * its tile when the delete came from the preview. No blocks left: Add block.
+ */
+async function confirmDelete(id: string) {
+  const where = deleteTarget.value?.where ?? 'list'
+  const index = orderedBlocks.value.findIndex(b => b.id === id)
+  editor.deleteBlock(id)
+  await nextTick()
+  const next = orderedBlocks.value[Math.min(Math.max(index, 0), orderedBlocks.value.length - 1)]
+  if (!next) return focusFirst(['[data-add-block]'])
+  focusFirst(where === 'tile' ? [editControl(next.id), listRow(next.id)] : [listRow(next.id), editControl(next.id)])
+}
+
+/** Undo removes its own button, so the focus moves to the block that came back. */
+async function undoDelete() {
+  const id = editor.undoDelete()
+  if (!id) return
+  await nextTick()
+  focusFirst([listRow(id), editControl(id)])
 }
 
 function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -108,6 +173,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('beforeunload', onBeforeUnload)
   void editor.load()
+  void loadGravatarState()
 })
 
 onBeforeUnmount(() => {
@@ -141,6 +207,65 @@ function setAvatar(value: string | null | undefined) {
   if (!draft.value) return
   draft.value.profile.avatar = value || null
 }
+
+/** The email field keeps what you type. The draft only gets a valid email, so a bad one is never saved. */
+const emailInput = ref('')
+const emailError = ref<string | null>(null)
+watch(() => draft.value?.profile.email, (email) => {
+  if (email !== undefined && !emailError.value) emailInput.value = email
+}, { immediate: true })
+
+function setEmail(event: Event) {
+  const control = formControl(event)
+  if (!control || !draft.value) return
+  emailInput.value = control.value
+  const result = ProfileInfoSchema.shape.email.safeParse(control.value.trim())
+  if (!result.success) {
+    emailError.value = `email: ${result.error.issues[0]?.message ?? 'Invalid email'}`
+    return
+  }
+  emailError.value = null
+  draft.value.profile.email = result.data
+}
+
+function setShowEmail(event: Event) {
+  const target = event.target
+  if (!(target instanceof HTMLInputElement) || !draft.value) return
+  draft.value.profile.showEmail = target.checked
+}
+
+function setHighlights(value: string[]) {
+  if (!draft.value) return
+  draft.value.profile.highlights = value
+}
+
+/** Is public/avatar.gravatar.jpg on disk? `version` busts the image cache after a new download. */
+const gravatar = ref({ exists: false, version: 0 })
+
+async function loadGravatarState() {
+  try {
+    gravatar.value.exists = (await $fetch<{ exists: boolean }>('/api/avatar/gravatar')).exists
+  }
+  catch {
+    gravatar.value.exists = false
+  }
+}
+
+/** Every answer of the Gravatar route: the file may be new, the same, or gone. */
+function onGravatarResolved(exists: boolean) {
+  gravatar.value = { exists, version: Date.now() }
+}
+
+function onGravatarSaved() {
+  setAvatar(null)
+}
+
+/** What the public page will get: same sanitizer as the build (no hidden email, resolved avatar). */
+const previewProfile = computed(() => {
+  if (!draft.value) return null
+  const path = gravatar.value.exists ? `${GRAVATAR_PUBLIC_PATH}?v=${gravatar.value.version}` : undefined
+  return toPublicProfileInfo(draft.value.profile, path)
+})
 </script>
 
 <template>
@@ -187,7 +312,7 @@ function setAvatar(value: string | null | undefined) {
     </p>
 
     <div
-      v-else
+      v-else-if="previewProfile"
       class="grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]"
     >
       <!-- Preview. Theme attrs are scoped here so the editor chrome stays stable. -->
@@ -207,18 +332,26 @@ function setAvatar(value: string | null | undefined) {
             <EditorBlockGridEditor
               :blocks="orderedBlocks"
               :columns="layoutKey === 'mobile' ? 2 : 4"
-              :profile="draft.profile"
+              :profile="previewProfile"
               :selected-id="selectedId"
+              :confirming-id="confirmingIn('tile')"
               @reorder="editor.setOrder"
               @select="editor.select"
+              @request-delete="editor.requestDelete($event, 'tile')"
+              @confirm-delete="confirmDelete"
+              @cancel-delete="editor.cancelDelete"
             />
             <template #fallback>
               <EditorPreviewGrid
                 :blocks="orderedBlocks"
                 :columns="layoutKey === 'mobile' ? 2 : 4"
-                :profile="draft.profile"
+                :profile="previewProfile"
                 :selected-id="selectedId"
+                :confirming-id="confirmingIn('tile')"
                 @select="editor.select"
+                @request-delete="editor.requestDelete($event, 'tile')"
+                @confirm-delete="confirmDelete"
+                @cancel-delete="editor.cancelDelete"
               />
             </template>
           </ClientOnly>
@@ -304,6 +437,10 @@ function setAvatar(value: string | null | undefined) {
                 @input="setProfile('bio', $event)"
               />
             </div>
+            <EditorHighlightsField
+              :model-value="draft.profile.highlights"
+              @update:model-value="setHighlights"
+            />
             <div class="flex flex-col gap-1">
               <label
                 for="p-status"
@@ -318,12 +455,71 @@ function setAvatar(value: string | null | undefined) {
                 @input="setProfile('status', $event)"
               >
             </div>
+            <div class="flex flex-col gap-1">
+              <label
+                for="p-email"
+                :class="labelClass"
+              >Email <span class="font-normal text-muted">(required)</span></label>
+              <input
+                id="p-email"
+                :value="emailInput"
+                type="email"
+                required
+                autocomplete="email"
+                :aria-invalid="emailError ? 'true' : undefined"
+                :aria-describedby="emailError ? 'p-email-error' : undefined"
+                :class="inputClass"
+                class="font-mono"
+                @input="setEmail"
+              >
+              <p
+                v-if="emailError"
+                id="p-email-error"
+                class="font-mono text-xs text-pop"
+                role="alert"
+              >
+                {{ emailError }}
+              </p>
+            </div>
+            <div class="flex flex-col gap-1">
+              <label
+                for="p-show-email"
+                class="flex min-h-11 cursor-pointer items-center gap-3 text-sm font-medium text-ink"
+              >
+                <input
+                  id="p-show-email"
+                  type="checkbox"
+                  :checked="draft.profile.showEmail"
+                  aria-describedby="p-show-email-help"
+                  :class="FOCUS_RING"
+                  class="size-5 accent-[var(--color-accent)]"
+                  @change="setShowEmail"
+                >
+                Show my email on the page
+              </label>
+              <p
+                id="p-show-email-help"
+                class="text-xs text-muted"
+              >
+                Hidden: the email is removed from the published page and is only used to find your Gravatar picture.
+              </p>
+            </div>
             <EditorImagePicker
               id="p-avatar"
               label="Avatar"
               :src="draft.profile.avatar"
               @update:src="setAvatar"
             />
+            <div class="flex flex-col gap-1">
+              <EditorGravatarButton
+                :email="draft.profile.email"
+                @resolved="onGravatarResolved"
+                @saved="onGravatarSaved"
+              />
+              <p class="text-xs text-muted">
+                An uploaded avatar wins. Without one, the page uses your Gravatar, then your initials.
+              </p>
+            </div>
           </div>
 
           <!-- Blocks -->
@@ -348,21 +544,29 @@ function setAvatar(value: string | null | undefined) {
               </button>
               <EditorBlockForm
                 :block="selectedBlock"
+                :confirming="confirmingIn('form') === selectedBlock.id"
                 @update:block="editor.updateBlock"
-                @delete="editor.deleteBlock"
+                @request-delete="editor.requestDelete($event, 'form')"
+                @delete="confirmDelete"
+                @cancel-delete="editor.cancelDelete"
               />
             </div>
             <EditorBlockList
               v-else
               :blocks="orderedBlocks"
               :selected-id="selectedId"
+              :confirming-id="confirmingIn('list')"
               @select="editor.select"
               @add="editor.addBlock"
               @move="editor.moveBlock"
+              @request-delete="editor.requestDelete($event, 'list')"
+              @confirm-delete="confirmDelete"
+              @cancel-delete="editor.cancelDelete"
             />
             <p class="text-xs text-muted">
               Order shown: <strong class="font-medium text-ink">{{ layoutKey }}</strong>.
               Drag a tile by its grip in the preview, or use the arrows here.
+              Remove a block with its trash button, or select it and press <kbd class="font-mono">Delete</kbd>.
             </p>
           </div>
 
@@ -411,6 +615,22 @@ function setAvatar(value: string | null | undefined) {
             v-if="savedLabel"
             class="font-mono text-xs text-muted"
           >last save {{ savedLabel }}</span>
+        </span>
+        <!-- The live region is always in the DOM, so the delete and the undo are announced. Undo sits outside it. -->
+        <span class="flex items-center gap-2 text-sm text-ink">
+          <span
+            data-delete-notice
+            aria-live="polite"
+          >{{ notice }}</span>
+          <button
+            v-if="canUndo"
+            type="button"
+            :class="buttonClass"
+            class="border border-line px-4 text-ink hover:border-accent"
+            @click="undoDelete"
+          >
+            Undo
+          </button>
         </span>
         <kbd class="ml-auto rounded-md border border-line px-2 py-1 font-mono text-xs text-muted">⌘S / Ctrl+S</kbd>
       </div>

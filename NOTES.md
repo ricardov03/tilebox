@@ -728,3 +728,112 @@ Fix in `scripts/release.mjs` (`afterRelease()`, same code for `--push` and `--pu
 - `--dry-run`: the plan only, no `gh` and no `git` command.
 Verified in `.tilebox-test/` (ignored, deleted after): throwaway clone + local bare origin + fake `gh` first on `PATH` (argv log, canned JSON, switched by env vars). GitHub was never written to. 52 checks, 0 failed: (1) the owner's case: complete + old failed run = no watch question (also under a pty, also with `--watch`), note line, exit 0; (2) files missing + `--rerun --watch` = one dispatch, watches the new run 333, not 111 or 444, exit 0; (3) same, run fails = exit 1, both hints; (4) no terminal, no `--rerun` = prints the command, no dispatch, exit 0 (pty: `y` dispatches one time); (5) new tag + real push to the bare origin = watches the fresh push run 222, not the older run with the same `headBranch`; (6) run ok, files missing = clear message, exit 1; (7) dry run = empty `gh` log, nothing pushed. Plus the full flow (`--release-as 9.9.11 --push --watch`, the npm checks stubbed) in the clone.
 Lesson: ask the system for its state (the files on the release), do not infer it from one run. And tie a "watch" to the work of this command with a time stamp, never to "the newest".
+## WP9
+
+Branch: `wp/9-profile-extras`. Date: 2026-09-18. Node used: 22.23.1.
+
+Goal (decided by Ricardo): four profile extras. A pulsing status dot, up to 3 highlights, a required email that is private by default, the avatar from the email (Gravatar).
+
+### What was built
+- Contract change (`types/profile.ts`, frozen after WP0, so noted here): `profile.highlights` (`z.array(z.string().min(1).max(80)).max(3).default([])`), `profile.email` (`z.email()`, required), `profile.showEmail` (`z.boolean().default(false)`). New: `PublicProfileSchema`, `PublicProfile`, `PublicProfileInfo` (no `showEmail`, `email` optional, `avatar` a plain optional string), `toPublicProfile()` / `toPublicProfileInfo()` (the sanitizer, pure, no file access), `PLACEHOLDER_EMAILS`, `isPlaceholderEmail()`, `HIGHLIGHTS_MAX`, `HIGHLIGHT_MAX_CHARS`.
+- A. `ProfileHeader.vue`: the dot has `animate-pulse motion-reduce:animate-none` and was already `aria-hidden="true"`. The global reduced-motion rule in `main.css` covers it too (duration 0.01ms, 1 iteration); the Playwright test reads `animation-name: none` with `reducedMotion: 'reduce'`. `tests/e2e/helpers.ts` `settle()` now skips endless animations: an endless animation's `finished` promise never resolves, so the a11y spec would hang.
+- B. Highlights: a real `<ul aria-label="Highlights">` under the bio, above the email and the status. Bullet = 6px `bg-accent` dot, `aria-hidden`. Text `text-ink`, 15px/1.4 from `md`, 14px on phones. Nothing renders for an empty list.
+- C. Email privacy. `modules/public-profile.ts` (a local Nuxt module, auto-registered from `modules/`) adds a template `.nuxt/tilebox/public-profile.json` = `toPublicProfile(parsed profile, gravatar path when the file exists)`. `#profile` points at it (`nuxt.config.ts` alias + tsconfig path, and the module sets `nuxt.options.alias` to the template's `dst`). `useProfile.ts` parses it with `PublicProfileSchema`. The raw file never reaches the client bundle. `UI_ICONS.email = line-md:email` (always in the icon bundle).
+  - Why a template and not a file written at config time: `nuxt build` clears `.nuxt/` after the config is loaded. Templates are written after that, and `nuxt prepare` / `nuxt typecheck` write them too.
+  - Refresh in dev: the module watches the folders `content/` (names `profile.json`, `profile.example.json`) and `public/` (name `avatar.gravatar.jpg`) with `fs.watch`, debounced 50ms, then `updateTemplates()`. The folder, not the file: the save route replaces the file with a rename. Vite then hot-reloads the JSON. A file that does not parse keeps the last good copy. The save route no longer forces `restartNeeded` on the first personal save: the old reason (the alias was bound to the example) is gone.
+- D. Gravatar. `content/gravatar.ts` (node built-ins, paths from `ROOT` in `content/resolve.ts`, never from `import.meta.url`: the WP7 lesson) is shared by `scripts/fetch-avatar.ts` (tsx) and `server/api/avatar/gravatar.post.ts` (Nitro, `~~/content/gravatar`). sha256 of the trimmed lower-case email, `https://gravatar.com/avatar/<hash>?s=256&d=404`, 5 s timeout, image content-type, at most 2 MB. 200 -> writes `public/avatar.gravatar.jpg`. 404 -> removes a stale file. Anything else -> keeps the old file. One line each, never a non-zero exit. Skipped (one line) when `profile.avatar` is set or the email is a placeholder. `npm run fetch:avatar`, in `predev` and `pregenerate` right after `check:profile`.
+- Migration: `content/migrate.ts` `migrateProfileText()` + `scripts/ensure-profile.ts`. Text in, text out: the missing keys are inserted as new lines after the `"bio"` line in the file's own indent; the result is parsed and compared with the expected object, and only on a mismatch the file is rewritten as 2-space JSON. A file that has the 3 keys is never written.
+- `scripts/validate-profile.ts`: warning (not a failure) when a personal file still has a placeholder email.
+- `content/profile.example.json`: `email: hello@example.com`, `showEmail: false`, 3 highlights. Tile `b7` was `mailto:hello@example.com`; it is now `https://example.com/contact` (same icon), so the example has no `mailto:` link and the privacy grep can be 0.
+- Editor (Profile tab): Highlights (3 inputs, `n/80` counters, the model only gets the non-empty lines), Email (`type=email`, required, inline `role=alert` error from the schema, an invalid value never reaches the draft), "Show my email on the page" + the one-line explanation, "Use my Gravatar" (`POST /api/avatar/gravatar` with the draft's email; on `saved` it clears `profile.avatar`; the message shows inline). `GET /api/avatar/gravatar` tells the preview if the file exists. The preview gets `toPublicProfileInfo(draft.profile, gravatar path)`: the same sanitizer as the build.
+
+### Overflow handling (fixed 2x2 tile: 500px desktop, 358px phone)
+Measured with headless Playwright at 1280 and 390. Stress content: a 165-character bio, highlights of 78, 32 and 71 characters, a 38-character email shown, a status.
+- First pass (full scale): overflow at both widths. Desktop: the avatar was squashed to 57px and the text ran 29px into the padding. Phone: `scrollHeight` 425 > `clientHeight` 356.
+- Reducing gaps and the avatar on the phone was not enough: the worst case needs about 318px of text alone and the phone tile has 310px inside.
+- Decision: a **compact scale** whenever the profile has highlights or a visible email. Without them the header is exactly the old one. Compact: avatar 64px desktop / 40px phone, name 56px / 36px, bio 17px / 16px with `line-clamp-3` (the brief's last resort, needed on both widths), gaps 12px / 8px, each highlight `line-clamp-2`, but one line each on phones when there are 3 (the editor says so under the inputs), email and status `truncate`. Avatar `shrink-0`, the tile `overflow-hidden` as a safety net.
+- Result, same stress content: 1280: text block bottom 527 = the inner bottom (564 - 1 - 36), avatar 64px intact. 390: `scrollHeight` 356 = `clientHeight` 356.
+- Editor preview: its tiles are lower than the real desktop tile (the preview row is `clamp(120px,13vw,240px)`), so `ProfileHeader` has a `small` prop used only by the two preview grids: the compact scale stays at phone sizes there. Without it the bio collapsed to zero height in the preview.
+- Not covered: a name that needs 2 lines plus the full worst case. The clamps absorb most of it (the bio shrinks first), the tile clips the rest.
+
+### Deviations and why
+- Work was done in a separate git worktree (`/private/tmp/tilebox-wp9/wt`), not in the main checkout: Ricardo had `nuxt dev` open on the main checkout and was editing his real `content/profile.json`. The `dev` Playwright project and the migration checks back up and restore that file, which would have raced with his saves. The main checkout was put back on `main`, untouched.
+- `playwright.config.ts`: `E2E_STATIC_PORT` / `E2E_DEV_PORT` (defaults unchanged). Port 4173 was held by an older `npx serve dist` of the main checkout, and Playwright reuses an existing server locally, so the first static run tested the wrong `dist/`.
+- The example tile `b7` lost its `mailto:` URL (see above).
+- `PublicProfile` drops `showEmail` (an email in the public profile already means "show it").
+- In a full `npx playwright test` run the `dev` web server starts first and its `predev` creates `content/profile.json`, so the "example email" privacy test skips itself (`dist/` vs resolver mismatch guard) and the generic "hidden email" test covers the same string. `--project=static` alone (CI) runs all of them.
+- A known dev-only delay: after a save that hides the email, the dev server serves the old sanitized copy for a moment (watcher + HMR, 1 to 3 s). The editor test polls. A production build always starts from a fresh template.
+
+### Verified
+- Migration, old example shape (`git show main:content/profile.example.json`): one line printed, diff = only the 3 new lines after `bio`, compact one-line blocks untouched, trailing newline kept. Second run: no output, file untouched. Same on a 2-space pretty file and on a copy of a real personal file (with `avatar` set: `avatar: profile.avatar is set, gravatar skipped`).
+- Dev refresh: `POST /api/save` with a new bio and `showEmail: true` -> `restartNeeded: false`, the SSR HTML and an already open page show the new bio and the `mailto:` link without a restart or a manual reload. `showEmail: false` again -> the address is gone from the HTML and from `.nuxt/tilebox/public-profile.json`.
+- Gravatar: a random address -> `avatar: no gravatar for this email` and a stale file is removed. The URL form answers 200 `image/png` for the hash in Gravatar's own docs (so the format is not fixed; the `.jpg` name is kept, browsers read the bytes). No real personal email was sent anywhere.
+- `git check-ignore -v public/avatar.gravatar.jpg` -> `.gitignore:19:public/avatar.*`.
+
+### Verification output (last lines)
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0
+profile: content/profile.example.json (example)
+avatar: placeholder email, gravatar skipped
+OK  26 icons found in installed Iconify packs
+Prerendered 4 routes
+$ grep -r "hello@example.com" dist/ | wc -l
+0
+$ E2E_STATIC_PORT=4188 npx playwright test --project=static
+28 passed
+$ E2E_STATIC_PORT=4188 E2E_DEV_PORT=3144 npx playwright test      (both projects)
+35 passed, 1 skipped
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks < /dev/null
+would commit "chore(release): v0.1.1" and tag v0.1.1
+working tree: still clean
+```
+
+### Feature E: visible delete
+
+Branch: `wp/9e-delete-block` (from `wp/9-profile-extras`). Date: 2026-09-18. Asked by Ricardo: "Removing a block must be easy to find". Before, delete was one small text button at the top of `BlockForm.vue`, visible only after a block was selected.
+
+- One action, one confirm. `useEditor.ts`: `deleteTarget` (`{ id, where: 'list' | 'tile' | 'form' }`, one at a time), `requestDelete`, `cancelDelete`, `deleteBlock` (the same action as before, now also keeps what Undo needs), `undoDelete`, `notice`, `canUndo`, `UNDO_MS = 8000`. `app/components/editor/DeleteConfirm.vue` is the only confirm: `role="group"` named `Delete <label>?`, text "Delete?", buttons "Yes" (`bg-pop`) and "No". Focus goes to "No" on mount. Escape or "No" cancels. No `window.confirm`.
+- 1. `BlockList.vue`: each row ends with an icon-only button (`aria-label="Delete <label>"`, 44px, `text-muted`, `hover:text-pop`). A click swaps the arrows and the button for the confirm. After a cancel the focus goes back to the delete button (`nextTick`, the button is re-created). After a delete `edit.vue` focuses the next row's select button (the last row when the deleted one was last), or `[data-add-block]` when the list is empty.
+- 2. `PreviewTile.vue`: a third control between Edit and the grip. Visible on hover, `focus-within`, when selected, and always with `@media (hover: none)` (the whole control group, so touch users also get Edit and the grip). The confirm is a small overlay at the top of the tile; on tiles it is stacked (question on line 1, buttons on line 2) because a 1x1 preview tile is about 150px wide inside. The button and the overlay carry `data-editor-control` (the capture click handler in `edit.vue` leaves them alone, so no select) and `data-no-drag`; both grids pass `filter="[data-no-drag]"` + `:prevent-on-filter="false"` to Sortable. The button also has `@click.stop`.
+- 3. Keys (`edit.vue`, in the same dev-only `keydown` handler as Cmd/Ctrl+S): `Delete` or `Backspace` with a selected block, no modifier, no open confirm, and the target not inside `input, textarea, select, [contenteditable]` opens the confirm on the tile (`where: 'tile'`). It never deletes directly. Escape with the focus outside the confirm also cancels.
+- 4. `BlockForm.vue`: the top button is gone. The last control is a full-width secondary "Delete this block" under a rule. Same confirm, in place.
+- 5. Undo: `deleteBlock` stores the block, its index in `blocks`, in `layout.desktop` and in `layout.mobile`, and if it was selected. The save bar shows "Block deleted." in an always-present `aria-live="polite"` span plus an Undo button next to it (outside the live region). It goes away after 8 s or on the next draft change (a watcher compares the draft text with the text right after the delete; selecting a block is not a change). `undoDelete` puts the block back at the 3 old indexes (clamped), restores the selection, and the region says "Block restored.". Delete then Undo leaves the draft equal to the saved file, so Save is disabled again. Memory only: a reload, and the page remount after a save (WP3 deviation 2), forget it.
+- Icon: `line-md:trash` (exists in `@iconify-json/line-md`; `line-md:remove` and `line-md:close` also exist, the trash reads best). Added as `UI_ICONS.trash`, so `check:icons` checks it and `nuxt.config.ts` puts it in the client bundle (27 icons now).
+- Tests (`tests/e2e/editor.spec.ts`, dev project, same backup and restore): "No" and Escape keep the block and return the focus; Delete on a selected tile opens the confirm, Backspace and Delete inside a field do not; the tile button deletes without selecting; Undo restores the order in desktop and mobile and Save is disabled again; the next change ends the Undo offer; delete from the list row + save removes the id from `blocks`, `layout.desktop` and `layout.mobile`; focus lands on the next row. The test reads the block's name from the row's `aria-label`: importing `useEditor.ts` into the spec puts it under the node tsconfig (no Nuxt auto-imports) and `nuxt typecheck` fails. There is no axe check in the dev project and none was added.
+- Not done: no 8-second expiry test (it would add 8 s to the run; the timer is one `setTimeout`). `line-md` icons draw themselves in, so the trash animates once when a row is re-created after a cancel.
+
+Verification (last lines):
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run check:icons     -> OK  27 icons found in installed Iconify packs
+$ npm run generate        -> exit 0
+$ E2E_STATIC_PORT=4391 E2E_DEV_PORT=3391 npx playwright test      (both projects)
+38 passed, 1 skipped      (the skip is the known "example email" guard, see WP9 deviations)
+```
+
+### Review (OCR, range)
+Range: the WP9 branch against `main`. Fixes, one commit each:
+1. `content/gravatar.ts`: `fetchGravatar(email, { allowDelete })`. The caller says who it is. `scripts/fetch-avatar.ts` passes `true` (the SAVED email: a 404 removes a stale `public/avatar.gravatar.jpg`). `POST /api/avatar/gravatar` runs with the editor's UNSAVED draft email. It passes `true` only when the draft email equals the email in the saved profile file (`readProfileFile()` in `server/utils/editor.ts`, trimmed, lower case). A read or parse problem = `false`. A try with another email can never delete the picture of the saved profile.
+2. `content/gravatar.ts`: atomic write. `writeAtomic()` writes `${file}.tmp`, then `rename` over the target. The tmp file is removed on failure. `git check-ignore -v public/avatar.gravatar.jpg.tmp` answers with the rule `public/avatar.*` (`.gitignore` line 19).
+3. `content/gravatar.ts`: raster types only, `/^image\/(jpeg|png|webp)(;|$)/i`. Any other type (for example `image/svg+xml`) = no usable picture: status `offline`, the old file stays.
+4. `app/components/editor/GravatarButton.vue` + `app/pages/edit.vue`: the POST answer is typed `{ status, exists }`. The button emits `resolved: [exists: boolean]` on EVERY answer, then `saved` when the status is `saved`. `edit.vue` sets `gravatar.value` from `resolved`, so the preview never points at a deleted file.
+5. `app/pages/edit.vue`: no literal `/avatar.gravatar.jpg`. `GRAVATAR_PUBLIC_PATH` moved to `types/profile.ts` (client-safe). `content/gravatar.ts` imports Node built-ins, so the page cannot import from it. `content/gravatar.ts` imports the constant, exports it again, and builds `GRAVATAR_FILE` from it.
+6. `playwright.config.ts`: `Number(process.env.E2E_STATIC_PORT) || 4173` and `Number(process.env.E2E_DEV_PORT) || 3111`. An empty or non-numeric value gives the default, not port 0 or `NaN`.
+
+Tests: new `tests/e2e/gravatar.spec.ts` (static project, no browser, no network). `globalThis.fetch` is a stub. The file lives in a temp folder through the new optional `targetFile` option of `fetchGravatar`. Cases: 404 + `allowDelete: false` keeps the file; 404 + `allowDelete: true` removes it; `image/svg+xml` is rejected and the file stays; a JPEG is written and no `.tmp` is left; a failed write leaves no `.tmp` and answers `offline`.
+
+Not reviewed: part of the review timed out on the provider side. Groups without a result: (a) `ProfileHeader` / `BentoGrid` / `useProfile` / types, (b) the `public-profile` module / `nuxt.config.ts` / `content/migrate.ts`. `tests/e2e/privacy.spec.ts` covers the sanitizer (`toPublicProfile`) and the built `dist/` for those groups.
+
+Verification (last lines):
+```
+$ npm run lint            -> exit 0
+$ npm run typecheck       -> exit 0
+$ npm run generate        -> exit 0   (profile: content/profile.example.json (example))
+$ grep -r "hello@example.com" dist | wc -l      -> 0
+$ E2E_STATIC_PORT=4392 E2E_DEV_PORT=3392 npx playwright test      (both projects)
+43 passed, 1 skipped      (38 + the 5 new gravatar tests; the skip is the known "example email" guard)
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks      -> exit 0
+```

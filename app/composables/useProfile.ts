@@ -1,13 +1,15 @@
 /**
- * Reads the profile at build time and validates it once.
- * `#profile` is a Nuxt alias set in nuxt.config.ts: content/profile.json when
- * it exists, else content/profile.example.json (see content/resolve.ts).
- * The parse runs at module scope, so every caller gets the same typed object.
+ * The public profile, validated once at module scope.
+ * `#profile` is a Nuxt alias to `.nuxt/tilebox/public-profile.json`, the
+ * SANITIZED copy that modules/public-profile.ts writes from content/profile.json
+ * (or the example, see content/resolve.ts): no email unless `showEmail` is true,
+ * avatar already resolved. The raw file never reaches the client bundle.
+ * The editor does not use this. It loads the full file from `/api/profile`.
  */
 import profileJson from '#profile'
-import { parseProfile, type Profile } from '~~/types/profile'
+import { PublicProfileSchema, type PublicProfile } from '~~/types/profile'
 
-const profile: Profile = parseProfile(profileJson)
+const profile: PublicProfile = PublicProfileSchema.parse(profileJson)
 
 export function useProfile() {
   return { profile }

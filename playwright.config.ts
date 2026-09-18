@@ -1,15 +1,21 @@
 /**
  * Two projects:
  * - `static`: the prerendered site in `dist/` (run `npm run generate` first),
- *   served by scripts/serve-dist.mjs on :4173, plus repo.spec.ts (no browser). Runs in CI.
+ *   served by scripts/serve-dist.mjs on :4173, plus repo.spec.ts, privacy.spec.ts and gravatar.spec.ts (no browser). Runs in CI.
  * - `dev`: the editor on `nuxt dev` at :3111. Writes content/profile.json and
  *   public/blocks/, so it runs locally only.
  * Only the servers of the selected projects start.
  */
 import { defineConfig, devices } from '@playwright/test'
 
-const STATIC_URL = 'http://localhost:4173'
-const DEV_URL = 'http://localhost:3111'
+/**
+ * `E2E_STATIC_PORT` / `E2E_DEV_PORT` move a server when the default port is taken by another checkout.
+ * `||`, not `??`: an empty or non-numeric value falls back to the default, never to port 0 or NaN.
+ */
+const STATIC_PORT = Number(process.env.E2E_STATIC_PORT) || 4173
+const DEV_PORT = Number(process.env.E2E_DEV_PORT) || 3111
+const STATIC_URL = `http://localhost:${STATIC_PORT}`
+const DEV_URL = `http://localhost:${DEV_PORT}`
 
 /** Project names passed as `--project=x` or `--project x`. Empty = all. */
 const selected = process.argv.flatMap((arg, i, all) => {
@@ -33,7 +39,7 @@ export default defineConfig({
   projects: [
     {
       name: 'static',
-      testMatch: ['public.spec.ts', 'a11y.spec.ts', 'repo.spec.ts'],
+      testMatch: ['public.spec.ts', 'a11y.spec.ts', 'repo.spec.ts', 'privacy.spec.ts', 'gravatar.spec.ts'],
       use: { baseURL: STATIC_URL },
     },
     {
@@ -46,7 +52,7 @@ export default defineConfig({
   webServer: [
     ...(wants('static')
       ? [{
-          command: 'node scripts/serve-dist.mjs 4173',
+          command: `node scripts/serve-dist.mjs ${STATIC_PORT}`,
           url: STATIC_URL,
           reuseExistingServer: !process.env.CI,
           timeout: 30_000,
@@ -54,7 +60,7 @@ export default defineConfig({
       : []),
     ...(wants('dev')
       ? [{
-          command: 'npm run dev -- --port 3111',
+          command: `npm run dev -- --port ${DEV_PORT}`,
           url: DEV_URL,
           reuseExistingServer: false,
           timeout: 120_000,

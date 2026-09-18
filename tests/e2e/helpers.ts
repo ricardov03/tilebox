@@ -2,10 +2,10 @@ import { readFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { parseProfile, type Profile } from '../../types/profile'
 
-import { PERSONAL_PROFILE_PATH, profilePath, ROOT } from '../../content/resolve'
+import { PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT } from '../../content/resolve'
 
 /** Same resolution as the build: content/profile.json when it exists, else the example. `ROOT` comes from the resolver, which anchors on its own location. */
-export { PERSONAL_PROFILE_PATH, profilePath, ROOT }
+export { PERSONAL_PROFILE_PATH, profileIsPersonal, profilePath, ROOT }
 
 /** The content the site was built from, validated with the same schema the app uses. Resolved on every call. */
 export function readProfile(): Profile {
@@ -34,7 +34,14 @@ export async function tileLefts(page: Page, selector: string): Promise<number[]>
   return [...new Set(lefts)].sort((a, b) => a - b)
 }
 
-/** Wait for every running CSS animation (the page-load stagger) to finish. */
+/**
+ * Wait for every running CSS animation (the page-load stagger) to finish.
+ * Endless animations (the pulsing status dot) never finish, so they are skipped.
+ */
 export async function settle(page: Page): Promise<void> {
-  await page.evaluate(() => Promise.all(document.getAnimations().map(a => a.finished.catch(() => undefined))))
+  await page.evaluate(() => Promise.all(
+    document.getAnimations()
+      .filter(a => a.effect?.getComputedTiming().iterations !== Infinity)
+      .map(a => a.finished.catch(() => undefined)),
+  ))
 }

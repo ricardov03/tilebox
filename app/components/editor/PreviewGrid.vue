@@ -5,16 +5,23 @@
   span a full row, row tracks are auto and tiles carry their height.
 -->
 <script setup lang="ts">
-import type { Block, ProfileInfo } from '~~/types/profile'
+import type { Block, PublicProfileInfo } from '~~/types/profile'
 
 defineProps<{
   blocks: Block[]
   columns: 2 | 4
-  profile: ProfileInfo
+  profile: PublicProfileInfo
   selectedId: string | null
+  /** The tile whose delete confirm is open. */
+  confirmingId: string | null
 }>()
 
-const emit = defineEmits<{ select: [id: string] }>()
+const emit = defineEmits<{
+  select: [id: string]
+  requestDelete: [id: string]
+  confirmDelete: [id: string]
+  cancelDelete: []
+}>()
 </script>
 
 <template>
@@ -26,7 +33,10 @@ const emit = defineEmits<{ select: [id: string] }>()
       data-profile
       class="col-span-2 row-span-2 h-[calc(var(--row)*2+var(--gap))]"
     >
-      <ProfileHeader :profile="profile" />
+      <ProfileHeader
+        :profile="profile"
+        small
+      />
     </li>
     <EditorPreviewTile
       v-for="block in blocks"
@@ -34,7 +44,11 @@ const emit = defineEmits<{ select: [id: string] }>()
       :block="block"
       :selected="block.id === selectedId"
       :draggable="false"
+      :confirming="block.id === confirmingId"
       @select="emit('select', $event)"
+      @request-delete="emit('requestDelete', $event)"
+      @confirm-delete="emit('confirmDelete', $event)"
+      @cancel-delete="emit('cancelDelete')"
     />
   </ul>
 </template>
