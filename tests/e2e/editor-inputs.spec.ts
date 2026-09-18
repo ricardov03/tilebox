@@ -42,10 +42,10 @@ async function selectFromList(page: Page, id: string): Promise<void> {
   await page.locator(`[data-select-block="${id}"]`).click()
 }
 
-/** The first link block of the saved file that has a description. */
-function firstLink(): LinkBlock {
-  const block = readProfile().blocks.find(b => b.type === 'link' && b.description)
-  if (!block || block.type !== 'link') throw new Error('the sample profile has no link block with a description')
+/** The first link block of the saved file. The sample has one with a description, for the optional field test. */
+function firstLink(withDescription = false): LinkBlock {
+  const block = readProfile().blocks.find(b => b.type === 'link' && (!withDescription || b.description))
+  if (!block || block.type !== 'link') throw new Error('the profile has no such link block')
   return block
 }
 
@@ -103,7 +103,9 @@ test('typing through invalid states never rewrites the input', async ({ page }) 
   // Also after the check ran on the half-typed text.
   await page.waitForTimeout(900)
   await expect(url).toHaveValue('https://exa')
-  await typeAndWatch(page.locator('form input[id$="-title"]'), ' x')
+  const title = page.locator('form input[id$="-title"]')
+  await clear(title)
+  await typeAndWatch(title, 'A new title')
 })
 
 test('no message while typing, a message about 600 ms after the last key', async ({ page }) => {
@@ -179,8 +181,7 @@ test('Cmd/Ctrl+S checks the field now, then saves', async ({ page }) => {
 })
 
 test('an emptied optional field leaves the saved file', async ({ page }) => {
-  const block = firstLink()
-  expect(block.description).toBeTruthy()
+  const block = firstLink(true)
   await openEditor(page)
   await selectFromList(page, block.id)
   const description = page.locator('form input[id$="-description"]')
