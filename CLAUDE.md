@@ -12,7 +12,7 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 ## How Ricardo wants to work
 - Plan file is enforced. Agents follow `PLAN.md` section 0 rules and own only their WP files.
 - WP1 to WP4 run as parallel agents. The architect merges and runs reviews.
-- Code review by **Grok** after every WP. Ricardo will provide the Grok tools. Not provided yet.
+- Code review by **Grok** before every merge: `npm run review -- --range main..<branch> --files <block> --ledger` per block, then `--scope pr` for the whole branch before the push. Rule: the model that writes the code is never the model that reviews it. Exit 3 (no valid verdict) is not a pass. Hard rules for reviewers: `docs/invariants.md`. How, when OCR or an adversarial agent instead, the ledger: `docs/review-tools.md`.
 - Ask questions that improve quality. Max 2 options per decision. Say which one you would pick.
 - Reply style: ELI5 output style, Simplified Technical English. Short sentences. Exact paths and commands.
 
@@ -29,4 +29,3 @@ Bento-style personal portfolio. Nuxt 4, static output, local editor, hosted on C
 
 ## Still needed from Ricardo (not blocking WP0)
 - Real links (GitHub, LinkedIn, X, email, CONDOMERA URL), city, avatar, one photo.
-- The Grok review tools.

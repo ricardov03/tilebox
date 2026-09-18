@@ -464,11 +464,12 @@ Done when: `npm run generate` on the example prints `site: favicon from initials
 
 ## 9. Code review with Grok
 
-- Reviewer: Grok. Tools to run it: TBD (Ricardo provides).
-- When: at the end of every WP, before merge. And once on the whole repo after WP5.
+- Reviewer: Grok, through `scripts/review/grok-review.sh` (`npm run review`). It pastes the diff and an impact map into the prompt, gives Grok read-only tools, forces a JSON verdict, and exits 3 when there is no valid verdict. How to use it, and when to use OCR or an adversarial agent instead: `docs/review-tools.md`. The hard rules it checks: `docs/invariants.md`.
+- Rule: the model that writes the code is never the model that reviews it.
+- When: per block before a merge (`npm run review -- --range main..<branch> --files <block> --ledger`), and the whole branch before the push (`--scope pr`).
 - Input: the WP branch diff plus this `PLAN.md` and the WP's `NOTES.md` section.
 - Review prompt must ask for: correctness, TypeScript strictness, a11y, SSG safety (nothing runtime-only on the public page), files touched outside the WP's ownership, and unmet "Done when" items.
-- Output: a list with severity `blocking | should | nit`. Blocking must be fixed. `should` fixed or answered in `NOTES.md`. `nit` optional.
+- Output: findings with severity `critical | warning | suggestion` and a category. `critical` and `warning` block and must be fixed. A `suggestion` is fixed or answered in `NOTES.md`. Every finding goes to `scripts/review/findings-ledger.jsonl`; the top category of `npm run review:ledger -- report` becomes the next scripted check.
 - Fix loop: max 2 rounds per WP. After that, escalate to Ricardo.
 
 ## 10. Order of work
