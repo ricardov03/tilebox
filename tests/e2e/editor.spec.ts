@@ -384,6 +384,52 @@ test('deletes a block from its list row, and the save removes it from the file',
   expect(saved.blocks).toHaveLength(profile.blocks.length - 1)
 })
 
+test('S3: a half-typed URL asks nothing; a whole URL asks after 1.2 s, a paste and a blur ask at once', async ({ page }) => {
+  await openEditor(page)
+  const calls = await mockUnfurl(page, FETCHED)
+  await page.getByRole('button', { name: 'Add block' }).click()
+  await page.getByRole('button', { name: 'Link', exact: true }).click()
+  const url = page.locator('form input[id$="-url"]')
+  await expect(page.locator('form input[id$="-preview-enrich"]')).toBeChecked()
+
+  // Typing. No dot in the host yet: nothing is asked, however long the pause is.
+  await url.fill('https://unfurl')
+  await page.waitForTimeout(1600)
+  expect(calls).toHaveLength(0)
+  // The rest of the URL, key by key: every key starts the 1.2 s again, so no partial URL is asked.
+  await url.pressSequentially('.test/typed', { delay: 60 })
+  await page.waitForTimeout(700)
+  expect(calls).toHaveLength(0)
+  await expect.poll(() => calls.length, { timeout: 3000 }).toBe(1)
+  expect(calls[0]?.url).toBe('https://unfurl.test/typed')
+
+  // Blur: no wait.
+  await url.pressSequentially('/more', { delay: 20 })
+  const beforeBlur = Date.now()
+  await url.blur()
+  await expect.poll(() => calls.length, { timeout: 1000 }).toBe(2)
+  expect(Date.now() - beforeBlur).toBeLessThan(1000)
+  expect(calls[1]?.url).toBe('https://unfurl.test/typed/more')
+  // A second blur with the same URL asks nothing.
+  await url.focus()
+  await url.blur()
+  await page.waitForTimeout(300)
+  expect(calls).toHaveLength(2)
+
+  // Paste: no wait.
+  await url.focus()
+  const beforePaste = Date.now()
+  await url.evaluate((element) => {
+    const input = element as HTMLInputElement
+    input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true }))
+    input.value = 'https://unfurl.test/pasted'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect.poll(() => calls.length, { timeout: 1000 }).toBe(3)
+  expect(Date.now() - beforePaste).toBeLessThan(1000)
+  expect(calls[2]?.url).toBe('https://unfurl.test/pasted')
+})
+
 test('a pasted URL loads the link preview, fetched text fills empty fields only, the switches are saved', async ({ page }) => {
   await openEditor(page)
   const calls = await mockUnfurl(page, FETCHED)

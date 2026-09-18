@@ -34,6 +34,8 @@ watch(() => props.block.id, () => {
 })
 
 const deleteButton = useTemplateRef<HTMLButtonElement>('deleteButton')
+/** The link preview decides when a new URL is read: it must know about a paste and a blur of the URL field. */
+const linkEnrich = useTemplateRef<{ urlPasted: () => void, urlBlurred: () => void }>('linkEnrich')
 
 /** The button is back after the next render: focus it again. */
 async function cancelDelete() {
@@ -163,6 +165,8 @@ const labelClass = LABEL_CLASS
           type="url"
           :class="inputClass"
           @input="patch({ url: text($event) })"
+          @paste="linkEnrich?.urlPasted()"
+          @blur="linkEnrich?.urlBlurred()"
         >
       </div>
       <div class="flex flex-col gap-1">
@@ -179,6 +183,7 @@ const labelClass = LABEL_CLASS
         >
       </div>
       <EditorLinkEnrich
+        ref="linkEnrich"
         :block="block"
         :id-prefix="fid('preview')"
         @patch="patch"

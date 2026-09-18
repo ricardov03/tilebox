@@ -2,9 +2,12 @@
   Link preview for a link block (WP10a). Two switches:
   1. "Load info from the website": icon and text come from the website.
   2. "Show the website's image": the second, separate switch. Default off.
-  With switch 1 on, a new URL (typed or pasted) asks the dev-only route
-  POST /api/unfurl after a short pause. An older answer that arrives late is
-  dropped. The answer fills `meta`, `favicon` and `image` (LOCAL files), and
+  With switch 1 on, a new URL asks the dev-only route POST /api/unfurl:
+  at once after a paste and when the URL field loses focus, and while you type
+  only after 1.2 s without a key AND only when the text is a whole http(s) URL
+  with a dot in the host. So `https://nu`, `https://nux`, ... ask nothing
+  (each one would be a real request from your machine to a host you never meant).
+  An older answer that arrives late is dropped. The answer fills `meta`, `favicon` and `image` (LOCAL files), and
   pre-fills the title and the description only when they are empty. When they
   differ, "Use fetched title / description" copies them on request.
   Turning switch 1 off keeps what you typed and clears `meta`, `favicon`, `image`.
@@ -44,13 +47,18 @@ const emit = defineEmits<{
   patch: [changes: Changes, optionalKeys: string[]]
 }>()
 
-const DEBOUNCE_MS = 600
+/** Typing: wait this long after the last key. A paste and a blur do not wait. */
+const TYPING_MS = 1200
 const OPTIONAL = ['enrich', 'showImage', 'favicon', 'image', 'imageAlt', 'meta', 'description']
 
 const loading = ref(false)
 const reason = ref<string | null>(null)
 const note = ref<string | null>(null)
 let timer: ReturnType<typeof setTimeout> | undefined
+/** The URL field just got a paste: the change that follows is a whole URL, not a key. */
+let pasted = false
+/** The URL changed and no request was made for it yet. A blur makes it. */
+let urlPending = false
 let controller: AbortController | undefined
 /** Id of the latest request. An answer for an older id is dropped. */
 let requestId = 0
@@ -63,8 +71,21 @@ function cancel() {
   loading.value = false
 }
 
+/** A whole http(s) URL with a dot in the host. `https://nu` is still being typed. */
+function looksComplete(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && host.includes('.') && !host.startsWith('.') && !host.endsWith('.')
+  }
+  catch {
+    return false
+  }
+}
+
 async function load(force: boolean) {
   cancel()
+  urlPending = false
   reason.value = null
   note.value = null
   const url = props.block.url
@@ -120,17 +141,38 @@ function apply(answer: Extract<UnfurlAnswer, { ok: true }>) {
   emit('patch', changes, OPTIONAL)
 }
 
-/** A new URL: wait for the typing to stop, then ask. Also covers a paste. */
-watch(() => props.block.url, () => {
+/** A new URL. Typing: ask after 1.2 s of silence, and only for a whole URL. A paste: ask now. */
+watch(() => props.block.url, (url) => {
   if (!props.block.enrich) return
   cancel()
   reason.value = null
-  timer = setTimeout(() => void load(false), DEBOUNCE_MS)
+  urlPending = true
+  const wait = pasted ? 0 : TYPING_MS
+  pasted = false
+  if (!looksComplete(url)) return
+  timer = setTimeout(() => void load(false), wait)
 })
+
+/** The form tells us what happens in its URL field (`BlockForm.vue`). */
+function urlPasted() {
+  pasted = true
+  // A paste that changes nothing fires no `input`: the flag must not wait for the next key.
+  setTimeout(() => {
+    pasted = false
+  }, 100)
+}
+
+function urlBlurred() {
+  if (!props.block.enrich || !urlPending || !looksComplete(props.block.url)) return
+  void load(false)
+}
+
+defineExpose({ urlPasted, urlBlurred })
 
 /** Another block in the same form: drop the running request and the messages. */
 watch(() => props.block.id, () => {
   cancel()
+  urlPending = false
   reason.value = null
   note.value = null
 })
