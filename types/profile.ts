@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { COLOR_PRESET_IDS, FONT_PRESET_IDS } from '../app/utils/presets'
 import { NETWORK_IDS } from '../app/utils/networks'
 import { SIZES } from '../app/utils/sizes'
+import { PublicSiteSchema, SiteSchema, toPublicSite, type PublicSiteExtras } from './site'
 
 const id = z.string().min(1)
 const url = z.url()
@@ -128,6 +129,8 @@ export const ProfileSchema = z
     profile: ProfileInfoSchema,
     blocks: z.array(BlockSchema),
     layout: LayoutSchema,
+    /** Site metadata (WP10b, ./site.ts). Optional: a profile without it uses the defaults. */
+    site: SiteSchema.optional(),
   })
   .superRefine((data, ctx) => {
     const ids = new Set<string>()
@@ -180,6 +183,7 @@ export const PublicProfileSchema = z.object({
   profile: PublicProfileInfoSchema,
   blocks: z.array(BlockSchema),
   layout: LayoutSchema,
+  site: PublicSiteSchema.optional(),
 }).strict()
 
 export type PublicProfile = z.infer<typeof PublicProfileSchema>
@@ -221,6 +225,8 @@ export function isPlaceholderEmail(email: string): boolean {
  * The sanitizer. Full profile in, public profile out.
  * - `email` is kept only when `showEmail` is true.
  * - `avatar`: `profile.avatar` when set, else `gravatarPath` (pass it only when the file exists), else no key.
+ * - `site` (WP10b) is public by nature: passed through without the upload paths,
+ *   plus the generated asset paths and the build date (`siteExtras`).
  * Pure: no file access. nuxt.config.ts, the editor preview and the tests call it.
  */
 export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): PublicProfileInfo {
@@ -233,11 +239,12 @@ export function toPublicProfileInfo(info: ProfileInfo, gravatarPath?: string): P
   }
 }
 
-export function toPublicProfile(profile: Profile, gravatarPath?: string): PublicProfile {
+export function toPublicProfile(profile: Profile, gravatarPath?: string, siteExtras?: PublicSiteExtras): PublicProfile {
   return {
     profile: toPublicProfileInfo(profile.profile, gravatarPath),
     blocks: profile.blocks,
     layout: profile.layout,
+    site: toPublicSite(profile.site, siteExtras),
   }
 }
 
