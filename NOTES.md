@@ -2115,3 +2115,125 @@ Test count, and where the numbers come from. WP18 left `main` at static 262 + de
 - The dev server still prints Vue hydration warnings for `/` while the dev tests rewrite `content/profile.json`. Older than WP17.
 - `contact.email` of the sample is never published. To make the sample SHOW the opt-in, set `"shareEmail": true` in `content/profile.example.json` and the `dist` scan for `contact@example.com` has to allow that one file.
 - Still open from before: WP12 needs Ricardo's real Pexels key for one live check; a real Gravatar 200 was only tested with a mocked transport; Safari and Firefox were never checked by hand; the history rewrite that drops the old attribution trailers; real content from Ricardo.
+
+## WP20 review round
+
+Branch `wp/20-reviewed`, from `origin/wp/19-integration`. Date 2026-09-18. Work in a git worktree. Not merged into `main`, no tag. Goal: the independent Grok review that WP16, WP17, WP18 and WP19 all still owed, plus the fixes.
+
+### The blocks
+
+| Block | Files | Trailer line | Verdict |
+|---|---|---|---|
+| B1 the public data contract | `types/profile.ts` (`modules/public-profile.ts` is unchanged in the range, so the diff has 1 file) | `grok-review: scope=block files=1 diff_chars=15082 cached=0 turns=8 elapsed_s=322 tokens_in=527471 tokens_out=16721 retries=0 evidence=full session=9325456c-f697-4025-a295-667d55d53dee critical=1 warning=1 suggestion=0 verdict=FAIL` | FAIL, 1 critical + 1 warning, both real |
+| B2 the privacy feature | `app/utils/mail-shield.ts app/components/ProtectedEmail.vue app/composables/useHumanSignal.ts app/components/blocks/Tile.vue app/components/ProfileHeader.vue` | `grok-review: scope=block files=5 diff_chars=20474 cached=0 turns=8 elapsed_s=374 tokens_in=583398 tokens_out=18382 retries=1 evidence=full session=3c373daf-d3ce-495a-afb2-1b4a3bdb8efe critical=0 warning=1 suggestion=0 verdict=FAIL` | FAIL, 1 warning, real |
+| B3 the editor | `app/components/editor/IconPicker.vue app/components/editor/LinkIconField.vue app/components/editor/TextField.vue app/utils/field-draft.ts app/composables/useEditor.ts` | `grok-review: scope=block files=5 diff_chars=28611 cached=0 turns=14 elapsed_s=489 tokens_in=1273055 tokens_out=23581 retries=0 evidence=full session=7591b8ac-7048-4973-85da-8d5ac125eeee critical=0 warning=1 suggestion=1 verdict=FAIL` | FAIL, 1 warning + 1 suggestion, both real |
+| B4 how the blocks fit together | `--scope pr` over 16 files (the three blocks plus `app/utils/brand-icons.ts`, `app/composables/useProfile.ts`, `app/components/blocks/media.ts`, `app/pages/edit.vue`, `scripts/validate-profile.ts`), run AFTER the five fixes so it reviewed them too | `grok-review: scope=pr files=16 diff_chars=81947 cached=0 turns=12 elapsed_s=337 tokens_in=1506030 tokens_out=16567 retries=0 evidence=full session=d53ddd72-2bdb-49f2-8646-abeb0bcdc405 critical=0 warning=1 suggestion=1 verdict=FAIL` | FAIL, 1 warning + 1 suggestion, both real |
+
+`--scope pr` over the WHOLE range is not possible: `git diff origin/main..HEAD` is 322,251 characters and the script refuses anything over 150,000 (exit 2). B4 is the union of the reviewed files plus their seams, 81,947 characters.
+
+**Stubs and the fresh retry.** 1 first-turn stub in 5 calls (B2, attempt 1, session `91cddceb-381a-40d4-b6f4-a37c2a30efec`). The automatic FRESH call rescued it: attempt 2 (`3c373daf-…`) came back with 8 turns and `evidence=full`. `retries=1` on that trailer only. No second stub, no `verdict=BLIND`, every block `evidence=full`. 5 real Grok calls in total (the stub counts as one), about $1.40 to $1.80 by the measured 14 to 50 cents per block.
+
+### Findings, triage and the fixing commit
+
+| id | Severity | Triage, with the evidence | Fix |
+|---|---|---|---|
+| `public-mail-guard-crashes-generate` (B1) | critical | **REAL, and proven.** `app/composables/useProfile.ts:12` ran `PublicProfileSchema.parse(profileJson)` at module scope and the guard is a `superRefine` on that schema, while `scripts/validate-profile.ts:65` prints the SAME guard as a warning and exits 0. Reproduced: a sample profile with `bio: "Write to ada@shield.example"` gave `check:profile` exit 0 and `npm run generate` exit 1, "Exiting due to prerender errors". Two rules, opposite answers | `68359a9` |
+| `public-mail-guard-skips-site` (B1) | warning | **REAL.** The deviation WP17 recorded. `types/profile.ts:353` stringified `{ profile, blocks }` only, and `PublicSiteSchema` keeps `description`, `title`, `jobTitle` and `location`, which the head puts into `<meta name="description">` and the JSON-LD | `2c8c4d5` |
+| `mail-tile-loses-envelope-icon` (B2) | warning | **REAL.** Checked with tsx on the real sample: the public `b7` resolves to `{ name: 'line-md:link', source: 'fallback' }` because the shield removes the url and leaves a `mail` token, so `brandIconFor` sees nothing. A browser test showed the built tile drawing the chain-link path while the Email social tile drew the envelope | `f9f265f` |
+| `block-summary-mailto-drops-address` (B3) | warning | **REAL.** `hostOf('mailto:ada@example.com')` is `''` (no hostname), so `blockSummary` fell to "Link without a title" for every untitled mail or phone tile, while `LinkBlock.vue` names the same tile with `domainLabel` | `97c8112` |
+| `icon-picker-current-name-hidden` (B3) | suggestion | **REAL, cheap.** WP17 took `prefix:name` off every visible text and the preview box was `aria-hidden="true"`, so a screen reader heard "Icon", the caption and "Search icons" and never the name unless a search was open | `97bbfcc` |
+| `migrate-restores-cleared-email` (B4) | warning | **REAL.** `content/migrate.ts` `NEW_KEYS` holds `['email', MIGRATION_EMAIL]` and `migrateProfileText` adds every missing key, so `predev` -> `ensure:profile` wrote `you@example.com` back into a file whose owner had cleared the field on purpose (WP17's own rule) | `215da75` |
+| `docs-email-still-required` (B4) | suggestion | **REAL.** `content/README.md:16` and `README.md:122` said `profile.email` is required; the schema has had it optional since WP17, and `README.md:165` already said "no" | `215da75` |
+
+0 false positives, 0 already fixed. Every fix has a test that fails before it: the `blockSummary` one was checked by flipping `useEditor.ts` back to `hostOf` and watching both its tests go red.
+
+### The site guard (the gap WP17 recorded as a deviation)
+`PublicProfileSchema`'s guard now walks `Object.entries(data)`, so `profile`, `blocks`, `layout`, `site` and `contact` are all scanned and a part added later is guarded with no change there. The issue path names the dirty part, so `check:profile` prints `(at site)`. Proven: a sample with `site.description: "Write to ada@shield.example"` warns `(at site)` and still exits 0.
+
+### The split that goes with it
+`PublicProfileShapeSchema` is the object without the guard, and `useProfile()` parses THAT. `PublicProfileSchema` is the shape plus the guard and is run by `check:profile` and the tests only. The rule the guard states is a warning everywhere, so it can never fail a build again. `docs/invariants.md` rule 17 and `docs/security.md` say so.
+
+### The eye check of the icon picker (asked for by the architect)
+Real dev server on `:3512`, headless Playwright, PNGs at 1280 wide in `.tilebox-test/` (git-ignored, deleted after). Read by eye, not only asserted. Light: the current icon is the 32 px envelope for `mailto:you@example.com` with the caption "Auto, from the link"; after picking, the filled GitHub mark with "Custom" and "Back to auto"; 10 results in two rows of 6 and 4, all decoded, all drawn in the ink colour `0b1f33`, the picked one with the accent border; the `icones.js.org` link below. Dark: the same grid in `eaf3fa`, light on the dark ground, nothing invisible. Visible text is exactly `Icon · <caption> · Search icons · Browse all on icones.js.org`: no `prefix:name` anywhere. Nothing overlaps or clips (the picker box is 341x240; at a 900 px viewport the second row sits below the fold of the scrolling panel, which is ordinary UI). 0 console errors, 0 failed requests. Two `line-md` results look grey: those are the pack's own twotone icons, not a tint bug. No fix was needed.
+
+### Verification (every exit code read, never grepped from coloured output)
+```
+$ npm ci                                          -> exit 0
+$ npm run lint                                    -> exit 0
+$ npm run typecheck                               -> exit 0
+$ npm run test:review                             -> exit 0, passed=143 failed=0 total=143
+$ npm run check:contrast                          -> exit 0, all 72 pairs pass
+$ npm run check:icons                             -> exit 0, 68 icons (line-md and simple-icons)
+$ npm run check:links                             -> exit 0, 6 ok, 0 blocked, 3 broken (the example.com links of the sample)
+$ rm -f content/profile.json && npm run generate   -> exit 0
+$ grep -rEi "mailto:" dist | wc -l                -> 0
+$ grep -r "hello@example.com" dist | wc -l        -> 0
+$ grep -r "contact@example.com" dist | wc -l      -> 0
+$ grep -r "you@example.com" dist | wc -l          -> 0
+$ find dist -name '*.svg' -path '*icons*'         -> 0 files
+$ test -f dist/_headers                           -> present
+$ test -f dist/site/contact.vcf                   -> present (0 EMAIL lines: shareEmail is off in the sample)
+$ test -e dist/edit                               -> absent (no dist/edit.html, no dist/api)
+$ grep -n "contact.vcf" dist/robots.txt           -> "Disallow: /site/contact.vcf"
+$ E2E_STATIC_PORT=4511 E2E_DEV_PORT=3511 npx playwright test   (ONE run, both projects)
+    -> exit 0.  static: 306 passed, 2 skipped   dev: 102 passed   total: 408 passed, 2 skipped
+$ node scripts/release.mjs --dry-run --no-ai --skip-tests --skip-checks -> exit 0
+```
+The 2 skips are the SAME two "example only" static tests as in WP14 to WP19, skipped for the same reason: `privacy.spec.ts` "the example email is in no file of dist/, although the example shows it on two tiles" and `second-wave.spec.ts` "no qr tile and no qr file without a site URL (the example has none)". The `predev` of the dev server writes `content/profile.json` before the static project reads it, so `profileIsPersonal()` is true and both skip themselves. Checked: a `--project=static` run alone (no dev server, so no `content/profile.json`) has 0 skips, which is the proof that the reason is the file and not the code.
+
+New tests: static +4 (`mail-shield.spec.ts` 3 + 1 browser, `incomplete.spec.ts` 2 — the count is +6 over WP19's 300) and dev +2 (`editor.spec.ts`). WP19 left static 300 + dev 100; this branch is static 306 + dev 102.
+
+### `npm run review:ledger -- report`
+```
+# Findings ledger: 118 rows
+
+## By category (the top one that is not `other` is the next script to write)
+- other: 26
+- untrusted-input: 22
+- editor-state: 17
+- second-code-path: 15
+- a11y: 10
+- schema-drift: 9
+- test-green-wrong-reason: 8
+- privacy-leak: 3
+- dev-route-guard: 3
+- docs: 2
+- bundled-path: 2
+- runtime-network: 1
+
+## By source
+- grok: 48
+- ocr: 35
+- agent: 27
+- human: 8
+
+## By severity
+- warning: 91
+- suggestion: 15
+- critical: 12
+
+## By area
+- app/components: 25
+- server/api: 9
+- content/unfurl.ts: 9
+- scripts/release.mjs: 8
+- tests/e2e: 6
+- scripts/publish.mjs: 6
+- app/composables: 5
+- .github/workflows: 5
+
+findings-ledger: rows=118 top_category=untrusted-input top_count=22 grok=48 ocr=35 agent=27 human=8
+```
+The top category is still `untrusted-input` (22 of 118), unchanged by this round: the 7 findings here are 2 `privacy-leak`, 2 `second-code-path`, 2 `schema-drift` and 1 `a11y` (plus 1 `docs`).
+
+### What was NOT reviewed
+The call budget was 5 and all 5 were spent. Reviewed: `types/profile.ts`, `app/utils/mail-shield.ts`, `app/utils/brand-icons.ts`, `app/components/ProtectedEmail.vue`, `app/composables/useHumanSignal.ts`, `app/composables/useProfile.ts`, `app/components/blocks/Tile.vue`, `app/components/blocks/media.ts`, `app/components/ProfileHeader.vue`, the five editor files of B3, `app/pages/edit.vue` and `scripts/validate-profile.ts`. **Not reviewed by Grok in this round**, although they are in `origin/main..HEAD`:
+- WP18's icon engine and its routes (`content/icon-index.ts`, `server/api/icons/search.get.ts`, `server/api/icons/svg.get.ts`, `server/utils/editor.ts`, `app/utils/icon-sets.ts`, `scripts/check-icons.ts`, `nuxt.config.ts`) — these are unchanged in `origin/main..HEAD` because WP18 is already on `main`, so they never entered a diff of this range and have no verdict at all;
+- WP16's editor chrome (`app/components/editor/DeleteButton.vue`, `DeleteConfirm.vue`, `BlockForm.vue` footer, `BlockList.vue`, `PreviewTile.vue`, the `danger` tokens) — same reason for the first two, and `BlockForm.vue`, `BlockList.vue`, `PreviewTile.vue`, `BlockRowBadges.vue`, `ContactPanel.vue`, `GravatarButton.vue`, `ImagePicker.vue`, `LinkEnrich.vue`, `UtmPanel.vue`, the block components other than `Tile.vue` and `LinkBlock.vue`, `content/site-assets.ts`, `content/unfurl-cache.ts`, `app/utils/vcard.ts`, `app/utils/site-head.ts`, `scripts/fetch-avatar.ts`, `scripts/fetch-links.ts` and every test file DID change in the range and were never sent to Grok;
+- the 6 fix commits of this branch: B4 saw the first five (it ran after them), `215da75` has no verdict.
+
+### Open
+- The blocks listed above have no Grok verdict. `docs/invariants.md` rule 21 asks for one before a merge.
+- Nothing was merged into `main` and no tag was made.
+- `contact.note`, `contact.org` and `contact.title` are free text and reach `/site/contact.vcf` whatever `shareEmail` says. An address typed into `contact.note` would be published. `PublicProfileSchema`'s guard cannot see it: the vCard is built from the SAVED profile, not from the public copy. Found by reading, not by Grok, and not fixed: it needs its own check in `check:profile`.
+- Still open from before: real content from Ricardo, the Pexels key, a real Gravatar 200, Safari and Firefox by hand, the history rewrite.
