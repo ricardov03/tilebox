@@ -8,6 +8,7 @@ import { resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import { ROOT } from './helpers'
 import { linkTargets } from '../../content/link-check'
+import { MIGRATION_EMAIL, migrateProfileText } from '../../content/migrate'
 import { linkNeedsFetch } from '../../content/unfurl-cache'
 import { buildHead, defaultSiteTitle, siteDescription } from '../../app/utils/site-head'
 import { domainLabel, hostOf, resolveLinkIcon } from '../../app/components/blocks/media'
@@ -112,6 +113,32 @@ test('the head, the icon, the link check and the link preview take a profile wit
   expect(linkTargets(input)).toEqual([])
   const [link] = input.blocks
   expect(link?.type === 'link' && linkNeedsFetch(link)).toBe(false)
+})
+
+test('WP20: `ensure:profile` never writes an address back into a file that cleared it', () => {
+  // WP17: an emptied Email field REMOVES the key, and the editor asserts it. But `predev` runs
+  // `ensure:profile` -> `migrateProfileText`, which added every WP9 key that was missing, so the
+  // next `npm run dev` put `you@example.com` back and the owner saw the placeholder again.
+  const file = (info: Record<string, unknown>) =>
+    `${JSON.stringify({ profile: { name: 'Ada Lovelace', bio: 'Maths.', theme, ...info }, blocks: [], layout: { desktop: [] } }, null, 2)}\n`
+
+  // A current file that deliberately has no `email`: nothing to migrate.
+  expect(migrateProfileText(file({ highlights: [], showEmail: false }))).toBeNull()
+  expect(migrateProfileText(file({ highlights: ['One'], showEmail: true }))).toBeNull()
+
+  // A pre-WP9 file has NONE of the three keys. That one is still upgraded, placeholder and all.
+  const upgraded = migrateProfileText(file({}))
+  expect(upgraded).not.toBeNull()
+  expect(JSON.parse(upgraded ?? '{}').profile).toMatchObject({ email: MIGRATION_EMAIL, showEmail: false, highlights: [] })
+
+  // A half-upgraded file gets the keys that have a safe default, never an address.
+  const half = migrateProfileText(file({ email: 'ada@example.com' }))
+  expect(half).not.toBeNull()
+  expect(JSON.parse(half ?? '{}').profile).toMatchObject({ email: 'ada@example.com', showEmail: false, highlights: [] })
+  const noHighlights = migrateProfileText(file({ showEmail: false }))
+  expect(noHighlights).not.toBeNull()
+  expect(noHighlights).not.toContain(MIGRATION_EMAIL)
+  expect(JSON.parse(noHighlights ?? '{}').profile.email).toBeUndefined()
 })
 
 test('WP20: the name of an untitled link comes from `domainLabel`, which reads every scheme', () => {

@@ -1,6 +1,7 @@
 /**
  * Upgrades an older `content/profile.json` to the current shape (WP9).
- * Adds the keys that are missing in `profile`: `highlights`, `email`, `showEmail`.
+ * Adds the keys that are missing in `profile`: `highlights`, `showEmail`, and `email` only for a
+ * pre-WP9 file that has none of the three (WP20: an absent `email` is a deliberate, valid state).
  * Text in, text out. Everything else stays byte for byte: the new lines are
  * inserted after `"bio"`, in the file's own indent. When that is not possible
  * (bio is not a plain one-line string), the file is rewritten as 2-space JSON.
@@ -20,6 +21,19 @@ const NEW_KEYS: readonly (readonly [key: string, value: unknown])[] = [
   ['showEmail', false],
 ]
 
+/**
+ * WP20. `email` is the one key of `NEW_KEYS` that carries an ADDRESS, and since WP17 its absence is a
+ * current, valid state: an emptied Email field removes the key on purpose. Writing the placeholder
+ * back on the next `npm run dev` (`predev` -> `ensure:profile`) undid that every time. So the address
+ * is only offered to a file that has NONE of the three keys, which is what a pre-WP9 file looks like.
+ * `highlights` and `showEmail` carry a safe default and are still filled in whenever they are missing.
+ */
+function keysToAdd(info: Record<string, unknown>): readonly (readonly [key: string, value: unknown])[] {
+  const missing = NEW_KEYS.filter(([key]) => !Object.hasOwn(info, key))
+  const preWp9 = missing.length === NEW_KEYS.length
+  return preWp9 ? missing : missing.filter(([key]) => key !== 'email')
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -37,7 +51,7 @@ export function migrateProfileText(text: string): string | null {
   const data = tryParse(text)
   if (!isRecord(data) || !isRecord(data.profile)) return null
   const info = data.profile
-  const missing = NEW_KEYS.filter(([key]) => !Object.hasOwn(info, key))
+  const missing = keysToAdd(info)
   if (!missing.length) return null
 
   // Expected result: the same data with the new keys right after `bio` (or at the end of `profile`).
