@@ -75,7 +75,9 @@ test('the status dot pings: a halo behind a solid dot, both hidden from assistiv
   const box = async () => dot.evaluate((el) => {
     const rect = el.getBoundingClientRect()
     const text = el.nextElementSibling?.getBoundingClientRect()
-    return [rect.width, rect.height, Math.round(rect.left), Math.round(text?.left ?? 0)]
+    // Rounded: a Linux renderer reports 10.000030517578125 for the same 10px box.
+    // A layout shift worth catching is a whole pixel or more.
+    return [Math.round(rect.width), Math.round(rect.height), Math.round(rect.left), Math.round(text?.left ?? 0)]
   })
   const before = await box()
   expect(before.slice(0, 2)).toEqual([10, 10])
